@@ -76,7 +76,7 @@ Each `variables.<column>` entry has:
   Not applicable, `-66` Other, `-55` Not in list: the study's table in `SCTO_SENTINELS`). They are
   **reported, never recoded**: the parquet keeps `-99` as `-99`, and the user decides
   how to treat it. The team suggests moving the code to `<var>_dk` and setting it
-  missing in `<var>` (`references/cleaning.md`, section 1).
+  missing in `<var>` (`references/cleaning.md`, section 3).
 - `repeat_iteration`: the repeat instance(s) of a column inside a repeat, outer first.
 - `choice_value`: on a select_multiple binary, the choice it stands for.
 - `system: true`: a SurveyCTO column (`KEY`, `SubmissionDate`, `duration`, ...).
@@ -102,9 +102,9 @@ Each `variables.<column>` entry has:
 ## Writing cleaning code
 
 Before writing or reviewing cleaning code on these outputs, read
-`references/cleaning.md`: the team's suggested cleaning practice (sentinels, skip
-logic, other-specify, select_multiple, repeats, aggregation, verification, PII) in
-pandas terms. They are guidelines: propose them, and let the people cleaning the data
+`references/cleaning.md`: the team's suggested cleaning practice (fail loudly,
+SurveyCTO submissions, sentinels, skip logic, other-specify, select_multiple, repeats,
+aggregation, verification, PII) in pandas terms. They are guidelines: propose them, and let the people cleaning the data
 decide what applies. For a column's eligible rows, sentinel counts and answered-while-skipped flags,
 run `just stats` and read `<form>_summary_stats.csv`.
 

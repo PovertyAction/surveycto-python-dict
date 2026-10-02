@@ -12,7 +12,7 @@ binary columns keep their types and nulls instead of turning into floats.
 - `<form>.parquet` is typed from the XForm: integers, decimals, dates and UTC
   timestamps are real types; select codes stay strings (`"01"` is not `"1"`).
 - Empty and not asked are both null. Why a value is missing (skipped, DK, refused)
-  comes from the eligibility mask and the sentinel codes (sections 1-2).
+  comes from the eligibility mask and the sentinel codes (sections 3-4).
 - Sentinel codes are **still coded**: `-99` is `-99` in the parquet. The dictionary
   counts them per column under `sentinels`; nothing has been recoded.
 - select_multiple arrives as `<name>_<code>` binaries: `1` chosen, `0` when another
@@ -26,7 +26,60 @@ binary columns keep their types and nulls instead of turning into floats.
 - A column kept as text (`parquet.cast_fallback` in the dictionary) holds values that
   did not fit the form's type; look at why before converting it.
 
-## 1. Sentinels (-99 Don't know, -88 Refused, -77 Not applicable, -66 Other, -55 Not in list)
+## 1. Fail loudly
+
+Write what must be true of the data as checks that stop the run. A check that passes
+silently, or a step that swallows an error, moves the problem downstream where it is
+harder to find.
+
+1. **Encode every expectation as a check, next to the step that relies on it:** value
+   domains, unique keys, the skip structure, non-negative quantities, merge cardinality,
+   row counts after a reshape.
+2. **Raise instead of `assert`:** `python -O` strips `assert` statements. A small
+   helper keeps checks short:
+   ```python
+   def check(ok: bool, message: str) -> None:
+       if not ok:
+           raise ValueError(message)
+
+   check(not df.duplicated("hhid").any(), "hhid is not unique")
+   check((df["age"].dropna() >= 0).all(), "age has negative values")
+   ```
+3. **Tolerances are shares over the relevant denominator** (gate-eligible rows for
+   sub-questions): about 1% by default, 1.5-2% for DK on hard questions, 5-10% for known
+   instrument problems, above 10% only documented, above 25% the column may be
+   unusable. Print a warning even inside tolerance and comment the rationale.
+   ```python
+   share = bad.sum() / eligible.sum() if eligible.any() else 0.0
+   if bad.any():
+       print(f"WARNING {col}: {bad.sum()} rows ({share:.1%}) outside the expected range")
+   check(share <= 0.02, f"{col}: {share:.1%} outside the expected range, above 2%")
+   ```
+4. **When a check fails, inspect before relaxing it:** list the contradicting rows,
+   check the instrument (`questions.json`), then fix the code or the check, and say
+   which in a comment.
+5. **Let errors surface:** no `errors="coerce"`, `errors="ignore"`, `if col in df`,
+   bare `except` or `try`/`except` that carries on. A schema change or a bad value
+   should stop the run, not turn into missing data.
+
+## 2. SurveyCTO submissions
+
+1. **Form versions:** each row carries `formdef_version`, and the outputs are built
+   from the current XML. Submissions from older versions may have had other relevance,
+   choices or fields; they are the usual source of `answered_when_skipped` in the
+   stats and of "choice code not among the form's choices" text columns. Tabulate the
+   versions, and decide per change how older rows are handled.
+2. **Review status:** decide which `review_status` values stay (rejected submissions,
+   ones still pending) and filter once, at the start.
+3. **Duplicate respondents:** `KEY` is unique per submission, not per respondent. Check
+   the study ID for repeats and resolve them with a written rule (for example the
+   latest completed submission), logging how many rows each branch drops.
+4. **Test and pilot submissions:** drop them by a documented cut (before the launch
+   date, or test enumerators or devices) and log the count.
+5. **Timing:** check `starttime <= endtime <= CompletionDate <= SubmissionDate` and
+   that `duration` is plausible; flag outliers for review rather than dropping them.
+
+## 3. Sentinels (the study's codes in `SCTO_SENTINELS`, e.g. -99 Don't know, -88 Refused)
 
 1. **The instrument decides which codes are valid for each question.** Build the recode
    map per column from its `constraint` and `choices`, not one blanket map: a question
@@ -68,31 +121,37 @@ binary columns keep their types and nulls instead of turning into floats.
    `np.where(s.isin([0, -99]), 0, ...)` makes DK disappear into "No" in tables. If the
    protocol really wants DK = 0, do it after, explicitly, with a comment.
 
-## 2. Skip logic and structural missing
+## 4. Skip logic and structural missing
 
 1. **Not asked and asked-but-DK are different and never share a code.** A null in
    `<var>` with a code in `<var>_dk` was asked and not answered; a null where the
    eligibility mask is false was skipped. `just stats` evaluates every relevance per
    row; reproduce its mask in cleaning code when you need it.
-2. **Assert the skip structure both ways:** missing where the skip applies, present
-   where the question was asked. `answered_when_skipped` and `missing_when_eligible`
-   in the stats CSV are those two counts.
-3. **Resolve skip-logic violations against the gate-off denominator.** Count them,
-   assert at most ~1%; if most expected follow-ups hold valid values, flip the gate on,
-   otherwise enforce the gate. Comment the decision.
-4. **Zero-by-logic only when the gate determines the value** ("no loans" means
-   `loan_size = 0`). Recode sentinels first, then zero; for nested gates, zero when the
-   top gate is off, then item-level where the item gate is off.
+2. **Check the skip structure both ways:** missing where the skip applies, present
+   where the question was asked. `answered_when_skipped` and `missing_when_eligible` in
+   the stats CSV are those two counts. SurveyCTO clears the answer to a question that is
+   not relevant, so on its data `answered_when_skipped` should be 0, and
+   `missing_when_eligible` is 0 for required questions.
+3. **Trace a violation to its source before changing data.** A non-zero count points
+   to a submission from another form version or an edit on the server, not to the
+   respondent: look at the rows' `formdef_version` and review corrections, fix the
+   cause, and document it.
+4. **Zero-by-logic is an analysis choice, made in a derived column.** A skipped
+   question is null by design and correct as collected. When a table needs the
+   unconditional value and the gate determines it ("no loans" means `loan_size = 0`),
+   fill a new column from the gate and keep the original. Recode sentinels first; for
+   nested gates, zero where the top gate is off, then item-level where the item gate is
+   off.
    ```python
-   df.loc[df["has_loan"].eq(0), loan_cols] = 0   # a null gate fails eq(0): stays missing
+   df["loan_size_all"] = df["loan_size"].mask(df["has_loan"].eq(0), 0)
+   # a null gate fails eq(0) and stays missing; `!= 1` would zero it too
    ```
-   `gate != 1` would also zero rows whose gate is missing.
 5. **Never fill zeros from missingness.** `fillna(0)` erases "doesn't own" vs refused.
-6. **Decide conditional vs unconditional on purpose.** A follow-up asked only past a
-   gate and never zero-filled gives a conditional mean where readers expect a rate.
-   Zero-fill from the gate when the consumer wants the unconditional rate; keep it
-   missing and say "among X" in labels and captions when the conditional population is
-   the point. Watch for non-null counts far below N and binary means near 1.
+6. **Choose conditional or unconditional on purpose.** A follow-up asked only past a
+   gate gives a conditional mean ("among borrowers"). Use the zero-filled column when
+   readers expect a rate over everyone; keep the original and say "among X" in labels
+   and captions when the conditional population is the point. Watch for non-null
+   counts far below N and binary means near 1.
 7. **Scope row totals to the eligible rows.** `df[cols].sum(axis=1)` returns 0 for an
    all-null row: mask with `.where(eligible)`.
 8. **Translate relevance with XPath semantics.** A comparison with an empty field is
@@ -103,10 +162,7 @@ binary columns keep their types and nulls instead of turning into floats.
 9. **Cross-check related variables:** gate "no" implies frequency 0; more detail rows
    than the headline count raises the count; platform totals match your own within a
    tolerance; treatment arm and strata agree across modules.
-10. **Form versions:** when a module was added or removed mid-fieldwork, keep a coverage
-    flag from `formdef_version` and document how rows without it are handled.
-
-## 3. Recoding and other-specify
+## 5. Recoding and other-specify
 
 1. **Classify other-specify text by priority:** lowercase and trim; one regex per
    category; ambiguous beats specific; blank, unmatched or ambiguous is missing; text
@@ -132,7 +188,7 @@ binary columns keep their types and nulls instead of turning into floats.
    rounds.
 7. **Named constants for magic numbers** (`WEEKS_PER_MONTH = 4.3`), defined once.
 
-## 4. select_multiple
+## 6. select_multiple
 
 1. **The binaries are ready:** null already means not answered and 0 unchosen, so do not
    rebuild them from strings. If you derive a binary from another source, match tokens,
@@ -147,7 +203,7 @@ binary columns keep their types and nulls instead of turning into floats.
    a whole repeat off. Read the exclusive set from the constraint.
 5. **Write a frequency table for every new binary**, as a baseline.
 
-## 5. Repeats and reshape
+## 7. Repeats and reshape
 
 1. **Layout:** fields in a repeat end in `_<n>` per instance (`_<n>_<m>` nested); each
    repeat has a `<repeat>_count` question. Instance `n` is the n-th entry, **not** a
@@ -201,7 +257,7 @@ binary columns keep their types and nulls instead of turning into floats.
    asserts on the counts; select columns before merging; keep IDs as strings in every
    file. A merge on non-unique keys explodes rows silently.
 
-## 6. Indicators and aggregation
+## 8. Indicators and aggregation
 
 1. **Strict propagation by default:** any missing component makes the total missing:
    `df[cols].sum(axis=1, skipna=False)`. Default `.sum()` treats null as 0 and gives 0
@@ -215,48 +271,34 @@ binary columns keep their types and nulls instead of turning into floats.
    mask afterwards.
 4. **Indicators stay missing when the parent is:** `(s == 1).astype(int)` turns null
    into 0. Use `(s == 1).astype("Int8").where(s.notna())`.
-5. **Impute with medians by arm x stratum** among valid values, merged
-   `many_to_one`, and record that the value is imputed.
-6. **Check after aggregating:** one row per unit, components sum to the total, ranges
+5. **Check after aggregating:** one row per unit, components sum to the total, ranges
    plausible.
-7. **Record lineage:** pandas has no variable labels. Keep a codebook keyed by column
-   (or Arrow field metadata) saying source, imputation and suffix meaning (`_imp`,
-   `_sh`), and test it survives the write.
-8. **Winsorize last,** after sample restrictions, and keep the unwinsorized file.
-9. **Money:** deflate to the reporting year first, convert currency at reporting time,
-   with rates from one table.
+6. **Record lineage:** pandas has no variable labels. Keep a codebook keyed by column
+   (or Arrow field metadata) saying where each derived column comes from and how, and
+   test it survives the write.
 
-## 7. Verification and reproducibility
+## 9. Verification and reproducibility
 
-1. **Raise, don't assert, in pipelines:** `python -O` strips `assert`.
-2. **Two phases:** validate raw invariants (domains, gate-to-detail counts, skip
+1. **Two phases:** validate raw invariants (domains, gate-to-detail counts, skip
    structure against the instrument), then transform with tolerance checks.
-3. **Tolerances are shares over the relevant denominator** (gate-eligible rows for
-   sub-questions): about 1% by default, 1.5-2% for DK on hard questions, 5-10% for known
-   instrument problems, above 10% only documented, above 25% the column may be
-   unusable. Print a warning even inside tolerance; comment the rationale.
-4. **When an assertion fails,** list the contradicting rows, check the instrument, then
-   fix the code or the assertion.
-5. **Log what each step changes:** pandas never reports "N changes made", so log
+2. **Log what each step changes:** pandas never reports "N changes made", so log
    `mask.sum()`; end each module with `describe(include="all")` and missing counts.
-6. **Compare outputs per column, aligned on KEY:** `NaN != NaN` is true, so count
+3. **Compare outputs per column, aligned on KEY:** `NaN != NaN` is true, so count
    `(a != b) & ~(a.isna() & b.isna())`, and judge floats by maximum difference
    (`np.isclose`), not a file hash. Take a fresh "before" snapshot for each change.
-7. **Randomness:** pass one `np.random.default_rng(seed)` around; never the global seed;
+4. **Randomness:** pass one `np.random.default_rng(seed)` around; never the global seed;
    the lockfile pins numpy.
 
-## 8. Pipeline structure
+## 10. Pipeline structure
 
 1. **One module per domain,** around 300 lines; a docstring with inputs, outputs and
    dependencies.
-2. **Treat the schema as fixed:** no `errors="ignore"`, `errors="coerce"`,
-   `if col in df` or bare `except`; let a schema change fail loudly.
-3. **No wildcard column lists:** `df.filter(like=...)` matches too much; use an anchored
+2. **No wildcard column lists:** `df.filter(like=...)` matches too much; use an anchored
    regex (`^asset_amount_\d{1,2}$`) or the column list from the dictionary.
-4. **Drop helper columns** and assert the output columns equal the expected list before
+3. **Drop helper columns** and assert the output columns equal the expected list before
    writing.
 
-## 9. PII
+## 11. PII
 
 1. **Check `pii.status` before reading any column's values;** `contains_pii` and
    `may_contain_pii` are for the people cleaning the data, through
