@@ -24,6 +24,10 @@ build cfg=config:
 [doc("Pull, then build")]
 run cfg=config: (pull cfg) (build cfg)
 
+[doc("Write <form>_summary_stats.csv: stats per column over the rows where it was asked, sentinels apart")]
+stats cfg=config:
+    uv run scto-stats --config {{ cfg }}
+
 [doc("Serve the built outputs to a local agent over stdio (survey-expert MCP)")]
 mcp cfg=config:
     uv run scto-mcp --config {{ cfg }}
