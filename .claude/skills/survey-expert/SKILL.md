@@ -16,6 +16,7 @@ You explain one SurveyCTO form and its data from the outputs `scto-build` writes
 | `<form>_variable_graph.json` | Questions linked by calculation, relevance, constraint and repeat |
 | `<form>.parquet` | The submissions. **Do not read it** unless the columns you need are cleared (below) |
 | `<form>_pii_review.parquet` | `KEY` plus every flagged column, for the people cleaning the data. **Never read it** |
+| `<form>_summary_stats.csv` | `just stats`: per column, eligible rows under skip logic, sentinels apart, then stats; flagged PII columns get counts only |
 
 ## How to look things up
 
@@ -96,6 +97,14 @@ Each `variables.<column>` entry has:
   Each repeat has a synthetic `<repeat>_count` question whose `calculation` is the
   repeat count. Repeat siblings belong to the same instance; handle them together.
 - **Notes** are exported as always-empty columns with no question.
+
+## Writing cleaning code
+
+Before writing or reviewing cleaning code on these outputs, read
+`references/cleaning.md`: the team's cleaning practice (sentinels, skip logic,
+other-specify, select_multiple, repeats, aggregation, verification, PII) in pandas
+terms. For a column's eligible rows, sentinel counts and answered-while-skipped flags,
+run `just stats` and read `<form>_summary_stats.csv`.
 
 ## Answering
 
