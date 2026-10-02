@@ -157,3 +157,54 @@ def test_unmapped_column_is_text_at_the_end(contract):
     assert _col(table, "mystery") == ["x"]
     assert _fallback(table, "mystery") == "maps to no form field"
     assert table.schema.names[-1] == "mystery"
+
+
+_CODES_XML = """<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml">
+  <h:head><model>
+    <instance><f id="f" version="1"><level/><grade/><answer/></f></instance>
+    <bind nodeset="/f/level" type="select1"/>
+    <bind nodeset="/f/grade" type="select1"/>
+    <bind nodeset="/f/answer" type="select1"/>
+  </model></h:head>
+  <h:body>
+    <select1 ref="/f/level"><label>Level</label>
+      <item><label>None</label><value>0</value></item><item><label>High</label><value>3</value></item>
+      <item><label>Don't know</label><value>-99</value></item>
+    </select1>
+    <select1 ref="/f/grade"><label>Grade</label>
+      <item><label>First</label><value>01</value></item><item><label>Second</label><value>02</value></item>
+    </select1>
+    <select1 ref="/f/answer"><label>Answer</label>
+      <item><label>Yes</label><value>yes</value></item><item><label>No</label><value>no</value></item>
+    </select1>
+  </h:body>
+</h:html>
+"""
+
+
+@pytest.fixture
+def codes_contract(tmp_path):
+    path = tmp_path / "f.xml"
+    path.write_text(_CODES_XML, encoding="utf-8")
+    return parse_contract(path)
+
+
+def test_select_one_with_integer_codes_is_int64(codes_contract):
+    table = cast_wide(
+        [{"KEY": "k1", "level": "3"}, {"KEY": "k2", "level": "-99"}], codes_contract
+    )
+    assert table.schema.field("level").type == pa.int64()
+    assert table.column("level").to_pylist() == [3, -99]
+
+
+def test_select_one_with_leading_zero_or_text_codes_stays_string(codes_contract):
+    table = cast_wide([{"KEY": "k1", "grade": "01", "answer": "yes"}], codes_contract)
+    assert table.schema.field("grade").type == pa.string()
+    assert table.schema.field("answer").type == pa.string()
+    assert table.column("grade").to_pylist() == ["01"]
+
+
+def test_select_one_code_outside_its_choices_falls_back_to_text(codes_contract):
+    table = cast_wide([{"KEY": "k1", "level": "2.5"}], codes_contract)
+    assert table.schema.field("level").type == pa.string()

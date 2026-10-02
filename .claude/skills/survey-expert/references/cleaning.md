@@ -36,12 +36,8 @@ df = pd.read_parquet("data/out/<form>/<form>.parquet")
 
 items = ["skill_read", "skill_write", "skill_speak", "skill_listen"]
 
-# The ratings are stored as text codes ("0" to "3"). Turn them into numbers.
-for item in items:
-    df[item] = pd.to_numeric(df[item])
-
 # Only people who consented were asked.
-consented = df["consent"] == "1"
+consented = df["consent"] == 1
 assert df.loc[~consented, items].isna().all().all()
 
 # Missing ratings among the people who were asked.
@@ -64,7 +60,9 @@ df[["KEY", *items, "skill_avg"]].to_parquet(
 ## What the outputs already give you
 
 - `<form>.parquet` is typed from the XForm: integers, decimals, dates and UTC
-  timestamps are real types; select codes stay strings (`"01"` is not `"1"`).
+  timestamps are real types. A select_one is an integer when every choice code is a
+  plain integer (`0`, `1`, `-99`), and text when any code has a leading zero or letters
+  (`"01"`, `"yes"`), so no code changes meaning.
 - Empty and not asked are both null. Why a value is missing (skipped, DK, refused)
   comes from the eligibility mask and the sentinel codes (sections 3-4).
 - Sentinel codes are **still coded**: `-99` is `-99` in the parquet. The dictionary

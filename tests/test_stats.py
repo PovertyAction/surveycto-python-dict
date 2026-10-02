@@ -158,3 +158,15 @@ def test_repeat_without_count_uses_the_instances_present(tmp_path, analyzer):
         2,
         0,
     )
+
+
+def test_integer_select_one_gets_frequencies_not_a_mean():
+    from surveycto_python_dict.stats import _describe
+
+    entry = {"parquet": {"arrow_type": "int64"}}
+    q = {
+        "type": "select_one",
+        "choices": [{"value": "0", "label": "No"}, {"value": "1", "label": "Yes"}],
+    }
+    out = _describe([1, 1, 0], entry, q, is_binary=False)
+    assert out == {"frequencies": "0 No: 1 (33.3%); 1 Yes: 2 (66.7%)"}

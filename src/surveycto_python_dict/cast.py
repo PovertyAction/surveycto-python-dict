@@ -10,6 +10,7 @@ field metadata; the reason never quotes a value.
 
 import datetime as dt
 import json
+import re
 from dataclasses import dataclass
 
 import pyarrow as pa
@@ -31,7 +32,7 @@ _XML_TYPES = {
     "date": pa.date32(),
     "dateTime": _TIMESTAMP,
     "string": pa.string(),
-    "select1": pa.string(),  # codes stay strings: "01" != "1"
+    "select1": pa.string(),  # integer-coded selects become int64 (_select_one_type)
     "select": pa.string(),
     "binary": pa.string(),  # attachment URL
 }
@@ -71,6 +72,21 @@ _PARSERS = {
     pa.string(): str,
     pa.int8(): _parse_binary,
 }
+
+
+_INTEGER_CODE = re.compile(r"-?(0|[1-9][0-9]*)")
+
+
+def _select_one_type(node: Node) -> pa.DataType:
+    """Return int64 when every choice code is a plain integer, else string.
+
+    A code with a leading zero ("01") or letters ("yes") keeps the column as text, so
+    no code changes meaning.
+    """
+    codes = [str(c["value"]) for c in node.choice_items]
+    if codes and all(_INTEGER_CODE.fullmatch(code) for code in codes):
+        return pa.int64()
+    return pa.string()
 
 
 def _node_metadata(node: Node) -> dict[str, str]:
@@ -141,9 +157,12 @@ def _columns(names: list[str], contract: FormContract) -> list[_Column]:
                 key,
             )
             continue
-        columns[name] = _Column(
-            name, _XML_TYPES[node.xml_type], _node_metadata(node), key
+        arrow_type = (
+            _select_one_type(node)
+            if node.xml_type == "select1"
+            else _XML_TYPES[node.xml_type]
         )
+        columns[name] = _Column(name, arrow_type, _node_metadata(node), key)
 
     for path, instances in multi_instances.items():
         node = contract.nodes[path]

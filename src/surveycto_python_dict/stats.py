@@ -288,6 +288,18 @@ def _describe(valid: list, entry: dict, q: dict | None, is_binary: bool) -> dict
     if is_binary:
         selected = sum(1 for v in valid if v == 1)
         return {"selected": selected, "selected_share": _fmt(selected / len(valid))}
+    # A select_one gets frequencies whether its codes are stored as text or integers.
+    if q is not None and q["type"] == "select_one":
+        labels = {c["value"]: c["label"] for c in q["choices"]}
+        counts = {code: 0 for code in labels}
+        for v in valid:
+            counts[str(v)] = counts.get(str(v), 0) + 1
+        return {
+            "frequencies": "; ".join(
+                f"{code} {labels.get(code, '(not a choice)')}: {n} ({n / len(valid):.1%})"
+                for code, n in counts.items()
+            )
+        }
     if arrow_type in ("int64", "double"):
         cuts = (
             statistics.quantiles(valid, n=4, method="inclusive")
@@ -309,17 +321,6 @@ def _describe(valid: list, entry: dict, q: dict | None, is_binary: bool) -> dict
             "min": ordered[0],
             "median": ordered[len(ordered) // 2],
             "max": ordered[-1],
-        }
-    if q is not None and q["type"] == "select_one":
-        labels = {c["value"]: c["label"] for c in q["choices"]}
-        counts = {code: 0 for code in labels}
-        for v in valid:
-            counts[v] = counts.get(v, 0) + 1
-        return {
-            "frequencies": "; ".join(
-                f"{code} {labels.get(code, '(not a choice)')}: {n} ({n / len(valid):.1%})"
-                for code, n in counts.items()
-            )
         }
     return {"distinct": len(set(valid))}
 
