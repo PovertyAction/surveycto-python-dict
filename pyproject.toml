@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Pull a SurveyCTO form's XML and wide JSON over the API and build typed parquet, a variable dictionary and a per-variable PII signal."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "requests>=2.31,<3",
     "pandas>=2.3.0,<4",
@@ -33,11 +33,11 @@ packages = ["src/surveycto_python_dict"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-# Lint config from ipa-python-template (org standard), py310 target.
+# Lint config from ipa-python-template (org standard), py311 target.
 [tool.ruff]
 line-length = 88
 fix = true
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["F", "E", "W", "I", "D", "UP", "SIM"]

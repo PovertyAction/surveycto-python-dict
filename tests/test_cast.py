@@ -53,7 +53,7 @@ def test_types(table):
 
 def test_values(table):
     assert _col(table, "SubmissionDate")[0] == dt.datetime(
-        2025, 3, 7, 16, 6, 12, tzinfo=dt.timezone.utc
+        2025, 3, 7, 16, 6, 12, tzinfo=dt.UTC
     )
     assert _col(table, "visit") == [dt.date(2025, 3, 6), None]
     assert _col(table, "plots") == [2, -99]  # sentinels stay ints

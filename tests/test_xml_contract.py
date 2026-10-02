@@ -644,3 +644,18 @@ class TestPublishable:
     def test_publishable_in_contract_json(self, pubform):
         nodes = pubform.to_dict()["nodes"]
         assert nodes["region"]["publishable"] is True
+
+
+class TestEncrypted:
+    def test_public_key_marks_form_encrypted(self, tmp_path):
+        p = tmp_path / "enc.xml"
+        p.write_text(
+            _XML_PUBLISHABLE.replace(
+                "<model>", '<model><submission base64RsaPublicKey="MIIBfake"/>'
+            ),
+            encoding="utf-8",
+        )
+        assert parse_contract(p).encrypted is True
+
+    def test_no_public_key_is_not_encrypted(self, contract):
+        assert contract.encrypted is False

@@ -39,11 +39,6 @@ class Spy:
         return self.inner.analyze(text=text, language=language, **kwargs)
 
 
-@pytest.fixture(scope="session")
-def analyzer():
-    return build_analyzer(PiiConfig())
-
-
 @pytest.fixture
 def form(tmp_path):
     path = tmp_path / "farm.xml"

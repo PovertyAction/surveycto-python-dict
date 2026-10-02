@@ -13,3 +13,6 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+
+# A user's config names their form; ship only the example
+config.toml

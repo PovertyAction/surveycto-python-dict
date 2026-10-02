@@ -1,7 +1,7 @@
 """Stage 1: SurveyCTO API client. HTTP is mocked with ``responses``; no network."""
 
 import base64
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -130,7 +130,7 @@ def test_pull_wide_json_with_key_posts_multipart_private_key(client, key_file):
 @responses.activate
 def test_pull_wide_json_since_sends_epoch_seconds(client):
     responses.get(f"{BASE}/api/v2/forms/data/wide/json/{FORM}", json=[])
-    since = datetime(2025, 3, 1, 12, 0, tzinfo=timezone.utc)
+    since = datetime(2025, 3, 1, 12, 0, tzinfo=UTC)
     client.pull_wide_json(FORM, since=since)
     query = parse_qs(urlparse(responses.calls[0].request.url).query)
     assert query == {"date": [str(int(since.timestamp()))]}

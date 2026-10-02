@@ -269,18 +269,20 @@ class FormContract:
         formdef_version: str | None,
         nodes: dict[str, Node],
         choice_index: dict | None = None,
+        encrypted: bool = False,
     ):
         """Store the node model and build the deterministic leaf-name resolver index."""
         self.formid = formid
         self.formdef_version = formdef_version
         self.nodes: dict[str, Node] = nodes
+        # The form has a public key: submissions are encrypted except publishable fields.
+        self.encrypted = encrypted
         # {node_path: {sanitised token: (original value, label|None)}}, for
         # de-sanitising a string-valued select_multiple choice back to the value the
         # form actually declared. Optional and injected by the caller: resolving a
         # `search()` choice universe needs the form's attached CSVs, which this
-        # parser deliberately knows nothing about (`cli/enrich.py` already resolves
-        # them for labels via `_resolve_search_choices`). Absent, a sanitised token
-        # is carried verbatim -- lossy but never wrong about which choice it is.
+        # parser knows nothing about. Absent, a sanitised token is carried
+        # verbatim -- lossy but never wrong about which choice it is.
         self.choice_index: dict = choice_index or {}
         # leaf token -> [paths], used to resolve a de-indexed wide base name.
         # Built from sorted paths so resolution is DETERMINISTIC: nodes is keyed
@@ -707,4 +709,8 @@ def parse_contract(xml_path) -> FormContract:
             appearance=ap,
             repeat_count=counts.get(path),
         )
-    return FormContract(formid, formdef_version, nodes)
+    encrypted = any(
+        _ln(el.tag) == "submission" and el.get("base64RsaPublicKey")
+        for el in root.iter()
+    )
+    return FormContract(formid, formdef_version, nodes, encrypted=encrypted)

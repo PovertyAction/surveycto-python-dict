@@ -50,9 +50,7 @@ class _Column:
 
 def _parse_timestamp(value: str) -> dt.datetime:
     # The REST API returns UTC, e.g. "Mar 7, 2025 4:06:12 PM".
-    return dt.datetime.strptime(value, "%b %d, %Y %I:%M:%S %p").replace(
-        tzinfo=dt.timezone.utc
-    )
+    return dt.datetime.strptime(value, "%b %d, %Y %I:%M:%S %p").replace(tzinfo=dt.UTC)
 
 
 def _parse_date(value: str) -> dt.date:
