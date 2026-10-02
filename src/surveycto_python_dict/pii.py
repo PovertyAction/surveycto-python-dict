@@ -11,8 +11,8 @@ Each column gets ``{"status", "basis"[, "presidio"]}``; the first matching rule 
 4. ``may_contain_pii`` / ``no_hits``: everything else, scanned with Presidio on its
    distinct non-null values (sampled with ``seed`` above ``max_distinct``).
 
-Presidio runs only on submission values. Blocks hold entity counts and the KEYs of
-hit rows, never matched text.
+Presidio runs only on submission values. Blocks hold entity counts, the number of hit
+rows and up to five of their KEYs, never matched text.
 """
 
 import random
@@ -47,6 +47,8 @@ _TYPED_SAFE = {"integer", "decimal", "date", "datetime", "time"}
 _SELECT_TYPES = {"select_one", "select_multiple"}
 _SAFE = {"cleared_by_form", "whitelisted"}
 _FLAGGED = {"contains_pii", "may_contain_pii"}
+# Enough KEYs to find examples; the review parquet has every flagged row.
+_MAX_HIT_KEYS = 5
 
 
 class MissingSpacyModel(RuntimeError):
@@ -178,15 +180,15 @@ def _scan(
         for t in types:
             found.setdefault(t, set()).add(value)
     hits = set().union(*found.values()) if found else set()
+    hit_keys = sorted({k for k, v in zip(keys, values, strict=True) if v in hits})
     return {
         "status": "may_contain_pii" if found else "no_hits",
         "basis": basis + [f"presidio:{t}" for t in sorted(found)],
         "presidio": {
             "entities": {t: len(found[t]) for t in sorted(found)},
             "distinct_scanned": len(distinct),
-            "hit_keys": sorted(
-                {k for k, v in zip(keys, values, strict=True) if v in hits}
-            ),
+            "hit_rows": len(hit_keys),
+            "hit_keys": hit_keys[:_MAX_HIT_KEYS],
         },
     }
 

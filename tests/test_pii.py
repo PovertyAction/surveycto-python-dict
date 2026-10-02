@@ -109,6 +109,7 @@ def test_presidio_finds_names_and_phones(blocks):
     assert owner["presidio"] == {
         "entities": {"PERSON": 1},
         "distinct_scanned": 1,
+        "hit_rows": 1,
         "hit_keys": ["uuid:aaa"],
     }
     phone = blocks["phone"]
@@ -121,7 +122,12 @@ def test_code_like_text_has_no_hits(blocks):
     assert blocks["plot_code"] == {
         "status": "no_hits",
         "basis": ["type:text"],
-        "presidio": {"entities": {}, "distinct_scanned": 2, "hit_keys": []},
+        "presidio": {
+            "entities": {},
+            "distinct_scanned": 2,
+            "hit_rows": 0,
+            "hit_keys": [],
+        },
     }
 
 
@@ -177,3 +183,18 @@ def test_review_table_has_key_and_flagged_columns(form, blocks):
     assert set(review.schema.names[1:]) == flagged
     assert review.num_rows == form[0].num_rows
     assert isinstance(review, pa.Table)
+
+
+def test_hit_keys_capped_at_five_with_the_full_count(analyzer):
+    from surveycto_python_dict.pii import _scan
+
+    phones = [f"31045678{i:02d}" for i in range(8)]
+    block = _scan(
+        pa.chunked_array([phones]),
+        [f"uuid:{i}" for i in range(8)],
+        ["type:text"],
+        PiiConfig(),
+        analyzer,
+    )
+    assert block["presidio"]["hit_rows"] == 8
+    assert block["presidio"]["hit_keys"] == [f"uuid:{i}" for i in range(5)]

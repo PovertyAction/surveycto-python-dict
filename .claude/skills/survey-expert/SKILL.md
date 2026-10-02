@@ -58,8 +58,9 @@ Every column carries `pii.status` with the `basis` for it:
 
 This is a signal, not enforcement. When a task needs a flagged column's values, say so
 and leave the reading to the user, who reviews `<form>_pii_review.parquet` and adds the
-columns they clear to `[pii] whitelist` in `config.toml`. `presidio.hit_keys` lists the
-`KEY`s of hit rows; quote counts and KEYs, never values.
+columns they clear to `[pii] whitelist` in `config.toml`. `presidio.hit_rows` counts the
+rows with a hit and `presidio.hit_keys` gives up to five of their `KEY`s; quote counts
+and KEYs, never values.
 
 ## Reading the dictionary
 
