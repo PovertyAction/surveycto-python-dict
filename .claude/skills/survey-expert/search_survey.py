@@ -18,12 +18,24 @@ from collections import Counter
 from pathlib import Path
 
 _FLAGGED = {"contains_pii", "may_contain_pii"}
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_TOKEN_RE = re.compile(r"\w+")
+_TAG_RE = re.compile(r"<[^>]+>")
 _REF_RE = re.compile(r"\$\{([^}]+)\}")
 
 
+def _plain(text: str) -> str:
+    """Return ``text`` without HTML tags, whitespace collapsed."""
+    return " ".join(_TAG_RE.sub(" ", text).split())
+
+
 def _tokens(text: str) -> list[str]:
-    return _TOKEN_RE.findall(text.lower())
+    """Return the words of ``text`` (any script, accents kept), lowercased."""
+    return _TOKEN_RE.findall(_plain(text).lower())
+
+
+def _short(text: str, limit: int = 100) -> str:
+    text = _plain(text)
+    return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
 class SurveyStore:
@@ -121,16 +133,20 @@ class SurveyStore:
         return "\n\n".join(self.lookup_variable(n) for n in names)
 
     def search_questions(self, query: str, max_results: int = 20) -> str:
-        """Rank questions by TF-IDF over their name and text."""
+        """Rank questions by the IDF of the query words their name or text contains."""
         docs = {
             n: _tokens(f"{n.replace('_', ' ')} {q['question_text']}")
             for n, q in self.questions.items()
         }
         df = Counter(t for toks in docs.values() for t in set(toks))
         idf = {t: math.log(len(docs) / df[t]) + 1 for t in df}
-        terms = _tokens(query)
+        # Words in more than half the questions ("de", "the") only rank when alone.
+        terms = [t for t in _tokens(query) if df.get(t, 0) <= len(docs) / 2] or _tokens(
+            query
+        )
+        # Each word counts once per question, so long texts do not win on common words.
         scores = {
-            n: sum(Counter(toks)[t] * idf.get(t, 0) for t in terms)
+            n: sum(idf.get(t, 0) for t in set(terms) if t in set(toks))
             for n, toks in docs.items()
         }
         ranked = sorted(
@@ -139,7 +155,7 @@ class SurveyStore:
         if not ranked:
             return f"No question matches {query!r}."
         return "\n".join(
-            f"{n} ({self.questions[n]['type']}): {self.questions[n]['question_text']}"
+            f"{n} ({self.questions[n]['type']}): {_short(self.questions[n]['question_text'])}"
             for _, n in ranked
         )
 
