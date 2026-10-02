@@ -6,7 +6,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from surveycto_python_dict.cast import CastError, cast_wide
+from surveycto_python_dict.cast import cast_wide
 from surveycto_python_dict.xml_contract import parse_contract
 
 _XML = """<?xml version="1.0"?>
@@ -194,29 +194,47 @@ def test_parquet_round_trip_keeps_schema(table, tmp_path):
     assert pq.read_schema(out).equals(table.schema, check_metadata=True)
 
 
-def test_bad_value_raises_with_column_and_key_value_redacted(contract):
-    rows = [dict(_ROWS[0], area="about two")]
-    with pytest.raises(CastError) as err:
-        cast_wide(rows, contract)
-    message = str(err.value)
-    assert "area" in message and "uuid:aaa" in message
-    assert "about two" not in message
-    assert "<redacted>" in message
+def _fallback(table, name):
+    return table.schema.field(name).metadata.get(b"cast_fallback", b"").decode()
 
 
-def test_bad_value_in_publishable_field_is_shown(contract):
-    rows = [dict(_ROWS[0], plots="two")]
-    with pytest.raises(CastError, match="'two'"):
-        cast_wide(rows, contract)
+def test_typed_columns_carry_no_fallback(table):
+    assert all(b"cast_fallback" not in (f.metadata or {}) for f in table.schema)
 
 
-def test_binary_value_other_than_one_raises(contract):
-    rows = [dict(_ROWS[0], tools_2="yes")]
-    with pytest.raises(CastError, match="tools_2"):
-        cast_wide(rows, contract)
+def test_unparseable_value_keeps_column_as_text(contract):
+    rows = [dict(_ROWS[0], area="about two"), _ROWS[1]]
+    table = cast_wide(rows, contract)
+    assert table.schema.field("area").type == pa.string()
+    assert _col(table, "area") == ["about two", None]
+    assert _fallback(table, "area") == "1 of 1 values do not parse as double"
+    assert table.schema.field("area").metadata[b"node_path"] == b"area"
 
 
-def test_unmapped_column_raises(contract):
-    rows = [dict(_ROWS[0], mystery="x")]
-    with pytest.raises(CastError, match="mystery"):
-        cast_wide(rows, contract)
+def test_fallback_reason_never_quotes_a_value(contract):
+    table = cast_wide([dict(_ROWS[0], plots="two", area="about two")], contract)
+    reasons = " ".join(_fallback(table, n) for n in table.schema.names)
+    assert "two" not in reasons
+
+
+def test_binary_value_other_than_one_keeps_text_and_still_counts_as_answered(contract):
+    table = cast_wide([dict(_ROWS[0], tools_2="yes")], contract)
+    assert table.schema.field("tools_2").type == pa.string()
+    assert _fallback(table, "tools_2") == "1 of 1 values do not parse as int8"
+    assert _col(table, "tools_1") == [0]
+
+
+def test_choice_code_not_in_form_is_text_and_counts_as_answered(contract):
+    table = cast_wide([dict(_ROWS[1], tools_9="1")], contract)
+    assert _col(table, "tools_9") == ["1"]
+    assert "not among the form's choices" in _fallback(table, "tools_9")
+    assert _col(table, "tools_1") == [0]
+    names = table.schema.names
+    assert names.index("tools_77") < names.index("tools_9") < names.index("plot_crop_1_2")
+
+
+def test_unmapped_column_is_text_at_the_end(contract):
+    table = cast_wide([dict(_ROWS[0], mystery="x")], contract)
+    assert _col(table, "mystery") == ["x"]
+    assert _fallback(table, "mystery") == "maps to no form field"
+    assert table.schema.names[-1] == "mystery"

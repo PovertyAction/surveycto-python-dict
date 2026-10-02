@@ -3,8 +3,9 @@
 Empty strings and absent keys are null. A select_multiple comes as per-choice
 binaries present only when chosen: within one field (and one repeat instance), an
 unchosen binary is 0 when any sibling was chosen, else null; every choice gets its
-column. Any value that does not cast raises ``CastError`` naming column and KEY; the
-value itself is shown only for publishable fields and non-identifying system columns.
+column. A column that cannot be typed (a value that does not parse, a column the
+form does not define) is kept as text, with the reason in its ``cast_fallback``
+field metadata; the reason never quotes a value.
 """
 
 import datetime as dt
@@ -23,8 +24,6 @@ from surveycto_python_dict.xml_contract import (
 _TIMESTAMP = pa.timestamp("ms", tz="UTC")
 _SYSTEM_TIMESTAMPS = {"SubmissionDate", "CompletionDate", "starttime", "endtime"}
 _SYSTEM_INTS = {"duration"}
-# System columns whose values identify no one; cast errors may print them.
-_SYSTEM_SHOWN = _SYSTEM_TIMESTAMPS | _SYSTEM_INTS | {"formdef_version", "review_status"}
 
 _XML_TYPES = {
     "int": pa.int64(),
@@ -38,15 +37,10 @@ _XML_TYPES = {
 }
 
 
-class CastError(ValueError):
-    """A wide-JSON value or column does not fit the form contract."""
-
-
 @dataclass
 class _Column:
     name: str
     arrow_type: pa.DataType
-    shown: bool  # cast errors may print the value
     metadata: dict[str, str]
     sort_key: tuple
     binary_group: tuple | None = (
@@ -67,7 +61,7 @@ def _parse_date(value: str) -> dt.date:
 
 def _parse_binary(value: str) -> int:
     if value != "1":
-        raise ValueError("a select_multiple choice binary is '1' when chosen")
+        raise ValueError("a chosen select_multiple binary is '1'")
     return 1
 
 
@@ -89,19 +83,17 @@ def _node_metadata(node: Node) -> dict[str, str]:
     }
 
 
-def _choice_index(node: Node, code) -> int:
-    values = [str(c["value"]) for c in node.choice_items]
-    if str(code) not in values:
-        raise CastError(
-            f"node {node.path!r}: choice code {code!r} is not among its choices"
-        )
-    return values.index(str(code))
+def _text(
+    name: str, reason: str, metadata: dict[str, str], sort_key: tuple, **kw
+) -> _Column:
+    return _Column(
+        name, pa.string(), {**metadata, "cast_fallback": reason}, sort_key, **kw
+    )
 
 
 def _binary_name(node: Node, code: str, iterations: tuple[int, ...]) -> str:
-    return f"{node.name}_{sanitize_choice_value(code)}" + "".join(
-        f"_{i}" for i in iterations
-    )
+    suffix = "".join(f"_{i}" for i in iterations)
+    return f"{node.name}_{sanitize_choice_value(code)}{suffix}"
 
 
 def _columns(names: list[str], contract: FormContract) -> list[_Column]:
@@ -119,32 +111,40 @@ def _columns(names: list[str], contract: FormContract) -> list[_Column]:
                 else pa.string()
             )
             rank = -1 if name == "KEY" else position
-            columns[name] = _Column(
-                name, arrow_type, name in _SYSTEM_SHOWN, {"system": "true"}, (0, rank)
-            )
+            columns[name] = _Column(name, arrow_type, {"system": "true"}, (0, rank))
             continue
         m = contract.map_column(name)
         if m["kind"] != "matched":
-            raise CastError(
-                f"column {name!r} maps to no field in form {contract.formid!r}"
-            )
+            columns[name] = _text(name, "maps to no form field", {}, (2, position))
+            continue
         node = contract.nodes[m["node_path"]]
-        if not node.is_leaf:
-            raise CastError(f"column {name!r} maps to group {node.path!r}, not a field")
         iterations = tuple(i for _, i in m["repeat_iterations"])
+        key = (1, order[node.path], iterations, 0)
+        if not node.is_leaf:
+            columns[name] = _text(name, f"maps to group {node.path!r}", {}, key)
+            continue
         if node.is_select_multiple and m["choice_code"] is not None:
             multi_instances.setdefault(node.path, set()).add(iterations)
+            codes = [str(c["value"]) for c in node.choice_items]
+            if str(m["choice_code"]) not in codes:
+                columns[name] = _text(
+                    name,
+                    f"choice code {m['choice_code']!r} is not among the form's choices",
+                    _node_metadata(node),
+                    (*key[:3], len(codes)),
+                    binary_group=(node.path, iterations),
+                )
             continue
         if node.xml_type not in _XML_TYPES:
-            raise CastError(
-                f"column {name!r}: no Arrow type for xml_type {node.xml_type!r}"
+            columns[name] = _text(
+                name,
+                f"no Arrow type for xml_type {node.xml_type!r}",
+                _node_metadata(node),
+                key,
             )
+            continue
         columns[name] = _Column(
-            name,
-            _XML_TYPES[node.xml_type],
-            node.publishable,
-            _node_metadata(node),
-            (1, order[node.path], iterations, 0),
+            name, _XML_TYPES[node.xml_type], _node_metadata(node), key
         )
 
     for path, instances in multi_instances.items():
@@ -152,22 +152,44 @@ def _columns(names: list[str], contract: FormContract) -> list[_Column]:
         if not node.repeat_path:
             instances = {()}
         for iterations in instances:
-            for item in node.choice_items:
+            for index, item in enumerate(node.choice_items):
                 name = _binary_name(node, item["value"], iterations)
                 m = contract.map_column(name)
                 if m["kind"] != "matched" or m["node_path"] != path:
-                    raise CastError(
+                    raise RuntimeError(
                         f"choice binary {name!r} does not map back to {path!r}"
                     )
                 columns[name] = _Column(
                     name,
                     pa.int8(),
-                    node.publishable,
                     {**_node_metadata(node), "choice_value": str(item["value"])},
-                    (1, order[path], iterations, _choice_index(node, item["value"])),
+                    (1, order[path], iterations, index),
                     binary_group=(path, iterations),
                 )
     return sorted(columns.values(), key=lambda c: c.sort_key)
+
+
+def _cast(
+    column: _Column, raw: list[str], answered: list[bool]
+) -> tuple[pa.Array, _Column]:
+    """Return the typed array, or the text array and its fallback column."""
+    parse = _PARSERS[column.arrow_type]
+    values, failed = [], 0
+    for value, was_answered in zip(raw, answered, strict=True):
+        if value == "":
+            values.append(
+                0 if was_answered and column.arrow_type == pa.int8() else None
+            )
+            continue
+        try:
+            values.append(parse(value))
+        except ValueError:
+            failed += 1
+    if not failed:
+        return pa.array(values, type=column.arrow_type), column
+    reason = f"{failed} of {sum(v != '' for v in raw)} values do not parse as {column.arrow_type}"
+    text = _text(column.name, reason, column.metadata, column.sort_key)
+    return pa.array([v or None for v in raw], type=pa.string()), text
 
 
 def cast_wide(rows: list[dict], contract: FormContract) -> pa.Table:
@@ -181,25 +203,10 @@ def cast_wide(rows: list[dict], contract: FormContract) -> pa.Table:
 
     arrays, fields = [], []
     for c in columns:
-        parse = _PARSERS[c.arrow_type]
-        values = []
-        for row in rows:
-            raw = row.get(c.name, "")
-            if raw == "":
-                answered = c.binary_group is not None and any(
-                    row.get(sibling, "") != "" for sibling in groups[c.binary_group]
-                )
-                values.append(0 if answered else None)
-                continue
-            try:
-                values.append(parse(raw))
-            except ValueError as e:
-                # The parser's own message repeats the value, so it is shown only
-                # when the value is.
-                detail = f"{raw!r} ({e})" if c.shown else "<redacted>"
-                raise CastError(
-                    f"column {c.name!r}, KEY {row['KEY']!r}: cannot cast {detail} to {c.arrow_type}"
-                ) from None
-        arrays.append(pa.array(values, type=c.arrow_type))
+        raw = [row.get(c.name, "") for row in rows]
+        siblings = groups.get(c.binary_group, [])
+        answered = [any(row.get(s, "") != "" for s in siblings) for row in rows]
+        array, c = _cast(c, raw, answered)
+        arrays.append(array)
         fields.append(pa.field(c.name, c.arrow_type, metadata=c.metadata))
     return pa.Table.from_arrays(arrays, schema=pa.schema(fields))
