@@ -92,6 +92,10 @@ def test_whitelisted_by_type_choices_and_system(blocks):
     assert blocks["SubmissionDate"] == {"status": "whitelisted", "basis": ["system"]}
 
 
+def test_dates_whitelisted_by_type(blocks):
+    assert blocks["visit"] == {"status": "whitelisted", "basis": ["type:date"]}
+
+
 def test_lineage(blocks):
     assert blocks["per_plot"] == {
         "status": "whitelisted",

@@ -5,9 +5,9 @@ Each column gets ``{"status", "basis"[, "presidio"]}``; the first matching rule 
 0. ``whitelisted`` / ``reviewed``: the column or its question is on the user's whitelist.
 1. ``cleared_by_form``: the question is ``publishable``.
 2. ``contains_pii``: device metadata columns; geo and attachment question types.
-3. ``whitelisted``: system columns; integer/decimal questions; selects with inline
-   choices; calculates whose every reference is cleared or whitelisted and that do
-   not ``pulldata()``.
+3. ``whitelisted``: system columns; integer, decimal, date, datetime and time
+   questions; selects with inline choices; calculates whose every reference is
+   cleared or whitelisted and that do not ``pulldata()``.
 4. ``may_contain_pii`` / ``no_hits``: everything else, scanned with Presidio on its
    distinct non-null values (sampled with ``seed`` above ``max_distinct``).
 
@@ -43,7 +43,7 @@ _CONTAINS_TYPES = {
     "video",
     "file",
 }
-_NUMERIC_TYPES = {"integer", "decimal"}
+_TYPED_SAFE = {"integer", "decimal", "date", "datetime", "time"}
 _SELECT_TYPES = {"select_one", "select_multiple"}
 _SAFE = {"cleared_by_form", "whitelisted"}
 _FLAGGED = {"contains_pii", "may_contain_pii"}
@@ -124,7 +124,7 @@ class _Rules:
             return {"status": "cleared_by_form", "basis": ["publishable"]}
         if qtype in _CONTAINS_TYPES:
             return {"status": "contains_pii", "basis": [f"type:{qtype}"]}
-        if qtype in _NUMERIC_TYPES:
+        if qtype in _TYPED_SAFE:
             return {"status": "whitelisted", "basis": [f"type:{qtype}"]}
         if qtype in _SELECT_TYPES and "search(" not in (q["appearance"] or ""):
             return {"status": "whitelisted", "basis": ["choices:inline"]}
