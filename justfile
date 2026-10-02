@@ -28,6 +28,10 @@ run cfg=config: (pull cfg) (build cfg)
 stats cfg=config:
     uv run scto-stats --config {{ cfg }}
 
+[doc("Write <form>_codebook.xlsx for PIs: a Variables sheet and a Summary stats sheet")]
+codebook cfg=config:
+    uv run scto-codebook --config {{ cfg }}
+
 [doc("Serve the built outputs to a local agent over stdio (survey-expert MCP)")]
 mcp cfg=config:
     uv run scto-mcp --config {{ cfg }}

@@ -14,6 +14,7 @@ dependencies = [
     "es-core-news-lg",
     "en-core-web-lg",
     "mcp[cli]>=2.0.0,<3",
+    "openpyxl>=3.1,<4",
 ]
 
 [dependency-groups]
@@ -26,6 +27,7 @@ scto-run   = "surveycto_python_dict.cli:run_main"
 scto-mcp   = "surveycto_python_dict.mcp_server:main"
 scto-survey = "surveycto_python_dict.survey:main"
 scto-stats = "surveycto_python_dict.stats:main"
+scto-codebook = "surveycto_python_dict.codebook:main"
 
 [build-system]
 requires = ["hatchling"]
