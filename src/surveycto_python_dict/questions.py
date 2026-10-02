@@ -150,6 +150,7 @@ def build_questions(xml_path: Path) -> list[dict]:
                     "appearance": None,
                     "references": _references(relevance, refs(node.repeat_count)),
                     "group_path": node.group_path,
+                    "publishable": False,
                     "repeat_group_name": node.name,
                 }
             )
@@ -188,6 +189,7 @@ def build_questions(xml_path: Path) -> list[dict]:
                 "appearance": node.appearance,
                 "references": _references(relevance, constraint, calculation),
                 "group_path": node.group_path,
+                "publishable": node.publishable,
             }
         )
     for order, question in enumerate(questions):

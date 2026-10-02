@@ -62,7 +62,7 @@ def test_values(table):
 
 
 def test_empty_and_absent_are_null(table):
-    assert _col(table, "owner") == ["Ana Fictional", None]
+    assert _col(table, "owner") == ["Ana Maria Gomez Restrepo", None]
     assert _col(table, "area") == [1.5, None]
     assert _col(table, "plot_size_2") == [None, None]
 

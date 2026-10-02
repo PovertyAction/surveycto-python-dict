@@ -100,6 +100,7 @@ _KEYS = [
     "appearance",
     "references",
     "group_path",
+    "publishable",
     "question_order",
 ]
 
@@ -210,6 +211,12 @@ def test_repeat_count_row(by_name):
     assert count["group_path"] == ["ok"]
     assert count["group_relevances"] == ["${consent}=1"]
     assert count["question_text"] == "Number of iterations in 'Staff' repeat group"
+
+
+def test_publishable(by_name):
+    assert by_name["langs"]["publishable"] is True
+    assert by_name["owner"]["publishable"] is False
+    assert by_name["staff_count"]["publishable"] is False
 
 
 def test_required_disabled_appearance(by_name):

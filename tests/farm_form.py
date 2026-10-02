@@ -6,7 +6,7 @@ XML = """<?xml version="1.0"?>
   <h:head><model>
     <instance><farm id="farm" version="3">
       <starttime/><endtime/><deviceid/><duration/>
-      <intro/><owner/><plots/><area/><per_plot/><visit/><crop/><tools/><photo/>
+      <intro/><owner/><phone/><plot_code/><village/><tag/><prev/><plots/><area/><per_plot/><visit/><crop/><tools/><photo/>
       <plot jr:template=""><plot_crop/><plot_size/></plot>
       <meta><instanceID/></meta>
     </farm></instance>
@@ -16,6 +16,11 @@ XML = """<?xml version="1.0"?>
     <bind nodeset="/farm/duration" type="string" calculate="duration()"/>
     <bind nodeset="/farm/intro" type="string" readonly="true()" original="note"/>
     <bind nodeset="/farm/owner" type="string"/>
+    <bind nodeset="/farm/phone" type="string"/>
+    <bind nodeset="/farm/plot_code" type="string"/>
+    <bind nodeset="/farm/village" type="string" publishable="true()"/>
+    <bind nodeset="/farm/tag" type="string" calculate="concat( /farm/owner , ' ',  /farm/phone )"/>
+    <bind nodeset="/farm/prev" type="string" calculate="pulldata('prev_round', 'owner', 'phone',  /farm/phone )"/>
     <bind nodeset="/farm/plots" type="int" publishable="true()"/>
     <bind nodeset="/farm/area" type="decimal" constraint=". &gt;= 0" relevant=" /farm/plots  &gt; 0"/>
     <bind nodeset="/farm/per_plot" type="decimal" calculate=" /farm/area  div  /farm/plots "/>
@@ -31,6 +36,9 @@ XML = """<?xml version="1.0"?>
   <h:body>
     <input ref="/farm/intro"><label>Welcome</label></input>
     <input ref="/farm/owner"><label>Owner</label></input>
+    <input ref="/farm/phone"><label>Phone</label></input>
+    <input ref="/farm/plot_code"><label>Plot code</label></input>
+    <input ref="/farm/village"><label>Village</label></input>
     <input ref="/farm/plots"><label>Plots</label></input>
     <input ref="/farm/area"><label>Area</label></input>
     <input ref="/farm/visit"><label>Visit</label></input>
@@ -62,7 +70,13 @@ ROWS = [
         "deviceid": "(web)",
         "duration": "478",
         "intro": "",
-        "owner": "Ana Fictional",
+        "owner": "Ana Maria Gomez Restrepo",
+        "phone": "3104567890",
+        "plot_code": "LT-0042",
+        "village": "Villa Ficticia Uno",
+        "tag": "Ana Maria Gomez Restrepo 3104567890",
+        "prev": "Jorge Perez",
+        "per_plot": "0.75",
         "plots": "2",
         "area": "1.5",
         "visit": "Mar 6, 2025",
@@ -83,6 +97,8 @@ ROWS = [
         "duration": "540",
         "intro": "",
         "owner": "",
+        "phone": "3204561122",
+        "plot_code": "0042",
         "plots": "-99",
         "area": "",
         "crop": "02",
