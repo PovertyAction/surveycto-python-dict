@@ -13,6 +13,7 @@ dependencies = [
     "presidio-analyzer>=2.2,<3",
     "es-core-news-lg",
     "en-core-web-lg",
+    "mcp[cli]>=2.0.0,<3",
 ]
 
 [dependency-groups]
@@ -22,6 +23,7 @@ dev = ["pytest", "responses", "ruff"]
 scto-pull  = "surveycto_python_dict.cli:pull_main"
 scto-build = "surveycto_python_dict.cli:build_main"
 scto-run   = "surveycto_python_dict.cli:run_main"
+scto-mcp   = "surveycto_python_dict.mcp_server:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -32,4 +32,11 @@ The `pii` block is a signal for the people cleaning the data, not enforcement:
 or `no_hits`, with the basis for each. Review flagged columns in
 `<form>_pii_review.parquet` and add the ones you clear to `[pii] whitelist`.
 
+## Survey-expert MCP server
+
+`uv run scto-mcp --config config.toml` serves one form's outputs over stdio to a local
+agent: `lookup_variable(s)`, `search_questions`, `get_choice_list`, `get_gate_chain`,
+`get_survey_info`, `get_variable_neighborhood`, `get_repeat_structure`. It reads only
+the JSON outputs, never the parquet, and shows each column's `pii` status.
+
 Design: `surveycto-api-extractor-PROMPT.md`; API notes: `docs/`.
