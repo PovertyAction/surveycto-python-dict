@@ -1,7 +1,11 @@
 # Cleaning SurveyCTO data in Python
 
-The team's cleaning practice for this tool's outputs, in pandas/pyarrow. Each rule is
-followed by its reason. Read this before writing or reviewing cleaning code.
+The team's suggested cleaning practice for this tool's outputs, in pandas/pyarrow.
+These are guidelines, not steps the tool runs: the people and agents cleaning the data
+decide what applies to their study. Each suggestion is followed by its reason.
+
+Read the parquet with `pd.read_parquet(path, dtype_backend="pyarrow")` so integer and
+binary columns keep their types and nulls instead of turning into floats.
 
 ## What the outputs already give you
 
@@ -37,7 +41,7 @@ followed by its reason. Read this before writing or reviewing cleaning code.
    if not neg.isin(VALID[col]).all():
        raise ValueError(f"{col}: unknown negative codes {sorted(set(neg) - VALID[col])}")
    ```
-3. **Move the codes to `<var>_dk`, then set them missing in `<var>`.** Where a column
+3. **Suggested: move the codes to `<var>_dk`, then set them missing in `<var>`.** Where a column
    holds a sentinel code that is not part of its normal distribution, create the
    auxiliary column `<var>_dk` holding that code (`-99`, `-88`, ...) on those rows and
    null elsewhere, and convert the code to missing in the main column. The main column
@@ -148,16 +152,52 @@ followed by its reason. Read this before writing or reviewing cleaning code.
 1. **Layout:** fields in a repeat end in `_<n>` per instance (`_<n>_<m>` nested); each
    repeat has a `<repeat>_count` question. Instance `n` is the n-th entry, **not** a
    choice code: map positions to codes through the routing variable after reshaping.
-2. **Reshape safely:** assert unique keys before, the key and row count after.
+2. **Suggested: melt each repeat to its own level and keep the identifiers to merge back.** A
+   household roster becomes one row per member: `KEY` plus the instance number (and the
+   parent instance numbers for a nested repeat). Clean and aggregate at that level,
+   then merge the results back to the submission table on `KEY`. Take the repeat's
+   fields from the graph and each column's instance from the dictionary, so no column
+   name is guessed; building one frame per instance keeps each field's type, which a
+   single melted value column would mix. `df` is the parquet read as above.
+   ```python
+   members = graph["repeat_groups"]["roster"]["members"]   # the repeat's questions
+   by_instance: dict[tuple, dict[str, str]] = {}
+   for column, v in variables.items():                     # dictionary["variables"]
+       if v["question"] in members:
+           field = v["question"]
+           if "choice_value" in v:                         # select_multiple binary
+               field += "_" + v["choice_value"].replace("-", "_")
+           by_instance.setdefault(tuple(v["repeat_iteration"]), {})[column] = field
+   roster = pd.concat(
+       [
+           df[["KEY", *columns]].rename(columns=columns).assign(member=instance[-1])
+           for instance, columns in by_instance.items()
+       ],
+       ignore_index=True,
+   )
+   fields = [c for c in roster if c not in ("KEY", "member")]
+   roster = roster.dropna(how="all", subset=fields)          # slots nobody filled
+   if roster.duplicated(["KEY", "member"]).any():
+       raise ValueError("roster: duplicate KEY x member")
+   ```
+   For a nested repeat, add one column per level from `instance[:-1]` (for example
+   `member` and `visit`) and key on all of them.
+3. **Merge back with the identifiers and a declared cardinality:**
+   ```python
+   per_hh = roster.groupby("KEY").agg(n_members=("member", "size"))
+   df = df.merge(per_hh, on="KEY", how="left", validate="one_to_one")
+   ```
+4. **Reshape safely:** assert unique keys before, the key and row count after.
    `pivot_table` silently averages duplicates; `wide_to_long` and `pivot` raise.
-3. **Padding slots:** reshaping long creates a slot per possible instance; exclude
-   slots beyond the reported count from missing checks.
-4. **Carry the `_dk` columns through reshape and aggregation:** reshape them with
+5. **Padding slots:** the wide table has a slot for every instance any submission
+   used; drop slots with no values, and exclude slots beyond the reported count from
+   missing checks.
+6. **Carry the `_dk` columns through reshape and aggregation:** reshape them with
    their values and aggregate them alongside (`groupby(...).agg(any_dk=("x_dk",
    lambda s: s.notna().any()))`); after arithmetic a DK and a skip both look null.
-5. **The roster head is the relationship code, not slot 1;** assert one head per
+7. **The roster head is the relationship code, not slot 1;** assert one head per
    household.
-6. **Merges:** `validate="one_to_one"` / `"many_to_one"` and `indicator=True` with
+8. **Merges:** `validate="one_to_one"` / `"many_to_one"` and `indicator=True` with
    asserts on the counts; select columns before merging; keep IDs as strings in every
    file. A merge on non-unique keys explodes rows silently.
 
