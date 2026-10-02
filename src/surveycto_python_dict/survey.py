@@ -53,6 +53,10 @@ class SurveyStore:
         parts = [
             f"  {name}  {v['parquet']['arrow_type']}  missing {v['missing_rate']:.1%}"
         ]
+        if "choice_value" in v:
+            parts.append(
+                ", ".join(f"{c['value']} = {c['label']}" for c in v["value_labels"])
+            )
         if "data_min" in v:
             parts.append(f"range {v['data_min']}..{v['data_max']}")
         if "sentinels" in v:

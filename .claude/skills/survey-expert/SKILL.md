@@ -79,6 +79,9 @@ Each `variables.<column>` entry has:
   missing in `<var>` (`references/cleaning.md`, section 3).
 - `repeat_iteration`: the repeat instance(s) of a column inside a repeat, outer first.
 - `choice_value`: on a select_multiple binary, the choice it stands for.
+- `value_labels`: what a coded column's values mean. For a select_one, its choices; for
+  a select_multiple binary, only `1` (that choice) and `0` (not chosen), never the
+  question's whole list, which stays in `survey.choices`.
 - `system: true`: a SurveyCTO column (`KEY`, `SubmissionDate`, `duration`, ...).
   Timestamps are UTC.
 

@@ -181,3 +181,9 @@ def test_survey_module_imports_only_the_standard_library():
         if isinstance(node, ast.ImportFrom) and node.module
     }
     assert imported <= sys.stdlib_module_names
+
+
+def test_lookup_shows_a_binary_column_its_own_values(store):
+    out = store.lookup_variable("tools")
+    line = next(r for r in out.splitlines() if r.strip().startswith("tools_77"))
+    assert "1 = Other, 0 = not chosen" in line

@@ -2,7 +2,8 @@
 
 The dictionary is ``{dataset, summary, variables}``; each variable links to its
 question in ``questions.json`` by name and carries column statistics, the Arrow and
-XML types, and sentinel counts. Sentinel codes are reported, never recoded: the
+XML types, sentinel counts, and ``value_labels`` for coded columns (a select_one's
+choices; for a select_multiple binary, ``1`` = its choice and ``0`` = not chosen). Sentinel codes are reported, never recoded: the
 parquet keeps them as collected and the user decides how to treat them. The graph
 links questions through calculations, relevance, group relevance, constraints and
 shared repeats.
@@ -113,7 +114,19 @@ def build_dictionary(
                         i for _, i in mapped["repeat_iterations"]
                     ]
             if "choice_value" in meta:
+                # A select_multiple binary stands for one choice: 1 chosen, 0 not.
                 entry["choice_value"] = meta["choice_value"]
+                label = next(
+                    c["label"]
+                    for c in question["choices"]
+                    if c["value"] == meta["choice_value"]
+                )
+                entry["value_labels"] = [
+                    {"value": "1", "label": label},
+                    {"value": "0", "label": "not chosen"},
+                ]
+            elif question["type"] == "select_one":
+                entry["value_labels"] = question["choices"]
             entry["survey"] = {k: question[k] for k in _SURVEY_KEYS}
             entry["survey"]["original_variable_name"] = question["variable_name"]
             entry["survey"]["group_path"] = "/".join(question["group_path"])

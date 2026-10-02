@@ -179,3 +179,27 @@ def test_graph_repeat_groups(graph):
 
 def test_graph_is_json_serialisable(graph):
     json.dumps(graph)
+
+
+def test_choice_binary_value_labels_are_its_own(variables):
+    """A select_multiple binary stands for one choice: 1 chosen, 0 not."""
+    assert variables["tools_77"]["value_labels"] == [
+        {"value": "1", "label": "Other"},
+        {"value": "0", "label": "not chosen"},
+    ]
+    assert variables["tools_77"]["survey"]["choices"][2] == {
+        "value": "77",
+        "label": "Other",
+    }
+
+
+def test_select_one_value_labels_are_its_choices(variables):
+    assert variables["crop"]["value_labels"] == [
+        {"value": "01", "label": "Maize"},
+        {"value": "02", "label": "Rice"},
+    ]
+
+
+def test_uncoded_columns_have_no_value_labels(variables):
+    assert "value_labels" not in variables["area"]
+    assert "value_labels" not in variables["KEY"]
