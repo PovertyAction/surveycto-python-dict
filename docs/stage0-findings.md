@@ -37,11 +37,7 @@ synthetic and reproduce the shapes below.
   ([SurveyCTO: exporting in different time zones](https://support.surveycto.com/hc/en-us/articles/360046966333-Exporting-data-in-different-time-zones)),
   so stage 4 parses them into `timestamp[ms, tz=UTC]`.
 
-## Stage 3 source (amendment 1)
+## Stage 3 source
 
-**`/design` carries the XLSForm.** `fieldsRowsAndColumns` (survey), `choicesRowsAndColumns`
-and `settingsRowsAndColumns` are lists of rows whose first row is the header (`type`,
-`name`, `label`, ..., `publishable`; `list_name`, `value`, `label`, `image`; `form_title`,
-`form_id`, `version`, `public_key`, `submission_url`, `default_language`). Stage 3 builds
-`questions.json` with upstream `JSONExtractor` from these sheets. The XML supplies the
-contract, the types and `publishable`.
+`questions.json` is rebuilt from the compiled XML; the XML is the only form definition the
+pipeline reads.

@@ -8,7 +8,6 @@ Base URL: `https://{server}.surveycto.com`, where `{server}` is the bare subdoma
 | Form list | `GET /formList` | OpenRosa XML. Each `<xform>` has `formID`, `version`, `hash`, `downloadUrl`, `manifestUrl`, and SurveyCTO extras (`datasets`, `files`, `groupId`, `ordinal`, `publishingLinks`, `majorMinorVersion`). |
 | Compiled XForm | `GET /forms/{form_id}/xml` | Byte-identical to the form list's `downloadUrl` (`/forms/{form_id}/xml?t=<ms>`). |
 | Form attachments manifest | `GET /forms/{form_id}/manifest` | OpenRosa manifest XML; one `mediaFile` (`filename`, `hash`, `downloadUrl`) per attachment. |
-| Form design (XLSForm rows) | `GET /forms/{form_id}/design` | **Console endpoint, not `/api/`; SurveyCTO can change it without notice.** Needs a session: `HEAD /` -> `X-csrf-token` response header; `POST /login` with Basic auth and `X-csrf-token` -> 200 and a refreshed `X-csrf-token`; then GET with the session cookies and the refreshed token. Body is JSON although `Content-Type` is `text/html`. |
 | Wide JSON, decrypted | `POST /api/v2/forms/data/wide/json/{form_id}?date=<epoch s>` | Private key as multipart file field `private_key`. `date` = oldest `CompletionDate` to return, in epoch seconds; `date=0` is throttled to once per 300 s, so `date=1` means "all". |
 | Wide JSON, no key | `GET /api/v2/forms/data/wide/json/{form_id}?date=<epoch s>` | On an encrypted form returns only publishable fields plus a fixed set of system columns. |
 | Server dataset | `GET /api/v2/datasets/data/csv/{dataset_id}` | CSV. |

@@ -2,7 +2,7 @@
 
 Never prints a submission value. It prints HTTP status, URL shapes (server redacted),
 column names, per-column presence and non-empty counts in each pull, XML bind
-attribute names, and the key layout of the /design JSON. Formats of system date
+attribute names. Formats of system date
 columns are printed as masks (digits -> 9, letters -> a).
 
 Run: uv run python scripts/stage0_probe.py
@@ -110,46 +110,7 @@ print(
     f"[contract] data sources: {[n.data_source for n in contract.nodes.values() if n.data_source]}"
 )
 
-# 3. /design (console, CSRF session) ---------------------------------------------
-s = requests.Session()
-h = s.head(BASE)
-token = h.headers.get("X-csrf-token")
-print(f"[design] HEAD base -> {h.status_code}, csrf token issued: {token is not None}")
-login = s.post(f"{BASE}/login", auth=AUTH, headers={"X-csrf-token": token or ""})
-print(
-    f"[design] POST /login -> {login.status_code}, refreshed token: {login.headers.get('X-csrf-token') is not None}"
-)
-token = login.headers.get("X-csrf-token", token)
-design = check(
-    s.get(f"{BASE}/forms/{FORM}/design", headers={"X-csrf-token": token or ""}),
-    "design",
-)
-(OUT / "design.json").write_bytes(design.content)
-d = design.json()
-
-
-def layout(obj, depth=0, name="design"):
-    pad = "    " * depth
-    if isinstance(obj, dict):
-        print(f"{pad}{name}: dict keys={sorted(obj)[:40]}")
-        if depth < 2:
-            for k, v in obj.items():
-                if isinstance(v, (dict, list)):
-                    layout(v, depth + 1, k)
-    elif isinstance(obj, list):
-        first = obj[0] if obj else None
-        kind = type(first).__name__
-        print(f"{pad}{name}: list len={len(obj)} of {kind}")
-        if isinstance(first, list) and depth < 3:
-            # XLSForm-like sheet: the first row is the header, which is structure
-            print(f"{pad}    first row (header?): {first[:40]}")
-        elif isinstance(first, dict) and depth < 3:
-            print(f"{pad}    item keys: {sorted(first)[:40]}")
-
-
-layout(d)
-
-# 4. wide JSON with and without key ----------------------------------------------
+# 3. wide JSON with and without key ----------------------------------------------
 wide_url = f"{BASE}/api/v2/forms/data/wide/json/{FORM}?date=1"
 with open(ENV["SCTO_KEY_PATH"], "rb") as key:
     with_key = check(

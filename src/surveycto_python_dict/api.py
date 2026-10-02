@@ -1,10 +1,9 @@
-"""SurveyCTO API client: form list, XForm XML, /design, wide JSON, datasets, attachments.
+"""SurveyCTO API client: form list, XForm XML, wide JSON, datasets, attachments.
 
 Every non-2xx response raises ``SurveyCTOError`` with status and URL; nothing retries.
 Endpoint shapes are recorded in ``docs/api-endpoints.md``.
 """
 
-import json
 import os
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -20,26 +19,14 @@ class MissingEnvVar(RuntimeError):
 
 
 class SurveyCTOError(RuntimeError):
-    """The server answered a request with a non-2xx status or an unexpected shape."""
+    """The server answered a request with a non-2xx status."""
 
-    def __init__(self, method: str, url: str, status: int, detail: str = ""):
-        """Record the failed request; ``detail`` explains a non-status failure."""
-        super().__init__(
-            f"{method} {url} -> HTTP {status}{f': {detail}' if detail else ''}"
-        )
+    def __init__(self, method: str, url: str, status: int):
+        """Record the failed request."""
+        super().__init__(f"{method} {url} -> HTTP {status}")
         self.method = method
         self.url = url
         self.status = status
-
-
-def _csrf_token(resp: requests.Response) -> str:
-    token = resp.headers.get("X-csrf-token")
-    if token is None:
-        req = resp.request
-        raise SurveyCTOError(
-            req.method, req.url, resp.status_code, "no X-csrf-token header"
-        )
-    return token
 
 
 def _env(name: str) -> str:
@@ -73,8 +60,7 @@ class Client:
         return f"Client(server={self.server!r}, user={self._user!r})"
 
     def _send(self, method: str, url: str, **kwargs) -> requests.Response:
-        session = kwargs.pop("session", None) or requests
-        resp = session.request(method, url, auth=self._auth, **kwargs)
+        resp = requests.request(method, url, auth=self._auth, **kwargs)
         if not resp.ok:
             raise SurveyCTOError(method, url, resp.status_code)
         return resp
@@ -86,23 +72,6 @@ class Client:
     def pull_form_xml(self, form_id: str) -> bytes:
         """Return the deployed form's compiled XForm XML."""
         return self._send("GET", f"{self.base_url}/forms/{form_id}/xml").content
-
-    def pull_design(self, form_id: str) -> dict:
-        """Return the XLSForm sheets as rows (console endpoint; needs a CSRF login session)."""
-        session = requests.Session()
-        head = session.head(self.base_url)
-        token = _csrf_token(head)
-        login = self._send(
-            "POST",
-            f"{self.base_url}/login",
-            headers={"X-csrf-token": token},
-            session=session,
-        )
-        token = _csrf_token(login)
-        url = f"{self.base_url}/forms/{form_id}/design"
-        resp = self._send("GET", url, headers={"X-csrf-token": token}, session=session)
-        # Served as text/html; the body is JSON.
-        return json.loads(resp.text)
 
     def pull_wide_json(
         self,

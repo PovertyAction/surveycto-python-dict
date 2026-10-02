@@ -144,32 +144,6 @@ def test_pull_wide_json_naive_since_raises(client):
 
 
 @responses.activate
-def test_pull_design_logs_in_with_csrf_then_parses_json(client):
-    responses.head(
-        BASE, status=302, headers={"X-csrf-token": "t1", "Location": "/main.html"}
-    )
-    responses.post(f"{BASE}/login", headers={"X-csrf-token": "t2"})
-    # The console serves JSON as text/html.
-    responses.get(
-        f"{BASE}/forms/{FORM}/design",
-        body='{"fieldsRowsAndColumns": [["type", "name"]]}',
-        content_type="text/html;charset=UTF-8",
-    )
-    assert client.pull_design(FORM) == {"fieldsRowsAndColumns": [["type", "name"]]}
-    head, login, design = (c.request for c in responses.calls)
-    assert login.headers["X-csrf-token"] == "t1"
-    assert login.headers["Authorization"] == _basic("user@example.org", "s3cret-pw")
-    assert design.headers["X-csrf-token"] == "t2"
-
-
-@responses.activate
-def test_pull_design_without_csrf_token_raises(client):
-    responses.head(BASE, status=302)
-    with pytest.raises(SurveyCTOError, match="X-csrf-token"):
-        client.pull_design(FORM)
-
-
-@responses.activate
 def test_pull_dataset(client):
     responses.get(f"{BASE}/api/v2/datasets/data/csv/roster", body="id,name\n1,a\n")
     assert client.pull_dataset("roster") == "id,name\n1,a\n"
@@ -262,17 +236,6 @@ def test_live_form_xml_is_xform_with_publishable(live):
     n_publishable = sum(1 for e in root.iter() if "publishable" in e.attrib)
     assert root.tag.endswith("html")
     assert n_publishable > 0
-
-
-@pytest.mark.live
-def test_live_design_has_xlsform_sheets(live):
-    client, form = live
-    sheets = set(client.pull_design(form))
-    assert {
-        "fieldsRowsAndColumns",
-        "choicesRowsAndColumns",
-        "settingsRowsAndColumns",
-    } <= sheets
 
 
 @pytest.mark.live
