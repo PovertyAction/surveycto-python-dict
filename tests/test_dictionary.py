@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from farm_form import ROWS, XML
+from farm_form import ROWS, SENTINELS, XML
 
 from surveycto_python_dict.cast import cast_wide
 from surveycto_python_dict.dictionary import build_dictionary, build_graph
@@ -18,7 +18,7 @@ def built(tmp_path):
     contract = parse_contract(path)
     questions = build_questions(path)
     table = cast_wide(ROWS, contract)
-    return table, questions, build_dictionary(table, questions, contract)
+    return table, questions, build_dictionary(table, questions, contract, SENTINELS)
 
 
 @pytest.fixture
@@ -122,7 +122,7 @@ def test_cast_fallback_surfaces(tmp_path):
     path.write_text(XML, encoding="utf-8")
     contract = parse_contract(path)
     table = cast_wide([dict(ROWS[0], area="about two")], contract)
-    vardict = build_dictionary(table, build_questions(path), contract)
+    vardict = build_dictionary(table, build_questions(path), contract, SENTINELS)
     assert vardict["variables"]["area"]["parquet"]["cast_fallback"] == (
         "1 of 1 values do not parse as double"
     )

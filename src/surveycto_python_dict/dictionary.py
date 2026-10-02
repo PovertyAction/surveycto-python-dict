@@ -18,15 +18,6 @@ import pyarrow.compute as pc
 
 from surveycto_python_dict.xml_contract import FormContract
 
-# Non-response codes, IPA's convention: code -> meaning.
-DEFAULT_SENTINELS: dict[int, str] = {
-    -99: "Don't know",
-    -88: "Refused to answer",
-    -77: "Not applicable",
-    -66: "Other (specify)",
-    -55: "Not in list",
-}
-
 _REF_RE = re.compile(r"\$\{([^}]+)\}")
 _SURVEY_KEYS = (
     "question_text",
@@ -77,7 +68,7 @@ def build_dictionary(
     table: pa.Table,
     questions: list[dict],
     contract: FormContract,
-    sentinels: dict[int, str] = DEFAULT_SENTINELS,
+    sentinels: dict[int, str],
 ) -> dict:
     """Return the variable dictionary for a cast table."""
     by_name = {q["variable_name"]: q for q in questions}

@@ -18,9 +18,11 @@ just mcp                             # survey-expert MCP server over stdio
 Each recipe takes another config as an argument (`just build path/to/config.toml`);
 `just` lists them all.
 
-Credentials come from `.env`: `SCTO_SERVER` (the subdomain), `SCTO_USER`,
-`SCTO_PASSWORD`, and `SCTO_KEY_PATH` for encrypted forms. Never commit `.env`, the
-`.pem` key, `config.toml` or `data/`.
+Copy `.env.example` to `.env` and fill it in: `SCTO_SERVER` (the subdomain),
+`SCTO_USER`, `SCTO_PASSWORD`, `SCTO_KEY_PATH` for encrypted forms, and
+`SCTO_SENTINELS`, the study's non-response codes (`"-99=Don't know;-88=Refused;..."`),
+which `just build` and `just stats` require. Never commit `.env`, the `.pem` key,
+`config.toml` or `data/`.
 
 Outputs in `<out_dir>/<form_id>/`:
 

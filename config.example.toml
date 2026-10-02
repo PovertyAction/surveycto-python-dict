@@ -10,6 +10,3 @@ whitelist = []
 # max_distinct = 1000
 # seed = 0
 # id_patterns = { NATIONAL_ID = '\b\d{8,10}\b' }
-
-# [sentinels]          # replaces the default -99/-88/-77/-66/-55 table
-# "-99" = "Don't know"

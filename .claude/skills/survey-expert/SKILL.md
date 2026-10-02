@@ -73,7 +73,7 @@ Each `variables.<column>` entry has:
 - `non_null_count`, `missing_rate`, `is_all_missing`; `data_min` / `data_max` for
   numbers, dates and timestamps only.
 - `sentinels`: counts of non-response codes (`-99` Don't know, `-88` Refused, `-77`
-  Not applicable, `-66` Other, `-55` Not in list, or the form's own table). They are
+  Not applicable, `-66` Other, `-55` Not in list: the study's table in `SCTO_SENTINELS`). They are
   **reported, never recoded**: the parquet keeps `-99` as `-99`, and the user decides
   how to treat it. The team suggests moving the code to `<var>_dk` and setting it
   missing in `<var>` (`references/cleaning.md`, section 1).

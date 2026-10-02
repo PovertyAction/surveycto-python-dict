@@ -3,21 +3,20 @@
 Configuration is a TOML file (``--config``, default ``config.toml``)::
 
     form_id = "my_form"
-    out_dir = "data/out"          # relative to the config file
+    out_dir = "data/out"  # relative to the config file
 
-    [pii]                         # every key optional; see PiiConfig
+    [pii]  # every key optional; see PiiConfig
     whitelist = ["village_name"]
 
-    [sentinels]                   # replaces the default code -> meaning table
-    "-99" = "Don't know"
-
-Credentials come from the environment or ``.env``: ``SCTO_SERVER``, ``SCTO_USER``,
-``SCTO_PASSWORD``, and ``SCTO_KEY_PATH`` for encrypted forms. Raw pulls go to
+Credentials and the study's sentinel codes come from the environment or ``.env``:
+``SCTO_SERVER``, ``SCTO_USER``, ``SCTO_PASSWORD``, ``SCTO_KEY_PATH`` for encrypted forms,
+and ``SCTO_SENTINELS`` (``"-99=Don't know;-88=Refused"``) for building. Raw pulls go to
 ``<out_dir>/<form_id>/raw/``; built outputs to ``<out_dir>/<form_id>/``.
 """
 
 import argparse
 import json
+import os
 import tomllib
 from collections import Counter
 from dataclasses import dataclass, fields
@@ -26,15 +25,10 @@ from pathlib import Path
 import pyarrow.parquet as pq
 from dotenv import load_dotenv
 
-from surveycto_python_dict.api import Client, env_key_path
+from surveycto_python_dict.api import Client, MissingEnvVar, env_key_path
 from surveycto_python_dict.cast import cast_wide
 from surveycto_python_dict.contract import form_entry, resolve_datasets
-from surveycto_python_dict.dictionary import (
-    DEFAULT_SENTINELS,
-    build_dictionary,
-    build_graph,
-    write_json,
-)
+from surveycto_python_dict.dictionary import build_dictionary, build_graph, write_json
 from surveycto_python_dict.pii import (
     PiiConfig,
     attach,
@@ -45,7 +39,7 @@ from surveycto_python_dict.pii import (
 from surveycto_python_dict.questions import build_questions, write_sections
 from surveycto_python_dict.xml_contract import parse_contract
 
-_TOP_KEYS = {"form_id", "out_dir", "pii", "sentinels"}
+_TOP_KEYS = {"form_id", "out_dir", "pii"}
 
 
 @dataclass(frozen=True)
@@ -55,7 +49,6 @@ class Config:
     form_id: str
     out_dir: Path
     pii: PiiConfig
-    sentinels: dict[int, str]
 
     @property
     def form_dir(self) -> Path:
@@ -84,17 +77,32 @@ def load_config(path: Path) -> Config:
         pii["entities"] = tuple(pii["entities"])
     if "whitelist" in pii:
         pii["whitelist"] = tuple(pii["whitelist"])
-    sentinels = data.get("sentinels")
     return Config(
         form_id=data["form_id"],
         out_dir=Path(path).parent / data["out_dir"],
         pii=PiiConfig(**pii),
-        sentinels=(
-            {int(code): meaning for code, meaning in sentinels.items()}
-            if sentinels is not None
-            else DEFAULT_SENTINELS
-        ),
     )
+
+
+def env_sentinels() -> dict[int, str]:
+    """Return ``SCTO_SENTINELS`` as ``{code: meaning}``.
+
+    The study's non-response codes, as ``code=meaning`` pairs separated by ``;``:
+    ``SCTO_SENTINELS="-99=Don't know;-88=Refused;-77=Not applicable"``.
+    """
+    raw = os.environ.get("SCTO_SENTINELS", "").strip().strip(";")
+    if not raw:
+        raise MissingEnvVar(
+            "environment variable SCTO_SENTINELS is not set "
+            '(e.g. SCTO_SENTINELS="-99=Don\'t know;-88=Refused")'
+        )
+    table = {}
+    for pair in raw.split(";"):
+        code, sep, meaning = pair.partition("=")
+        if not sep or not code.strip() or not meaning.strip():
+            raise ValueError(f"SCTO_SENTINELS: {pair.strip()!r} is not code=meaning")
+        table[int(code.strip())] = meaning.strip()
+    return table
 
 
 def pull(cfg: Config, client: Client) -> Path:
@@ -135,14 +143,14 @@ def pull(cfg: Config, client: Client) -> Path:
     return raw
 
 
-def build(cfg: Config, analyzer=None) -> dict[str, Path]:
+def build(cfg: Config, sentinels: dict[int, str], analyzer=None) -> dict[str, Path]:
     """Build every output from the raw dir; return the written paths by name."""
     raw, out, form = cfg.raw_dir, cfg.form_dir, cfg.form_id
     contract = parse_contract(raw / "form.xml")
     questions = build_questions(raw / "form.xml")
     rows = json.loads((raw / "wide.json").read_text(encoding="utf-8"))
     table = cast_wide(rows, contract)
-    vardict = build_dictionary(table, questions, contract, cfg.sentinels)
+    vardict = build_dictionary(table, questions, contract, sentinels)
     blocks = classify(
         table, vardict, questions, cfg.pii, analyzer or build_analyzer(cfg.pii)
     )
@@ -186,12 +194,14 @@ def pull_main(argv: list[str] | None = None) -> None:
 
 def build_main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-build``."""
-    build(_config_arg(argv))
+    load_dotenv()
+    build(_config_arg(argv), env_sentinels())
 
 
 def run_main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-run``: pull, then build."""
     load_dotenv()
     cfg = _config_arg(argv)
+    sentinels = env_sentinels()
     pull(cfg, Client.from_env())
-    build(cfg)
+    build(cfg, sentinels)

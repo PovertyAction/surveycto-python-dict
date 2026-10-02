@@ -4,7 +4,7 @@ import json
 
 import pyarrow as pa
 import pytest
-from farm_form import ROWS, XML
+from farm_form import ROWS, SENTINELS, XML
 
 from surveycto_python_dict.cast import cast_wide
 from surveycto_python_dict.dictionary import build_dictionary
@@ -46,7 +46,7 @@ def form(tmp_path):
     contract = parse_contract(path)
     questions = build_questions(path)
     table = cast_wide(ROWS, contract)
-    return table, questions, build_dictionary(table, questions, contract)
+    return table, questions, build_dictionary(table, questions, contract, SENTINELS)
 
 
 def _classify(form, analyzer, config=PiiConfig()):

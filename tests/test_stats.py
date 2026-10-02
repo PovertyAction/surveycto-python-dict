@@ -4,7 +4,7 @@ import csv
 import json
 
 import pytest
-from farm_form import ROWS, XML
+from farm_form import ROWS, SENTINELS, XML
 
 from surveycto_python_dict.cli import build, load_config
 from surveycto_python_dict.stats import COLUMNS, summary_stats, write_csv
@@ -17,7 +17,7 @@ def _build(tmp_path, analyzer, xml=XML, rows=ROWS):
     cfg.raw_dir.mkdir(parents=True)
     (cfg.raw_dir / "form.xml").write_text(xml, encoding="utf-8")
     (cfg.raw_dir / "wide.json").write_text(json.dumps(rows), encoding="utf-8")
-    build(cfg, analyzer)
+    build(cfg, SENTINELS, analyzer)
     return cfg
 
 
@@ -25,8 +25,7 @@ def _build(tmp_path, analyzer, xml=XML, rows=ROWS):
 def stats(tmp_path, analyzer):
     cfg = _build(tmp_path, analyzer)
     return {
-        row["variable"]: row
-        for row in summary_stats(cfg.form_dir, "farm", cfg.sentinels)
+        row["variable"]: row for row in summary_stats(cfg.form_dir, "farm", SENTINELS)
     }
 
 
@@ -98,9 +97,9 @@ def test_unsupported_relevance_falls_back_to_all_rows(tmp_path, analyzer):
     )
     assert xml != XML
     cfg = _build(tmp_path, analyzer, xml)
-    area = {
-        r["variable"]: r for r in summary_stats(cfg.form_dir, "farm", cfg.sentinels)
-    }["area"]
+    area = {r["variable"]: r for r in summary_stats(cfg.form_dir, "farm", SENTINELS)}[
+        "area"
+    ]
     assert area["eligibility_evaluated"] is False
     assert "today()" in area["eligibility_note"]
     assert area["eligible"] == 2
@@ -109,7 +108,7 @@ def test_unsupported_relevance_falls_back_to_all_rows(tmp_path, analyzer):
 def test_csv_has_every_column_and_no_flagged_value(tmp_path, analyzer):
     cfg = _build(tmp_path, analyzer)
     path = write_csv(
-        summary_stats(cfg.form_dir, "farm", cfg.sentinels), cfg.form_dir / "s.csv"
+        summary_stats(cfg.form_dir, "farm", SENTINELS), cfg.form_dir / "s.csv"
     )
     with path.open(encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
@@ -136,9 +135,7 @@ _ONE_PLOT = {
 
 
 def _by_name(cfg):
-    return {
-        r["variable"]: r for r in summary_stats(cfg.form_dir, "farm", cfg.sentinels)
-    }
+    return {r["variable"]: r for r in summary_stats(cfg.form_dir, "farm", SENTINELS)}
 
 
 def test_repeat_instance_beyond_the_count_is_not_eligible(tmp_path, analyzer):

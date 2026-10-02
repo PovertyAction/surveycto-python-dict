@@ -107,3 +107,13 @@ ROWS = [
         "KEY": "uuid:bbb",
     },
 ]
+
+
+# The study's non-response codes, as SCTO_SENTINELS would give them.
+SENTINELS = {
+    -99: "Don't know",
+    -88: "Refused to answer",
+    -77: "Not applicable",
+    -66: "Other (specify)",
+    -55: "Not in list",
+}

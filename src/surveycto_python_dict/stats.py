@@ -338,12 +338,15 @@ def main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-stats``: write ``<form>_summary_stats.csv`` from built outputs."""
     import argparse
 
-    from surveycto_python_dict.cli import load_config
+    from dotenv import load_dotenv
+
+    from surveycto_python_dict.cli import env_sentinels, load_config
 
     parser = argparse.ArgumentParser(prog="scto-stats")
     parser.add_argument("--config", type=Path, default=Path("config.toml"))
     cfg = load_config(parser.parse_args(argv).config)
-    rows = summary_stats(cfg.form_dir, cfg.form_id, cfg.sentinels)
+    load_dotenv()
+    rows = summary_stats(cfg.form_dir, cfg.form_id, env_sentinels())
     path = write_csv(rows, cfg.form_dir / f"{cfg.form_id}_summary_stats.csv")
     unevaluated = sum(1 for r in rows if not r["eligibility_evaluated"])
     flagged = sum(1 for r in rows if r["answered_when_skipped"])

@@ -4,7 +4,7 @@ import asyncio
 import json
 
 import pytest
-from farm_form import ROWS, XML
+from farm_form import ROWS, SENTINELS, XML
 
 from surveycto_python_dict.cli import build, load_config
 from surveycto_python_dict.survey import SurveyStore
@@ -18,7 +18,7 @@ def store(tmp_path, analyzer):
     cfg.raw_dir.mkdir(parents=True)
     (cfg.raw_dir / "form.xml").write_text(XML, encoding="utf-8")
     (cfg.raw_dir / "wide.json").write_text(json.dumps(ROWS), encoding="utf-8")
-    build(cfg, analyzer)
+    build(cfg, SENTINELS, analyzer)
     return SurveyStore(cfg.form_dir, "farm")
 
 
