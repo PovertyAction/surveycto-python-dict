@@ -105,6 +105,11 @@ Each `variables.<column>` entry has:
 
 ## Writing cleaning code
 
+Write it for the person who reviews it: a plain script read top to bottom like a
+do-file, explicit column names, plain `assert`, comments that say why, and no helpers or
+guards for cases that have not happened. Look at the data first (these tools, the
+summary stats) and say what you found about missing values before computing from them.
+
 Before writing or reviewing cleaning code on these outputs, read
 `references/cleaning.md`: the team's suggested cleaning practice (fail loudly,
 SurveyCTO submissions, sentinels, skip logic, other-specify, select_multiple, repeats,
