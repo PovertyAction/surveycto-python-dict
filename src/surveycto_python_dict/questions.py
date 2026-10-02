@@ -1,0 +1,221 @@
+"""Rebuild ``questions.json`` from a compiled SurveyCTO XML.
+
+Each entry is keyed by the field's XLSForm ``name`` (``variable_name``), so the file
+joins back to the XLSForm row by row. Expressions are written in XLSForm ``${name}``
+syntax; choices are the select's inline items, and a select's ``choice_list`` is its
+own name. Each repeat gets a synthetic ``{repeat}_count`` entry before its fields.
+"""
+
+import json
+import re
+from collections import defaultdict
+from pathlib import Path
+
+from surveycto_python_dict.xml_contract import FormContract, Node, parse_contract
+
+# XLSForm types that are not questions, and names reserved for submission metadata.
+_EXCLUDED_TYPES = {
+    "note",
+    "start",
+    "end",
+    "deviceid",
+    "username",
+    "simserial",
+    "phonenumber",
+}
+_EXCLUDED_PREFIXES = ("instanceID", "instanceName", "KEY", "SET-OF-")
+
+_INPUT_TYPES = {
+    "string": "text",
+    "int": "integer",
+    "decimal": "decimal",
+    "date": "date",
+    "dateTime": "datetime",
+    "time": "time",
+    "geopoint": "geopoint",
+    "geotrace": "geotrace",
+    "geoshape": "geoshape",
+}
+_PRELOAD_TYPES = {
+    ("timestamp", "start"): "start",
+    ("timestamp", "end"): "end",
+    ("property", "deviceid"): "deviceid",
+    ("property", "subscriberid"): "subscriberid",
+    ("property", "simserial"): "simserial",
+    ("property", "phonenumber"): "phonenumber",
+    ("property", "username"): "username",
+}
+_MEDIA_TYPES = {"image": "image", "audio": "audio", "video": "video"}
+_REF_RE = re.compile(r"\$\{([^}]+)\}")
+
+
+def _xlsform_type(node: Node) -> str:
+    """Return the XLSForm base type a node was compiled from."""
+    if node.original is not None:
+        return node.original
+    if node.control in ("select_one", "select_multiple"):
+        return node.control
+    if node.control == "input" and node.xml_type in _INPUT_TYPES:
+        return _INPUT_TYPES[node.xml_type]
+    if node.control == "upload" and node.xml_type == "binary":
+        return _MEDIA_TYPES.get((node.mediatype or "").split("/")[0], "file")
+    if node.control is None and node.preload is not None:
+        key = (node.preload, node.preload_params)
+        if key in _PRELOAD_TYPES:
+            return _PRELOAD_TYPES[key]
+    if node.control is None and node.calculate is not None:
+        return "calculate"
+    raise ValueError(
+        f"node {node.path!r}: no XLSForm type for bind type={node.xml_type!r}, "
+        f"control={node.control!r}, preload={node.preload!r}/{node.preload_params!r}"
+    )
+
+
+class _Refs:
+    """Rewrite absolute instance paths in an expression to ``${name}``.
+
+    SurveyCTO compiles ``${name}`` to `` /form/group/name `` with one space on each
+    side; both spaces go with the path.
+    """
+
+    def __init__(self, contract: FormContract):
+        self._names = {path: node.name for path, node in contract.nodes.items()}
+        self._path_re = re.compile(
+            rf" ?/{re.escape(contract.formid)}((?:/[\w.\-]+)+) ?"
+        )
+
+    def __call__(self, expr: str | None) -> str | None:
+        if expr is None:
+            return None
+        return self._path_re.sub(self._sub, expr).strip()
+
+    def _sub(self, match: re.Match) -> str:
+        path = match.group(1).lstrip("/")
+        if path not in self._names:
+            raise ValueError(
+                f"expression references {path!r}, which is not a form node"
+            )
+        return "${" + self._names[path] + "}"
+
+
+def _references(*exprs: str | None) -> list[str] | None:
+    refs = list(dict.fromkeys(r for e in exprs if e for r in _REF_RE.findall(e)))
+    return refs or None
+
+
+def _excluded(name: str, qtype: str) -> bool:
+    return qtype in _EXCLUDED_TYPES or name.startswith(_EXCLUDED_PREFIXES)
+
+
+def build_questions(xml_path: Path) -> list[dict]:
+    """Return the form's questions in form order."""
+    contract = parse_contract(xml_path)
+    refs = _Refs(contract)
+    repeats = set(contract.repeat_groups)
+    questions = []
+
+    def group_context(node: Node) -> tuple[list[str], bool]:
+        """Return enclosing group relevances (outer first) and whether any is "0"."""
+        relevances = []
+        for i in range(1, len(node.group_path) + 1):
+            group = contract.nodes["/".join(node.group_path[:i])]
+            if group.relevant is not None:
+                relevances.append(refs(group.relevant))
+        return relevances, "0" in relevances
+
+    def label(node: Node) -> str:
+        if node.label_ref is not None:
+            raise ValueError(
+                f"node {node.path!r}: itext label {node.label_ref!r}; only plain labels are read"
+            )
+        return refs(node.label) or ""
+
+    for node in contract.nodes.values():
+        if not node.is_leaf and node.name in repeats:
+            group_relevances, parent_disabled = group_context(node)
+            relevance = refs(node.relevant)
+            questions.append(
+                {
+                    "type": "repeat_count",
+                    "choice_list": None,
+                    "choices": None,
+                    "variable_name": f"{node.name}_count",
+                    "question_text": f"Number of iterations in '{label(node) or node.name}' repeat group",
+                    "disabled": parent_disabled or relevance == "0",
+                    "constraint": None,
+                    "relevance": relevance,
+                    "group_relevances": group_relevances,
+                    "required": False,
+                    "calculation": refs(node.repeat_count),
+                    "appearance": None,
+                    "references": _references(relevance, refs(node.repeat_count)),
+                    "group_path": node.group_path,
+                    "repeat_group_name": node.name,
+                }
+            )
+            continue
+        if not node.is_leaf:
+            continue
+        qtype = _xlsform_type(node)
+        if _excluded(node.name, qtype):
+            continue
+        group_relevances, parent_disabled = group_context(node)
+        relevance = refs(node.relevant)
+        constraint = refs(node.constraint)
+        calculation = refs(node.calculate)
+        is_select = qtype in ("select_one", "select_multiple")
+        questions.append(
+            {
+                "type": qtype,
+                "choice_list": node.name if is_select else None,
+                "choices": (
+                    [
+                        {"value": c["value"], "label": refs(c["label"])}
+                        for c in node.choice_items
+                    ]
+                    if is_select
+                    else None
+                ),
+                "variable_name": node.name,
+                "question_text": label(node)
+                or (calculation if qtype == "calculate" else ""),
+                "disabled": parent_disabled or relevance == "0",
+                "constraint": constraint,
+                "relevance": relevance,
+                "group_relevances": group_relevances,
+                "required": node.required,
+                "calculation": calculation,
+                "appearance": node.appearance,
+                "references": _references(relevance, constraint, calculation),
+                "group_path": node.group_path,
+            }
+        )
+    for order, question in enumerate(questions):
+        question["question_order"] = order
+    return questions
+
+
+def write_sections(
+    questions: list[dict], out_dir: Path, prefix: str = "section"
+) -> dict[str, Path]:
+    """Write one JSON slice per group level (``a``, ``a/b``, ...) plus ``ungrouped``.
+
+    Returns the written path per section key; ``/`` in a key becomes ``_`` in the
+    filename.
+    """
+    sections: dict[str, list[dict]] = defaultdict(list)
+    for q in questions:
+        path = q["group_path"]
+        if not path:
+            sections["ungrouped"].append(q)
+        for i in range(1, len(path) + 1):
+            sections["/".join(path[:i])].append(q)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written = {}
+    for key, section in sections.items():
+        out = out_dir / f"{prefix}_{key.replace('/', '_').replace(' ', '_')}.json"
+        out.write_text(
+            json.dumps(section, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        written[key] = out
+    return written

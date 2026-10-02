@@ -136,6 +136,13 @@ class Node:
     pulldata: dict | None = None  # {dataset, value, key} from pulldata() calc
     preload: str | None = None  # jr:preload (system source, e.g. property)
     preload_params: str | None = None  # jr:preloadParams (e.g. username, deviceid)
+    original: str | None = None  # SurveyCTO bind `original` (XLSForm type, e.g. "note")
+    # Body label text; each <output value="..."/> is inlined as its expression.
+    label: str | None = None
+    label_ref: str | None = None  # label's itext reference, when it has one
+    mediatype: str | None = None  # <upload mediatype>, e.g. "image/*"
+    appearance: str | None = None  # body control appearance
+    repeat_count: str | None = None  # <repeat jr:count>, on the repeat's node
     # Where the field's content/options come from, parsed from search()/pulldata():
     #   {kind:"search", dataset, mode, filter} | {kind:"pulldata", dataset, value, key}
     data_source: dict | None = None
@@ -286,7 +293,7 @@ class FormContract:
 
     @property
     def repeat_groups(self) -> list[str]:
-        """Return the distinct repeat-group paths in first-seen order."""
+        """Return the distinct repeat-group names in first-seen order."""
         seen: list[str] = []
         for n in self.nodes.values():
             for r in n.repeat_path:
@@ -527,6 +534,16 @@ class FormContract:
         }
 
 
+def _label_text(label) -> str:
+    """Return a <label>'s text with each <output value="expr"/> inlined as ``expr``."""
+    parts = [label.text or ""]
+    for child in label:
+        if _ln(child.tag) == "output":
+            parts.append(child.get("value", ""))
+        parts.append(child.tail or "")
+    return "".join(parts).strip()
+
+
 def parse_contract(xml_path) -> FormContract:
     """Parse a compiled XForm XML into a FormContract."""
     import xml.etree.ElementTree as ET
@@ -601,6 +618,10 @@ def parse_contract(xml_path) -> FormContract:
     controls: dict[str, str] = {}
     appearances: dict[str, str] = {}
     items: dict[str, list[dict]] = {}
+    labels: dict[str, str] = {}
+    label_refs: dict[str, str] = {}
+    mediatypes: dict[str, str] = {}
+    counts: dict[str, str] = {}
     body = next((c for c in root if _ln(c.tag) == "body"), None)
     if body is not None:
         for el in body.iter():
@@ -611,6 +632,20 @@ def parse_contract(xml_path) -> FormContract:
             ctl = _ln(el.tag)
             if ctl in ("select", "select1", "input", "upload", "trigger", "range"):
                 controls[rel] = ctl
+            label = next((c for c in el if _ln(c.tag) == "label"), None)
+            if label is not None:
+                if label.get("ref"):
+                    label_refs[rel] = label.get("ref")
+                else:
+                    labels[rel] = _label_text(label)
+            if el.get("mediatype"):
+                mediatypes[rel] = el.get("mediatype")
+            if ctl == "repeat":
+                count = next(
+                    (v for k, v in el.attrib.items() if _ln(k) == "count"), None
+                )
+                if count is not None:
+                    counts[rel] = count
             if ctl in ("select", "select1"):
                 items[rel] = [
                     {
@@ -633,8 +668,9 @@ def parse_contract(xml_path) -> FormContract:
         toks = path.split("/")[:-1]
         return [t for t in toks if t in repeat_tokens]
 
+    # Instance document order is form order; binds without an instance node follow.
     nodes: dict[str, Node] = {}
-    for path in set(instance_nodes) | set(binds):
+    for path in [*instance_nodes, *(p for p in binds if p not in instance_nodes)]:
         inst = instance_nodes.get(path, {})
         toks = path.split("/")
         rep = inst.get("repeat_path", repeats_for(path))
@@ -664,5 +700,11 @@ def parse_contract(xml_path) -> FormContract:
             preload=b.get("preload"),
             preload_params=b.get("preloadParams"),
             data_source=_parse_data_source(ap, b.get("calculate")),
+            original=b.get("original"),
+            label=labels.get(path),
+            label_ref=label_refs.get(path),
+            mediatype=mediatypes.get(path),
+            appearance=ap,
+            repeat_count=counts.get(path),
         )
     return FormContract(formid, formdef_version, nodes)
