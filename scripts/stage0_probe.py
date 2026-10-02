@@ -17,7 +17,8 @@ from pathlib import Path
 
 import requests
 from dotenv import dotenv_values
-from surveycto_extractor.parsers.xml_contract import is_system_column, parse_contract
+
+from surveycto_python_dict.xml_contract import is_system_column, parse_contract
 
 ENV = dotenv_values(".env")
 SERVER = ENV["SCTO_SERVER"]

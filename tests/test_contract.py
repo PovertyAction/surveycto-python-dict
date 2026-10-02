@@ -3,7 +3,6 @@
 import json
 
 import pytest
-from surveycto_extractor.parsers.xml_contract import parse_contract
 
 from surveycto_python_dict.contract import (
     DatasetSource,
@@ -11,6 +10,7 @@ from surveycto_python_dict.contract import (
     form_entry,
     resolve_datasets,
 )
+from surveycto_python_dict.xml_contract import parse_contract
 
 _DATASETS = {
     "datasets": [

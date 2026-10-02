@@ -1,6 +1,6 @@
 """A form's form-list entry and the datasets its XML references.
 
-The contract itself is upstream ``parse_contract``; ``Node.publishable`` carries the
+The contract itself is ``xml_contract.parse_contract``; ``Node.publishable`` carries the
 SurveyCTO ``publishable`` bind attribute.
 """
 
@@ -8,7 +8,7 @@ import json
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
-from surveycto_extractor.parsers.xml_contract import FormContract
+from surveycto_python_dict.xml_contract import FormContract
 
 
 class UnresolvedDataset(LookupError):

@@ -3,9 +3,9 @@ name = "surveycto-python-dict"
 version = "0.1.0"
 description = "Pull a SurveyCTO form's XML and wide JSON over the API and build typed parquet, a variable dictionary and a per-variable PII signal."
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = [
-    "surveycto-extractor[mcp]",
     "requests>=2.31,<3",
     "pandas>=2.3.0,<4",
     "pyarrow>=15.0.0",
@@ -21,9 +21,6 @@ scto-pull  = "surveycto_python_dict.cli:pull_main"
 scto-build = "surveycto_python_dict.cli:build_main"
 scto-run   = "surveycto_python_dict.cli:run_main"
 
-[tool.uv.sources]
-surveycto-extractor = { path = "../surveycto_extractor_takeout", editable = true }
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -34,7 +31,7 @@ packages = ["src/surveycto_python_dict"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-# Lint config mirrors upstream surveycto-extractor (ipa-python-template, py310 target).
+# Lint config from ipa-python-template (org standard), py310 target.
 [tool.ruff]
 line-length = 88
 fix = true
