@@ -58,6 +58,11 @@ def _number(v: Value) -> float:
         return math.nan
 
 
+def to_number(v: Value) -> float:
+    """Return ``v`` as an XPath number (NaN when it is not one)."""
+    return _number(v)
+
+
 def _string(v: Value) -> str:
     if v is None:
         return ""

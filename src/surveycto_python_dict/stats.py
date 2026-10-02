@@ -2,7 +2,8 @@
 
 A row counts toward a column only where the question was asked: every enclosing
 group relevance and the question's own relevance evaluate true on that row (and
-repeat instance). Sentinel codes (-99, ...) stay coded in the data; here they are
+repeat instance), and the instance is within the repeat count (``jr:count``, or the
+highest instance present when the repeat has none). Sentinel codes (-99, ...) stay coded in the data; here they are
 counted apart and excluded from every statistic. Columns flagged ``contains_pii`` or
 ``may_contain_pii`` get counts only, never values. One CSV row per parquet column.
 """
@@ -15,7 +16,11 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
-from surveycto_python_dict.xpath import UnsupportedExpression, compile_expression
+from surveycto_python_dict.xpath import (
+    UnsupportedExpression,
+    compile_expression,
+    to_number,
+)
 
 _FLAGGED = {"contains_pii", "may_contain_pii"}
 
@@ -65,12 +70,16 @@ class _Data:
             name: [_plain(v) for v in col] for name, col in table.to_pydict().items()
         }
         self.questions = questions
-        self.repeats = {
-            q["repeat_group_name"]
+        # repeat name -> its synthetic `<repeat>_count` question
+        self.count_questions = {
+            q["repeat_group_name"]: q
             for q in questions.values()
             if q["type"] == "repeat_count"
         }
+        self.repeats = set(self.count_questions)
         self.columns: dict[tuple, str] = {}
+        # (repeat, parent instances) -> {instance: columns}, for repeats without a count
+        self.instance_columns: dict[tuple, dict[int, list[str]]] = {}
         self.binaries: dict[tuple, list[tuple[str, str]]] = {}
         for column, entry in variables.items():
             if entry["question"] is None:
@@ -82,6 +91,22 @@ class _Data:
                 )
             else:
                 self.columns[key] = column
+            iterations = key[1]
+            if iterations:
+                repeat = self.repeat_chain(entry["question"])[-1]
+                slot = self.instance_columns.setdefault((repeat, iterations[:-1]), {})
+                slot.setdefault(iterations[-1], []).append(column)
+
+    def highest_instance(self, repeat: str, parent: tuple[int, ...], row: int) -> int:
+        """Return the highest instance of ``repeat`` with any value on ``row``."""
+        present = [
+            instance
+            for instance, columns in self.instance_columns.get(
+                (repeat, parent), {}
+            ).items()
+            if any(self.values[c][row] is not None for c in columns)
+        ]
+        return max(present, default=0)
 
     def repeat_chain(self, question: str) -> list[str]:
         return [g for g in self.questions[question]["group_path"] if g in self.repeats]
@@ -151,6 +176,26 @@ def _eligibility(
             )
             for r in range(n_rows)
         ]
+        # A repeat instance exists only up to the repeat count, at every level.
+        for level, repeat in enumerate(data.repeat_chain(q["variable_name"])):
+            instance, parent = iterations[level], iterations[:level]
+            count_q = data.count_questions[repeat]
+            if count_q["calculation"] is None:
+                within = [
+                    instance <= data.highest_instance(repeat, parent, r)
+                    for r in range(n_rows)
+                ]
+            else:
+                count = compile_expression(count_q["calculation"])
+                # An empty or invalid count gives no instances, as on the device.
+                within = [
+                    instance
+                    <= to_number(
+                        count(_Row(data, count_q["variable_name"], parent, r, None))
+                    )
+                    for r in range(n_rows)
+                ]
+            eligible = [e and w for e, w in zip(eligible, within, strict=True)]
     except UnsupportedExpression as e:
         return [True] * n_rows, rule, False, f"{e}; counted over all rows"
     return eligible, rule, True, ""

@@ -10,13 +10,13 @@ from surveycto_python_dict.cli import build, load_config
 from surveycto_python_dict.stats import COLUMNS, summary_stats, write_csv
 
 
-def _build(tmp_path, analyzer, xml=XML):
+def _build(tmp_path, analyzer, xml=XML, rows=ROWS):
     config = tmp_path / "config.toml"
     config.write_text('form_id = "farm"\nout_dir = "out"\n', encoding="utf-8")
     cfg = load_config(config)
     cfg.raw_dir.mkdir(parents=True)
     (cfg.raw_dir / "form.xml").write_text(xml, encoding="utf-8")
-    (cfg.raw_dir / "wide.json").write_text(json.dumps(ROWS), encoding="utf-8")
+    (cfg.raw_dir / "wide.json").write_text(json.dumps(rows), encoding="utf-8")
     build(cfg, analyzer)
     return cfg
 
@@ -123,3 +123,41 @@ def test_csv_has_every_column_and_no_flagged_value(tmp_path, analyzer):
     text = path.read_text(encoding="utf-8-sig")
     for value in ("Ana Maria Gomez Restrepo", "3104567890", "Jorge Perez", "LT-0042"):
         assert value not in text
+
+
+# A third submission with one plot: instance 2 does not exist for it.
+_ONE_PLOT = {
+    "SubmissionDate": "Mar 13, 2025 9:00:00 AM",
+    "plots": "1",
+    "plot_size_1": "0.5",
+    "plot_crop_1_1": "1",
+    "KEY": "uuid:ccc",
+}
+
+
+def _by_name(cfg):
+    return {
+        r["variable"]: r for r in summary_stats(cfg.form_dir, "farm", cfg.sentinels)
+    }
+
+
+def test_repeat_instance_beyond_the_count_is_not_eligible(tmp_path, analyzer):
+    stats = _by_name(_build(tmp_path, analyzer, rows=[*ROWS, _ONE_PLOT]))
+    # Row 1 has plots=2 (instances 1, 2); row 2 plots=-99 (none); row 3 plots=1.
+    assert (stats["plot_size_1"]["eligible"], stats["plot_size_2"]["eligible"]) == (
+        2,
+        1,
+    )
+    assert stats["plot_size_2"]["missing_when_eligible"] == 1  # row 1's second plot
+    assert stats["plot_crop_1_1"]["answered"] == 2
+
+
+def test_repeat_without_count_uses_the_instances_present(tmp_path, analyzer):
+    xml = XML.replace(' jr:count=" /farm/plots "', "")
+    assert xml != XML
+    stats = _by_name(_build(tmp_path, analyzer, xml=xml, rows=[*ROWS, _ONE_PLOT]))
+    # Row 1 filled instance 1 only; row 3 instance 1 only; row 2 has no plots (gate false).
+    assert (stats["plot_size_1"]["eligible"], stats["plot_size_2"]["eligible"]) == (
+        2,
+        0,
+    )
