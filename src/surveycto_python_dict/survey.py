@@ -221,3 +221,42 @@ class SurveyStore:
                 f"PII review file: {self.review_file}",
             ]
         )
+
+
+def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> None:
+    """Entry point for ``scto-survey``: the MCP tools as shell commands."""
+    import argparse
+
+    from surveycto_python_dict.cli import load_config
+
+    parser = argparse.ArgumentParser(prog="scto-survey")
+    parser.add_argument("--config", type=Path, default=Path("config.toml"))
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("var", help="describe questions or columns").add_argument(
+        "names", nargs="+"
+    )
+    search = commands.add_parser("search", help="find questions by name or text")
+    search.add_argument("query", nargs="+")
+    search.add_argument("--max", type=int, default=20)
+    commands.add_parser("choices", help="a select's choices").add_argument("name")
+    commands.add_parser("gates", help="the relevance chain").add_argument("name")
+    hood = commands.add_parser("neighborhood", help="related questions")
+    hood.add_argument("name")
+    hood.add_argument("--depth", type=int, default=1)
+    commands.add_parser("repeats", help="repeat-group structure")
+    commands.add_parser("info", help="form summary")
+    args = parser.parse_args(argv)
+
+    if store is None:
+        cfg = load_config(args.config)
+        store = SurveyStore(cfg.form_dir, cfg.form_id)
+    answer = {
+        "var": lambda: store.lookup_variables(args.names),
+        "search": lambda: store.search_questions(" ".join(args.query), args.max),
+        "choices": lambda: store.get_choice_list(args.name),
+        "gates": lambda: store.get_gate_chain(args.name),
+        "neighborhood": lambda: store.get_variable_neighborhood(args.name, args.depth),
+        "repeats": store.get_repeat_structure,
+        "info": store.get_survey_info,
+    }[args.command]()
+    print(answer)

@@ -7,10 +7,15 @@ per-variable PII signal.
 ## Use
 
 ```sh
-uv sync
+just setup                           # uv sync, including the spaCy models
 cp config.example.toml config.toml   # set form_id
-uv run scto-run                      # scto-pull, then scto-build
+just pull                            # form XML + submissions (wide JSON) -> <out_dir>/<form_id>/raw
+just build                           # dictionaries, parquet, graph, PII review; rerun any time
+just mcp                             # survey-expert MCP server over stdio
 ```
+
+Each recipe takes another config as an argument (`just build path/to/config.toml`);
+`just` lists them all.
 
 Credentials come from `.env`: `SCTO_SERVER` (the subdomain), `SCTO_USER`,
 `SCTO_PASSWORD`, and `SCTO_KEY_PATH` for encrypted forms. Never commit `.env`, the
@@ -32,11 +37,17 @@ The `pii` block is a signal for the people cleaning the data, not enforcement:
 or `no_hits`, with the basis for each. Review flagged columns in
 `<form>_pii_review.parquet` and add the ones you clear to `[pii] whitelist`.
 
-## Survey-expert MCP server
+## Survey-expert MCP server and skill
 
-`uv run scto-mcp --config config.toml` serves one form's outputs over stdio to a local
+`just mcp` (`uv run scto-mcp --config config.toml`) serves one form's outputs over stdio to a local
 agent: `lookup_variable(s)`, `search_questions`, `get_choice_list`, `get_gate_chain`,
 `get_survey_info`, `get_variable_neighborhood`, `get_repeat_structure`. It reads only
 the JSON outputs, never the parquet, and shows each column's `pii` status.
+
+To connect it to Claude Code, copy `.mcp.json.example` to `.mcp.json` (git-ignored) and
+point `--config` at your config. The `survey-expert` skill
+(`.claude/skills/survey-expert/SKILL.md`) teaches an agent to read the outputs and to
+check `pii.status` first; without MCP it uses the same answers from
+`uv run scto-survey <var|search|choices|gates|neighborhood|repeats|info>`.
 
 Design: `surveycto-api-extractor-PROMPT.md`; API notes: `docs/`.

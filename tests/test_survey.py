@@ -112,3 +112,23 @@ def test_server_registers_the_tools(store):
         "get_repeat_structure",
     }
     assert "pii.status" in server.instructions
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["var", "area"], "area (decimal)"),
+        (["var", "area", "plots"], "plots (integer)"),
+        (["search", "plot", "size"], "plot_size"),
+        (["choices", "crop"], "01 = Maize"),
+        (["gates", "plot_size"], "${plots} > 0"),
+        (["neighborhood", "per_plot", "--depth", "2"], "calculates_from"),
+        (["repeats"], "count: ${plots}"),
+        (["info"], "submissions: 2"),
+    ],
+)
+def test_survey_cli(store, capsys, argv, expected):
+    from surveycto_python_dict.survey import main
+
+    main(argv, store=store)
+    assert expected in capsys.readouterr().out

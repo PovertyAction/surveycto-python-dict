@@ -24,6 +24,7 @@ scto-pull  = "surveycto_python_dict.cli:pull_main"
 scto-build = "surveycto_python_dict.cli:build_main"
 scto-run   = "surveycto_python_dict.cli:run_main"
 scto-mcp   = "surveycto_python_dict.mcp_server:main"
+scto-survey = "surveycto_python_dict.survey:main"
 
 [build-system]
 requires = ["hatchling"]

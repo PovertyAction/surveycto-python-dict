@@ -16,3 +16,6 @@ __pycache__/
 
 # A user's config names their form; ship only the example
 config.toml
+
+# Local MCP config points at a real form's outputs; ship only the example
+.mcp.json

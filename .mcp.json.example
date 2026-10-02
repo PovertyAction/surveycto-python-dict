@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "survey-expert": {
+      "command": "uv",
+      "args": [
+        "run",
+        "scto-mcp",
+        "--config",
+        "config.toml"
+      ]
+    }
+  }
+}
