@@ -37,15 +37,25 @@ followed by its reason. Read this before writing or reviewing cleaning code.
    if not neg.isin(VALID[col]).all():
        raise ValueError(f"{col}: unknown negative codes {sorted(set(neg) - VALID[col])}")
    ```
-3. **Derive missing-reason columns before recoding** (`<col>_mi` in
-   `{asked, skipped, dk, rf, na}`), because after `-99 -> NA` the code is gone. Build
-   them on the full sample, from the raw values and the eligibility mask.
+3. **Move the codes to `<var>_dk`, then set them missing in `<var>`.** Where a column
+   holds a sentinel code that is not part of its normal distribution, create the
+   auxiliary column `<var>_dk` holding that code (`-99`, `-88`, ...) on those rows and
+   null elsewhere, and convert the code to missing in the main column. The main column
+   then holds only real values, and `<var>_dk` keeps which non-response it was.
+   ```python
+   codes = VALID[col]                       # the sentinels this question allows
+   hit = df[col].isin(codes)
+   df[f"{col}_dk"] = df[col].where(hit)     # the code, null elsewhere
+   df[col] = df[col].mask(hit)              # real values only
+   ```
+   Do it before any arithmetic, and on the full sample.
 4. **Recode before any arithmetic, division first.** `1 / -55 = -0.018` is a plausible
    value no later recode will find. If recode and arithmetic live in different
    modules, add a non-negative assertion on the derived column.
 5. **Calculate fields leak sentinels.** A calculate does not inherit its inputs'
    constraints: `${length} * ${width}` with `-99` is a large negative. Recode the
-   calculate column from its inputs (NA where any input is DK/RF). Never `abs()`.
+   calculate column from its inputs (missing where any input has a `_dk` code). Never
+   `abs()`.
 6. **Formula artifacts are not DK.** A negative made by the formula itself is an error:
    set it missing with its own reason (`bad_calc`) and a flag.
 7. **Assert non-negative quantities right after creating them**, before aggregating:
@@ -56,9 +66,10 @@ followed by its reason. Read this before writing or reviewing cleaning code.
 
 ## 2. Skip logic and structural missing
 
-1. **Not asked and asked-but-DK are different and never share a code.** Keep the
-   eligibility mask (or the reason column) next to the value. `just stats` evaluates
-   every relevance per row; reproduce its mask in cleaning code when you need it.
+1. **Not asked and asked-but-DK are different and never share a code.** A null in
+   `<var>` with a code in `<var>_dk` was asked and not answered; a null where the
+   eligibility mask is false was skipped. `just stats` evaluates every relevance per
+   row; reproduce its mask in cleaning code when you need it.
 2. **Assert the skip structure both ways:** missing where the skip applies, present
    where the question was asked. `answered_when_skipped` and `missing_when_eligible`
    in the stats CSV are those two counts.
@@ -141,8 +152,9 @@ followed by its reason. Read this before writing or reviewing cleaning code.
    `pivot_table` silently averages duplicates; `wide_to_long` and `pivot` raise.
 3. **Padding slots:** reshaping long creates a slot per possible instance; exclude
    slots beyond the reported count from missing checks.
-4. **Carry DK/RF flags through reshape and aggregation:** flag on the source columns,
-   then `groupby(...).agg(any)`; after arithmetic DK and not-asked both look null.
+4. **Carry the `_dk` columns through reshape and aggregation:** reshape them with
+   their values and aggregate them alongside (`groupby(...).agg(any_dk=("x_dk",
+   lambda s: s.notna().any()))`); after arithmetic a DK and a skip both look null.
 5. **The roster head is the relationship code, not slot 1;** assert one head per
    household.
 6. **Merges:** `validate="one_to_one"` / `"many_to_one"` and `indicator=True` with
@@ -156,7 +168,7 @@ followed by its reason. Read this before writing or reviewing cleaning code.
    for an all-null row; `min_count=1` is missing only when all are. Comment which rule
    each aggregate uses.
 2. **Sparse components:** when components are mostly skipped by design, zero-fill the
-   structural missings from the gates first, then flag DK/RF on the sources; a plain
+   structural missings from the gates first, then use the sources' `_dk` columns; a plain
    `isna().any(axis=1)` would make almost everyone missing.
 3. **Group sums hide missing:** `groupby().sum()` skips nulls and gives 0 for an
    all-null group; pyarrow's `pc.sum` gives null. Carry an `any missing` column and

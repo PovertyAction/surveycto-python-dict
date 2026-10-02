@@ -75,7 +75,8 @@ Each `variables.<column>` entry has:
 - `sentinels`: counts of non-response codes (`-99` Don't know, `-88` Refused, `-77`
   Not applicable, `-66` Other, `-55` Not in list, or the form's own table). They are
   **reported, never recoded**: the parquet keeps `-99` as `-99`, and the user decides
-  how to treat it.
+  how to treat it. The team's convention: move the code to `<var>_dk` and set it
+  missing in `<var>` (`references/cleaning.md`, section 1).
 - `repeat_iteration`: the repeat instance(s) of a column inside a repeat, outer first.
 - `choice_value`: on a select_multiple binary, the choice it stands for.
 - `system: true`: a SurveyCTO column (`KEY`, `SubmissionDate`, `duration`, ...).
