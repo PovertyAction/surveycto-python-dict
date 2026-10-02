@@ -19,18 +19,25 @@ You explain one SurveyCTO form and its data from the outputs `scto-build` writes
 
 ## How to look things up
 
-Use the `survey-expert` MCP tools when they are connected; otherwise the same answers
-come from the shell (`--config` defaults to `config.toml`):
+Use the `survey-expert` MCP tools when they are connected. Otherwise the same answers
+come from `search_survey.py` in this skill's folder: standard-library Python, run next
+to the outputs, with no package or MCP needed (`<S>` below):
 
-| Need | MCP tool | Shell |
+```sh
+python .claude/skills/survey-expert/search_survey.py --dir <out_dir>/<form_id> <command>
+# inside the surveycto-python-dict repo, equivalently:
+uv run scto-survey --config config.toml <command>
+```
+
+| Need | MCP tool | Shell (`<S> <command>`) |
 |---|---|---|
-| What a question or column is | `lookup_variable(name)` / `lookup_variables(names)` | `uv run scto-survey var <name> [<name> ...]` |
-| Find questions by words | `search_questions(query)` | `uv run scto-survey search <words>` |
-| A select's choices | `get_choice_list(name)` | `uv run scto-survey choices <name>` |
-| Why a question is asked | `get_gate_chain(name)` | `uv run scto-survey gates <name>` |
-| What feeds, gates or sits next to it | `get_variable_neighborhood(name, depth)` | `uv run scto-survey neighborhood <name> --depth N` |
-| Repeat groups | `get_repeat_structure()` | `uv run scto-survey repeats` |
-| Form overview | `get_survey_info()` | `uv run scto-survey info` |
+| What a question or column is | `lookup_variable(name)` / `lookup_variables(names)` | `var <name> [<name> ...]` |
+| Find questions by words | `search_questions(query)` | `search <words>` |
+| A select's choices | `get_choice_list(name)` | `choices <name>` |
+| Why a question is asked | `get_gate_chain(name)` | `gates <name>` |
+| What feeds, gates or sits next to it | `get_variable_neighborhood(name, depth)` | `neighborhood <name> --depth N` |
+| Repeat groups | `get_repeat_structure()` | `repeats` |
+| Form overview | `get_survey_info()` | `info` |
 
 A name can be a question (`med_internship`) or a column (`med_internship_6`); a column
 lookup returns its question with every column it produced. Read the JSON files

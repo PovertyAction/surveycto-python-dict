@@ -3,6 +3,11 @@
 Reads ``<form>_questions.json``, ``<form>_variable_dictionary.json`` and
 ``<form>_variable_graph.json``; every answer is plain text. Nothing here reads the
 parquet, so no tool returns a submission value.
+
+Standard library only, so the file also ships in the survey-expert skill as
+``search_survey.py`` and runs where the package is not installed::
+
+    python search_survey.py --dir <out_dir>/<form_id> var <name>
 """
 
 import difflib
@@ -32,6 +37,7 @@ class SurveyStore:
             return json.loads(path.read_text(encoding="utf-8"))
 
         self.form_id = form_id
+        self.form_dir = Path(form_dir)
         self.questions = {q["variable_name"]: q for q in load("questions")}
         dictionary = load("variable_dictionary")
         self.dataset, self.summary = dictionary["dataset"], dictionary["summary"]
@@ -223,14 +229,37 @@ class SurveyStore:
         )
 
 
+def _open(config: Path | None, directory: Path) -> SurveyStore:
+    """Open the outputs named by a config file, or the one form found in ``directory``."""
+    if config is not None:
+        import tomllib
+
+        data = tomllib.loads(config.read_text(encoding="utf-8"))
+        return SurveyStore(
+            config.parent / data["out_dir"] / data["form_id"], data["form_id"]
+        )
+    found = sorted(directory.glob("*_questions.json"))
+    if len(found) != 1:
+        raise FileNotFoundError(
+            f"expected one <form>_questions.json in {directory}, found {len(found)}"
+        )
+    return SurveyStore(directory, found[0].name.removesuffix("_questions.json"))
+
+
 def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> None:
-    """Entry point for ``scto-survey``: the MCP tools as shell commands."""
+    """Entry point for ``scto-survey`` and ``search_survey.py``: the MCP tools as commands."""
     import argparse
 
-    from surveycto_python_dict.cli import load_config
-
     parser = argparse.ArgumentParser(prog="scto-survey")
-    parser.add_argument("--config", type=Path, default=Path("config.toml"))
+    parser.add_argument(
+        "--config", type=Path, help="config.toml naming form_id and out_dir"
+    )
+    parser.add_argument(
+        "--dir",
+        type=Path,
+        default=Path("."),
+        help="a form's output folder (default: here)",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("var", help="describe questions or columns").add_argument(
         "names", nargs="+"
@@ -248,8 +277,7 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
     args = parser.parse_args(argv)
 
     if store is None:
-        cfg = load_config(args.config)
-        store = SurveyStore(cfg.form_dir, cfg.form_id)
+        store = _open(args.config, args.dir)
     answer = {
         "var": lambda: store.lookup_variables(args.names),
         "search": lambda: store.search_questions(" ".join(args.query), args.max),
@@ -260,3 +288,7 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
         "info": store.get_survey_info,
     }[args.command]()
     print(answer)
+
+
+if __name__ == "__main__":
+    main()

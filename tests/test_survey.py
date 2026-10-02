@@ -132,3 +132,52 @@ def test_survey_cli(store, capsys, argv, expected):
 
     main(argv, store=store)
     assert expected in capsys.readouterr().out
+
+
+def test_survey_cli_from_a_directory_detects_the_form(store, capsys):
+    from surveycto_python_dict.survey import main
+
+    main(["--dir", str(store.form_dir), "info"])
+    assert "submissions: 2" in capsys.readouterr().out
+
+
+def test_survey_cli_directory_without_outputs_raises(tmp_path):
+    from surveycto_python_dict.survey import main
+
+    with pytest.raises(FileNotFoundError, match="_questions.json"):
+        main(["--dir", str(tmp_path), "info"])
+
+
+def test_skill_script_is_the_survey_module():
+    """The skill ships survey.py as a standalone script; `just sync-skill` refreshes it."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    module = root / "src" / "surveycto_python_dict" / "survey.py"
+    script = root / ".claude" / "skills" / "survey-expert" / "search_survey.py"
+    assert script.read_bytes() == module.read_bytes()
+
+
+def test_survey_module_imports_only_the_standard_library():
+    import ast
+    import sys
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "surveycto_python_dict"
+        / "survey.py"
+    )
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    imported = {
+        alias.name.split(".")[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    } | {
+        node.module.split(".")[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+    assert imported <= sys.stdlib_module_names
