@@ -5,94 +5,11 @@ import datetime as dt
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from farm_form import ROWS as _ROWS
+from farm_form import XML as _XML
 
 from surveycto_python_dict.cast import cast_wide
 from surveycto_python_dict.xml_contract import parse_contract
-
-_XML = """<?xml version="1.0"?>
-<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml"
-        xmlns:jr="http://openrosa.org/javarosa">
-  <h:head><model>
-    <instance><farm id="farm" version="3">
-      <starttime/><endtime/><deviceid/>
-      <owner/><plots/><area/><visit/><crop/><tools/><photo/>
-      <plot jr:template=""><plot_crop/><plot_size/></plot>
-      <meta><instanceID/></meta>
-    </farm></instance>
-    <bind nodeset="/farm/starttime" type="dateTime" jr:preload="timestamp" jr:preloadParams="start"/>
-    <bind nodeset="/farm/endtime" type="dateTime" jr:preload="timestamp" jr:preloadParams="end"/>
-    <bind nodeset="/farm/deviceid" type="string" jr:preload="property" jr:preloadParams="deviceid"/>
-    <bind nodeset="/farm/owner" type="string"/>
-    <bind nodeset="/farm/plots" type="int" publishable="true()"/>
-    <bind nodeset="/farm/area" type="decimal"/>
-    <bind nodeset="/farm/visit" type="date"/>
-    <bind nodeset="/farm/crop" type="select1"/>
-    <bind nodeset="/farm/tools" type="select"/>
-    <bind nodeset="/farm/photo" type="binary"/>
-    <bind nodeset="/farm/plot/plot_crop" type="select"/>
-    <bind nodeset="/farm/plot/plot_size" type="decimal"/>
-    <bind nodeset="/farm/meta/instanceID" type="string" calculate="concat('uuid:', uuid())"/>
-  </model></h:head>
-  <h:body>
-    <input ref="/farm/owner"><label>Owner</label></input>
-    <input ref="/farm/plots"><label>Plots</label></input>
-    <input ref="/farm/area"><label>Area</label></input>
-    <input ref="/farm/visit"><label>Visit</label></input>
-    <select1 ref="/farm/crop"><label>Crop</label>
-      <item><label>Maize</label><value>01</value></item><item><label>Rice</label><value>02</value></item>
-    </select1>
-    <select ref="/farm/tools"><label>Tools</label>
-      <item><label>Hoe</label><value>1</value></item><item><label>Plough</label><value>2</value></item>
-      <item><label>Other</label><value>77</value></item>
-    </select>
-    <upload ref="/farm/photo" mediatype="image/*"><label>Photo</label></upload>
-    <group ref="/farm/plot"><label>Plot</label><repeat nodeset="/farm/plot" jr:count=" /farm/plots ">
-      <select ref="/farm/plot/plot_crop"><label>Plot crop</label>
-        <item><label>Maize</label><value>1</value></item><item><label>Rice</label><value>2</value></item>
-      </select>
-      <input ref="/farm/plot/plot_size"><label>Plot size</label></input>
-    </repeat></group>
-  </h:body>
-</h:html>
-"""
-
-# Shapes as the API returns them: all strings, keys sparse per row, select_multiple
-# only as per-choice binaries present when chosen, timestamps in UTC.
-_ROWS = [
-    {
-        "SubmissionDate": "Mar 7, 2025 4:06:12 PM",
-        "starttime": "Mar 7, 2025 3:58:01 PM",
-        "endtime": "Mar 7, 2025 4:05:59 PM",
-        "deviceid": "(web)",
-        "duration": "478",
-        "owner": "Ana Fictional",
-        "plots": "2",
-        "area": "1.5",
-        "visit": "Mar 6, 2025",
-        "crop": "01",
-        "tools_2": "1",
-        "photo": "https://example.surveycto.com/view/submission-attachment/x.jpg",
-        "plot_crop_1_1": "1",
-        "plot_size_1": "0.75",
-        "plot_size_2": "",
-        "formdef_version": "2503071606",
-        "KEY": "uuid:aaa",
-    },
-    {
-        "SubmissionDate": "Mar 12, 2025 11:00:00 AM",
-        "starttime": "Mar 12, 2025 10:50:00 AM",
-        "endtime": "Mar 12, 2025 10:59:00 AM",
-        "deviceid": "(web)",
-        "duration": "540",
-        "owner": "",
-        "plots": "-99",
-        "area": "",
-        "crop": "02",
-        "plot_crop_2_2": "1",
-        "formdef_version": "2503071606",
-        "KEY": "uuid:bbb",
-    },
-]
 
 
 @pytest.fixture
@@ -230,7 +147,9 @@ def test_choice_code_not_in_form_is_text_and_counts_as_answered(contract):
     assert "not among the form's choices" in _fallback(table, "tools_9")
     assert _col(table, "tools_1") == [0]
     names = table.schema.names
-    assert names.index("tools_77") < names.index("tools_9") < names.index("plot_crop_1_2")
+    assert (
+        names.index("tools_77") < names.index("tools_9") < names.index("plot_crop_1_2")
+    )
 
 
 def test_unmapped_column_is_text_at_the_end(contract):
