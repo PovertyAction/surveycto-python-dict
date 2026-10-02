@@ -187,3 +187,10 @@ def test_lookup_shows_a_binary_column_its_own_values(store):
     out = store.lookup_variable("tools")
     line = next(r for r in out.splitlines() if r.strip().startswith("tools_77"))
     assert "1 = Other, 0 = not chosen" in line
+
+
+def test_lookup_suggestions_are_listed_once(store):
+    out = store.lookup_variable("ownerr")
+    assert (
+        out.count("owner") == 2
+    )  # once in the message's suggestions, once in "ownerr"

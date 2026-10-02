@@ -110,7 +110,9 @@ class SurveyStore:
             if question is not None:
                 return self._render_question(self.questions[question])
             return f"{name} (column without a question)\n{self._column_line(name)}"
-        close = difflib.get_close_matches(name, [*self.questions, *self.variables], n=5)
+        close = difflib.get_close_matches(
+            name, list(dict.fromkeys([*self.questions, *self.variables])), n=5
+        )
         hint = f" Close matches: {', '.join(close)}." if close else ""
         return f"No variable or question named {name!r}.{hint}"
 
