@@ -199,12 +199,7 @@ def test_lookup_suggestions_are_listed_once(store):
 def test_tokens_keep_accented_words_and_drop_html():
     from surveycto_python_dict.survey import _tokens
 
-    assert _tokens("Nivel de inglés <b>escribiendo</b>") == [
-        "nivel",
-        "de",
-        "inglés",
-        "escribiendo",
-    ]
+    assert _tokens("Nivel de café <b>tostado</b>") == ["nivel", "de", "café", "tostado"]
 
 
 def test_search_shows_short_plain_text(store):

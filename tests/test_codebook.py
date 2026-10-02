@@ -76,8 +76,5 @@ def test_no_flagged_value_in_any_cell(workbook):
 
 
 def test_plain_label_strips_html():
-    assert (
-        plain_label("Nivel de inglés <b>escribiendo</b>")
-        == "Nivel de inglés escribiendo"
-    )
+    assert plain_label("Nivel de café <b>tostado</b>") == "Nivel de café tostado"
     assert plain_label("Line one<br/>line two") == "Line one line two"

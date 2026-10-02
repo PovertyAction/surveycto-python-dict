@@ -291,11 +291,22 @@ harder to find.
 
 ## 10. Pipeline structure
 
-1. **One module per domain,** around 300 lines; a docstring with inputs, outputs and
+1. **Start from `<form>.parquet` and write your own files.** The parquet typed from
+   the XML is the source: read it, never overwrite it. Cleaning writes separate parquet
+   files (for example `<form>_clean.parquet`, or one file per level such as a roster),
+   so the source stays a fixed point to rebuild from and compare against; `just build`
+   regenerates it from the raw pull at any time.
+2. **Change data only through scripts, committed and tracked in the study's
+   repository.** No edits by hand in a spreadsheet or a notebook cell that is not kept:
+   every recode, correction and derived column lives in a script under version
+   control, so rerunning it from the source reproduces the cleaned files and the
+   history shows who changed what and why. The data stays out of git; the scripts go
+   in.
+3. **One module per domain,** around 300 lines; a docstring with inputs, outputs and
    dependencies.
-2. **No wildcard column lists:** `df.filter(like=...)` matches too much; use an anchored
+4. **No wildcard column lists:** `df.filter(like=...)` matches too much; use an anchored
    regex (`^asset_amount_\d{1,2}$`) or the column list from the dictionary.
-3. **Drop helper columns** and assert the output columns equal the expected list before
+5. **Drop helper columns** and assert the output columns equal the expected list before
    writing.
 
 ## 11. PII
