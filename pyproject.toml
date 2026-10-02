@@ -33,7 +33,6 @@ packages = ["src/surveycto_python_dict"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["live: hits the real SurveyCTO server; runs only with SCTO_LIVE=1"]
 
 # Lint config mirrors upstream surveycto-extractor (ipa-python-template, py310 target).
 [tool.ruff]

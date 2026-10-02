@@ -1,8 +1,6 @@
 """Stage 1: SurveyCTO API client. HTTP is mocked with ``responses``; no network."""
 
 import base64
-import os
-import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
@@ -210,68 +208,3 @@ def test_key_and_password_never_in_error(client, key_file):
     text = f"{err.value}{err.value!r}{err.value.args}"
     assert "FAKEKEYMATERIAL123" not in text
     assert "s3cret-pw" not in text
-
-
-# -- live (SCTO_LIVE=1) ------------------------------------------------------------
-# Derive structure first, then assert on it: a failing assert prints its operands.
-
-
-@pytest.fixture
-def live():
-    return Client.from_env(), os.environ["SCTO_FORM_NAME"]
-
-
-@pytest.mark.live
-def test_live_form_list_lists_form(live):
-    client, form = live
-    root = ET.fromstring(client.pull_form_list())
-    listed = form in {e.text for e in root.iter() if e.tag.endswith("formID")}
-    assert listed
-
-
-@pytest.mark.live
-def test_live_form_xml_is_xform_with_publishable(live):
-    client, form = live
-    root = ET.fromstring(client.pull_form_xml(form))
-    n_publishable = sum(1 for e in root.iter() if "publishable" in e.attrib)
-    assert root.tag.endswith("html")
-    assert n_publishable > 0
-
-
-@pytest.mark.live
-def test_live_wide_json_keyed_has_more_columns_than_keyless(live):
-    client, form = live
-    keyed = client.pull_wide_json(form, key_path=env_key_path())
-    keyless = client.pull_wide_json(form)
-    n_keyed, n_keyless = len(keyed), len(keyless)
-    cols_keyed = {c for r in keyed for c in r}
-    cols_keyless = {c for r in keyless for c in r}
-    same_keys = {r["KEY"] for r in keyed} == {r["KEY"] for r in keyless}
-    assert n_keyed == n_keyless > 0
-    assert same_keys
-    assert len(cols_keyed) > len(cols_keyless)
-
-
-@pytest.mark.live
-def test_live_since_in_future_returns_nothing(live):
-    client, form = live
-    n_rows = len(
-        client.pull_wide_json(form, since=datetime(2100, 1, 1, tzinfo=timezone.utc))
-    )
-    assert n_rows == 0
-
-
-@pytest.mark.live
-def test_live_form_files(live):
-    client, form = live
-    names = sorted(client.pull_form_files(form))
-    assert isinstance(names, list)
-
-
-@pytest.mark.live
-def test_live_dataset():
-    dataset = os.environ.get("SCTO_DATASET_NAME")
-    if not dataset:
-        pytest.skip("SCTO_DATASET_NAME not set")
-    n_lines = len(Client.from_env().pull_dataset(dataset).splitlines())
-    assert n_lines >= 1

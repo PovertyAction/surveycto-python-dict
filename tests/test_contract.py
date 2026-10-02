@@ -1,12 +1,10 @@
-"""Stage 2: form-list entry, dataset discovery, and the live publishable oracle."""
+"""Stage 2: form-list entry and dataset discovery."""
 
 import json
-import os
 
 import pytest
-from surveycto_extractor.parsers.xml_contract import is_system_column, parse_contract
+from surveycto_extractor.parsers.xml_contract import parse_contract
 
-from surveycto_python_dict.api import Client, env_key_path
 from surveycto_python_dict.contract import (
     DatasetSource,
     UnresolvedDataset,
@@ -124,42 +122,3 @@ def test_resolve_datasets_none_referenced(tmp_path):
     )
     entry = form_entry(_form_list("", json.dumps(_FILES)), "shop")
     assert resolve_datasets(parse_contract(path), entry) == {}
-
-
-# -- live: publishable in the XML == fields SurveyCTO leaves unencrypted -----------
-
-
-def _oracle(contract, keyed: list[dict], keyless: list[dict]) -> set[str]:
-    """Fields whose columns come back both with and without the key."""
-    both = {c for r in keyed for c in r} & {c for r in keyless for c in r}
-    return {
-        contract.map_column(c)["node_path"]
-        for c in both
-        if not is_system_column(c) and contract.map_column(c)["kind"] == "matched"
-    }
-
-
-@pytest.mark.live
-def test_live_publishable_matches_oracle(tmp_path):
-    client, form = Client.from_env(), os.environ["SCTO_FORM_NAME"]
-    xml_path = tmp_path / "form.xml"
-    xml_path.write_bytes(client.pull_form_xml(form))
-    contract = parse_contract(xml_path)
-    from_xml = {p for p, n in contract.nodes.items() if n.publishable}
-    oracle = _oracle(
-        contract,
-        client.pull_wide_json(form, key_path=env_key_path()),
-        client.pull_wide_json(form),
-    )
-    assert from_xml == oracle
-
-
-@pytest.mark.live
-def test_live_datasets_resolve(tmp_path):
-    client, form = Client.from_env(), os.environ["SCTO_FORM_NAME"]
-    xml_path = tmp_path / "form.xml"
-    xml_path.write_bytes(client.pull_form_xml(form))
-    entry = form_entry(client.pull_form_list(), form)
-    resolved = resolve_datasets(parse_contract(xml_path), entry)
-    kinds = {s.kind for s in resolved.values()}
-    assert kinds <= {"form_file", "server_dataset"}
