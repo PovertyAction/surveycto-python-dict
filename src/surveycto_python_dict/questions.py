@@ -11,7 +11,7 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-from surveycto_python_dict.xml_contract import FormContract, Node, parse_contract
+from surveycto_python_dict.xml_contract import FormContract, Node
 
 # XLSForm types that are not questions, and names reserved for submission metadata.
 _EXCLUDED_TYPES = {
@@ -44,6 +44,7 @@ _PRELOAD_TYPES = {
     ("property", "simserial"): "simserial",
     ("property", "phonenumber"): "phonenumber",
     ("property", "username"): "username",
+    ("property", "caseid"): "caseid",
 }
 _MEDIA_TYPES = {"image": "image", "audio": "audio", "video": "video"}
 _REF_RE = re.compile(r"\$\{([^}]+)\}")
@@ -103,13 +104,39 @@ def _references(*exprs: str | None) -> list[str] | None:
     return refs or None
 
 
+def _data_source(node: Node, refs: "_Refs") -> dict | None:
+    """Return the dataset a field reads and how its rows match the submission.
+
+    ``pulldata('roster', 'name', 'hhid', ${id})`` reads ``roster.name`` where
+    ``roster.hhid`` = ``${id}``; a ``search()`` select keeps the dataset rows whose
+    filter columns match.
+    """
+    source = node.data_source
+    if source is None:
+        return None
+    if source["kind"] == "pulldata":
+        return {
+            "kind": "pulldata",
+            "dataset": source["dataset"],
+            "column": refs(source["value"]).strip("'\""),
+            "match": [{"column": source["key"], "value": refs(source["match"])}],
+        }
+    return {
+        "kind": "search",
+        "dataset": source["dataset"],
+        "match": [
+            {"column": column, "value": refs(value)}
+            for column, value in source["match"].items()
+        ],
+    }
+
+
 def _excluded(name: str, qtype: str) -> bool:
     return qtype in _EXCLUDED_TYPES or name.startswith(_EXCLUDED_PREFIXES)
 
 
-def build_questions(xml_path: Path) -> list[dict]:
+def build_questions(contract: FormContract) -> list[dict]:
     """Return the form's questions in form order."""
-    contract = parse_contract(xml_path)
     refs = _Refs(contract)
     repeats = set(contract.repeat_groups)
     questions = []
@@ -124,16 +151,26 @@ def build_questions(xml_path: Path) -> list[dict]:
         return relevances, "0" in relevances
 
     def label(node: Node) -> str:
-        if node.label_ref is not None:
-            raise ValueError(
-                f"node {node.path!r}: itext label {node.label_ref!r}; only plain labels are read"
-            )
         return refs(node.label) or ""
+
+    # A repeat counted by an expression has a compiled `<repeat>_count` calculate
+    # beside it; the repeat's count entry describes that field instead of repeating it.
+    counted_by = {
+        node.name: contract.nodes[path]
+        for node in contract.nodes.values()
+        if not node.is_leaf
+        and node.name in repeats
+        and (path := "/".join([*node.group_path, f"{node.name}_count"]))
+        in contract.nodes
+    }
+    count_paths = {n.path for n in counted_by.values()}
 
     for node in contract.nodes.values():
         if not node.is_leaf and node.name in repeats:
-            group_relevances, parent_disabled = group_context(node)
-            relevance = refs(node.relevant)
+            count = counted_by.get(node.name)
+            group_relevances, parent_disabled = group_context(count or node)
+            relevance = refs((count or node).relevant)
+            calculation = refs(count.calculate if count else node.repeat_count)
             questions.append(
                 {
                     "type": "repeat_count",
@@ -146,16 +183,18 @@ def build_questions(xml_path: Path) -> list[dict]:
                     "relevance": relevance,
                     "group_relevances": group_relevances,
                     "required": False,
-                    "calculation": refs(node.repeat_count),
+                    "calculation": calculation,
                     "appearance": None,
-                    "references": _references(relevance, refs(node.repeat_count)),
+                    "references": _references(relevance, calculation),
                     "group_path": node.group_path,
-                    "publishable": False,
+                    "publishable": count.publishable if count else False,
+                    "choices_withheld": None,
+                    "data_source": None,
                     "repeat_group_name": node.name,
                 }
             )
             continue
-        if not node.is_leaf:
+        if not node.is_leaf or node.path in count_paths:
             continue
         qtype = _xlsform_type(node)
         if _excluded(node.name, qtype):
@@ -186,10 +225,12 @@ def build_questions(xml_path: Path) -> list[dict]:
                 "group_relevances": group_relevances,
                 "required": node.required,
                 "calculation": calculation,
-                "appearance": node.appearance,
+                "appearance": refs(node.appearance),
                 "references": _references(relevance, constraint, calculation),
                 "group_path": node.group_path,
                 "publishable": node.publishable,
+                "choices_withheld": node.choices_withheld,
+                "data_source": _data_source(node, refs),
             }
         )
     for order, question in enumerate(questions):

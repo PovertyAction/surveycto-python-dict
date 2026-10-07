@@ -108,7 +108,12 @@ class TestParseContract:
 
     def test_pulldata_provenance(self, contract):
         node = contract.nodes["pre_score"]
-        assert node.pulldata == {"dataset": "preload", "value": "'score'", "key": "id"}
+        assert node.pulldata == {
+            "dataset": "preload",
+            "value": "'score'",
+            "key": "id",
+            "match": "/myform/name",
+        }
         assert node.data_source["kind"] == "pulldata"
 
     def test_search_data_source(self, contract):
@@ -343,7 +348,12 @@ class TestPureHelpers:
 
     def test_parse_pulldata(self):
         pd = _parse_pulldata("pulldata('roster', 'name', 'hhid', ${x})")
-        assert pd == {"dataset": "roster", "value": "'name'", "key": "hhid"}
+        assert pd == {
+            "dataset": "roster",
+            "value": "'name'",
+            "key": "hhid",
+            "match": "${x}",
+        }
         assert _parse_pulldata("today()") is None
 
     def test_parse_search(self):
@@ -602,21 +612,21 @@ _XML_PUBLISHABLE = """<?xml version="1.0"?>
     <model>
       <instance>
         <pubform id="pubform" version="1">
-          <full_name/>
-          <region/>
+          <owner_name/>
+          <district/>
           <hh jr:template="">
             <age/>
           </hh>
         </pubform>
       </instance>
-      <bind nodeset="/pubform/full_name" type="string"/>
-      <bind nodeset="/pubform/region" type="select1" publishable="true()"/>
+      <bind nodeset="/pubform/owner_name" type="string"/>
+      <bind nodeset="/pubform/district" type="select1" publishable="true()"/>
       <bind nodeset="/pubform/hh/age" type="int" publishable="true()"/>
     </model>
   </h:head>
   <h:body>
-    <input ref="/pubform/full_name"><label>Name</label></input>
-    <select1 ref="/pubform/region"><label>Region</label>
+    <input ref="/pubform/owner_name"><label>Name</label></input>
+    <select1 ref="/pubform/district"><label>District</label>
       <item><label>North</label><value>1</value></item>
     </select1>
     <group ref="/pubform/hh"><repeat nodeset="/pubform/hh">
@@ -635,15 +645,15 @@ class TestPublishable:
         return parse_contract(p)
 
     def test_bind_attribute_sets_publishable(self, pubform):
-        assert pubform.nodes["region"].publishable is True
+        assert pubform.nodes["district"].publishable is True
         assert pubform.nodes["hh/age"].publishable is True
 
     def test_no_attribute_is_not_publishable(self, pubform):
-        assert pubform.nodes["full_name"].publishable is False
+        assert pubform.nodes["owner_name"].publishable is False
 
     def test_publishable_in_contract_json(self, pubform):
         nodes = pubform.to_dict()["nodes"]
-        assert nodes["region"]["publishable"] is True
+        assert nodes["district"]["publishable"] is True
 
 
 class TestEncrypted:

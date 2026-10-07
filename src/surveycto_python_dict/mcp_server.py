@@ -64,6 +64,16 @@ def make_server(store: SurveyStore) -> MCPServer:
         """Show the repeat groups, their nesting, counts and members."""
         return store.get_repeat_structure()
 
+    @server.tool()
+    def get_structure_db() -> str:
+        """Map <form>.duckdb: each table and view, what one row is, its key and joins."""
+        return store.get_structure_db()
+
+    @server.tool()
+    def get_datasets() -> str:
+        """Describe the datasets the form reads and how their rows join to the form."""
+        return store.get_datasets()
+
     return server
 
 

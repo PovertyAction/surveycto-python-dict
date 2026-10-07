@@ -137,9 +137,9 @@ class Node:
     preload: str | None = None  # jr:preload (system source, e.g. property)
     preload_params: str | None = None  # jr:preloadParams (e.g. username, deviceid)
     original: str | None = None  # SurveyCTO bind `original` (XLSForm type, e.g. "note")
-    # Body label text; each <output value="..."/> is inlined as its expression.
+    # Body label text, from the default translation when the label is itext; each
+    # <output value="..."/> is inlined as its expression.
     label: str | None = None
-    label_ref: str | None = None  # label's itext reference, when it has one
     mediatype: str | None = None  # <upload mediatype>, e.g. "image/*"
     appearance: str | None = None  # body control appearance
     repeat_count: str | None = None  # <repeat jr:count>, on the repeat's node
@@ -152,6 +152,8 @@ class Node:
     # `-88` "Other" alongside a column reference). Needed to build the choice index
     # that de-sanitises a wide column's choice token back to its declared value.
     choice_items: list[dict] = field(default_factory=list)
+    # Why a `search()` select's dataset choices were left out, e.g. ["presidio:PERSON"].
+    choices_withheld: list[str] | None = None
 
 
 # search('dataset','mode','col','val'[,'col2','val2'...]) on a select's appearance.
@@ -209,14 +211,24 @@ def _unquote(s: str) -> str:
     return s
 
 
+def _dataset_name(arg: str) -> str:
+    """Return a dataset argument without quotes or ``.csv``: ``'roster.csv'`` -> ``roster``."""
+    return _unquote(arg).removesuffix(".csv")
+
+
+_STRING_LITERAL = re.compile(r"""^(?:string\(\s*)?(['"])([^'"]*)\1(?:\s*\))?$""")
+
+
 def _parse_pulldata(calc: str | None) -> dict | None:
+    """``pulldata('ds', 'col', 'key', expr)``: ``match`` is ``expr``, the value of ``key``."""
     args = _split_call_args(calc, "pulldata")
     if not args or len(args) < 3:
         return None
     return {
-        "dataset": _unquote(args[0]),
+        "dataset": _dataset_name(args[0]),
         "value": args[1].strip(),
         "key": _unquote(args[2]),
+        "match": args[3].strip() if len(args) > 3 else None,
     }
 
 
@@ -226,27 +238,37 @@ def _parse_search(appearance: str | None) -> dict | None:
     `search('choices','matches','list_name','treatTarget')` ->
       {kind:"search", dataset:"choices", filter:{"list_name":"treatTarget"}} (+mode).
     A column whose value is a node-ref (not a quoted literal) maps to None
-    (dynamic filter); the literal pairs resolve options from the CSV.
+    (dynamic filter); the literal pairs resolve options from the CSV. ``match`` keeps
+    every filter's value expression as written, node-refs included.
     """
     if not appearance or "search(" not in appearance:
         return None
     args = _split_call_args(appearance, "search")
     if not args:
         return None
-    dataset = _unquote(args[0])
+    dataset = _dataset_name(args[0])
     rest = args[1:]
     mode = _unquote(rest[0]) if rest else None
     pairs = rest[1:]
     filt: dict[str, str | None] = {}
+    match: dict[str, str | None] = {}
     for i in range(0, len(pairs) - 1, 2):
         col = _unquote(pairs[i])
         val_raw = pairs[i + 1].strip()
         # a quoted literal is a static filter value; an unquoted node-ref is
         # dynamic -> None
         filt[col] = _unquote(val_raw) if val_raw[:1] in ("'", '"') else None
+        match[col] = val_raw
     if len(pairs) % 2 == 1:  # trailing col with a dynamic (node-ref) value
         filt[_unquote(pairs[-1])] = None
-    return {"kind": "search", "dataset": dataset, "mode": mode, "filter": filt}
+        match[_unquote(pairs[-1])] = None
+    return {
+        "kind": "search",
+        "dataset": dataset,
+        "mode": mode,
+        "filter": filt,
+        "match": match,
+    }
 
 
 def _parse_data_source(appearance: str | None, calc: str | None) -> dict | None:
@@ -546,6 +568,28 @@ def _label_text(label) -> str:
     return "".join(parts).strip()
 
 
+_ITEXT_REF = re.compile(r"^jr:itext\('([^']+)'\)$")
+
+
+def _default_itext(model) -> dict[str, str]:
+    """Return ``{text id: text}`` from the default translation, or {} without itext.
+
+    The default is the translation marked ``default="true()"``, else the first one;
+    media forms (``<value form="image">``) are skipped.
+    """
+    translations = [e for e in model.iter() if _ln(e.tag) == "translation"]
+    if not translations:
+        return {}
+    default = next(
+        (t for t in translations if t.get("default") == "true()"), translations[0]
+    )
+    texts = {}
+    for text in default:
+        value = next(v for v in text if _ln(v.tag) == "value" and not v.get("form"))
+        texts[text.get("id")] = _label_text(value)
+    return texts
+
+
 def parse_contract(xml_path) -> FormContract:
     """Parse a compiled XForm XML into a FormContract."""
     import xml.etree.ElementTree as ET
@@ -572,6 +616,12 @@ def parse_contract(xml_path) -> FormContract:
                 break
     if primary is None:
         raise RuntimeError(f"Could not find primary instance in {xml_path}")
+    itext = _default_itext(model) if model is not None else {}
+
+    def label_text(label) -> str:
+        ref = label.get("ref")
+        return itext[_ITEXT_REF.match(ref).group(1)] if ref else _label_text(label)
+
     formid = primary.get("id") or _ln(primary.tag)
     formdef_version = primary.get("version")
 
@@ -621,7 +671,6 @@ def parse_contract(xml_path) -> FormContract:
     appearances: dict[str, str] = {}
     items: dict[str, list[dict]] = {}
     labels: dict[str, str] = {}
-    label_refs: dict[str, str] = {}
     mediatypes: dict[str, str] = {}
     counts: dict[str, str] = {}
     body = next((c for c in root if _ln(c.tag) == "body"), None)
@@ -636,10 +685,7 @@ def parse_contract(xml_path) -> FormContract:
                 controls[rel] = ctl
             label = next((c for c in el if _ln(c.tag) == "label"), None)
             if label is not None:
-                if label.get("ref"):
-                    label_refs[rel] = label.get("ref")
-                else:
-                    labels[rel] = _label_text(label)
+                labels[rel] = label_text(label)
             if el.get("mediatype"):
                 mediatypes[rel] = el.get("mediatype")
             if ctl == "repeat":
@@ -652,7 +698,8 @@ def parse_contract(xml_path) -> FormContract:
                 items[rel] = [
                     {
                         "label": next(
-                            (c.text for c in it if _ln(c.tag) == "label"), None
+                            (label_text(c) for c in it if _ln(c.tag) == "label"),
+                            None,
                         ),
                         "value": next(
                             (c.text for c in it if _ln(c.tag) == "value"), None
@@ -704,11 +751,25 @@ def parse_contract(xml_path) -> FormContract:
             data_source=_parse_data_source(ap, b.get("calculate")),
             original=b.get("original"),
             label=labels.get(path),
-            label_ref=label_refs.get(path),
             mediatype=mediatypes.get(path),
             appearance=ap,
             repeat_count=counts.get(path),
         )
+
+    # A dataset named through a field (`search(${list_name})`) is that field's
+    # literal calculate, `string('roster')` or `'roster'`.
+    for node in nodes.values():
+        for source in (node.data_source, node.pulldata):
+            if source and source["dataset"].startswith(prefix):
+                named_by = nodes[source["dataset"][len(prefix) :]]
+                literal = _STRING_LITERAL.match((named_by.calculate or "").strip())
+                if not literal:
+                    raise ValueError(
+                        f"{node.path} reads a dataset named by {named_by.path}, whose "
+                        f"calculate is not a string literal: {named_by.calculate!r}"
+                    )
+                source["dataset"] = literal.group(2).removesuffix(".csv")
+
     encrypted = any(
         _ln(el.tag) == "submission" and el.get("base64RsaPublicKey")
         for el in root.iter()

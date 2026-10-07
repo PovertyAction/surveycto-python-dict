@@ -1,6 +1,8 @@
 """Stage 1: SurveyCTO API client. HTTP is mocked with ``responses``; no network."""
 
 import base64
+import io
+import zipfile
 from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlparse
 
@@ -27,8 +29,10 @@ _XML = b"""<?xml version="1.0"?>
 
 _MANIFEST = b"""<?xml version="1.0"?>
 <manifest xmlns="http://openrosa.org/xforms/xformsManifest">
-  <mediaFile><filename>prices.csv</filename><hash>md5:abc</hash>
-    <downloadUrl>https://acme.surveycto.com/forms/demo_form/files/prices.csv</downloadUrl></mediaFile>
+  <mediaFile><filename>prices.zip</filename><hash>md5:abc</hash>
+    <downloadUrl>https://acme.surveycto.com/forms/demo_form/files/prices.zip</downloadUrl></mediaFile>
+  <mediaFile><filename>logo.png</filename><hash>md5:def</hash>
+    <downloadUrl>https://acme.surveycto.com/forms/demo_form/files/logo.png</downloadUrl></mediaFile>
 </manifest>"""
 
 
@@ -147,11 +151,23 @@ def test_pull_dataset(client):
     assert client.pull_dataset("roster") == "id,name\n1,a\n"
 
 
+def _zipped(name: str, content: bytes) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr(name, content)
+    return buf.getvalue()
+
+
 @responses.activate
-def test_pull_form_files_downloads_every_manifest_entry(client):
+def test_pull_form_files_unzips_only_the_requested_csvs(client):
     responses.get(f"{BASE}/forms/{FORM}/manifest", body=_MANIFEST)
-    responses.get(f"{BASE}/forms/{FORM}/files/prices.csv", body=b"item,price\nrice,2\n")
-    assert client.pull_form_files(FORM) == {"prices.csv": b"item,price\nrice,2\n"}
+    responses.get(
+        f"{BASE}/forms/{FORM}/files/prices.zip",
+        body=_zipped("prices.csv", b"item,price\nrice,2\n"),
+    )
+    assert client.pull_form_files(FORM, ["prices.csv"]) == {
+        "prices.csv": b"item,price\nrice,2\n"
+    }
 
 
 # -- failures ----------------------------------------------------------------------
@@ -181,7 +197,7 @@ _CALLS = {
     "manifest": (
         responses.GET,
         f"{BASE}/forms/{FORM}/manifest",
-        lambda c, k: c.pull_form_files(FORM),
+        lambda c, k: c.pull_form_files(FORM, ["prices.csv"]),
     ),
 }
 

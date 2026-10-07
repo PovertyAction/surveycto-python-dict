@@ -18,6 +18,11 @@ def store(tmp_path, analyzer):
     cfg.raw_dir.mkdir(parents=True)
     (cfg.raw_dir / "form.xml").write_text(XML, encoding="utf-8")
     (cfg.raw_dir / "wide.json").write_text(json.dumps(ROWS), encoding="utf-8")
+    (cfg.raw_dir / "datasets").mkdir()
+    (cfg.raw_dir / "datasets" / "prev_round.csv").write_text(
+        "phone,owner\n3000000000,Fictional Owner\n3000000001,Fictional Owner\n",
+        encoding="utf-8",
+    )
     build(cfg, SENTINELS, analyzer)
     return SurveyStore(cfg.form_dir, "farm")
 
@@ -34,7 +39,7 @@ def test_lookup_question_shows_text_logic_columns_and_pii(store):
 def test_lookup_flagged_variable_warns(store):
     out = store.lookup_variable("owner")
     assert "may_contain_pii (type:text, presidio:PERSON)" in out
-    assert "farm_pii_review.parquet" in out
+    assert "farm_pii_review.xlsx" in out
 
 
 def test_lookup_by_column_resolves_its_question(store):
@@ -110,6 +115,8 @@ def test_server_registers_the_tools(store):
         "get_survey_info",
         "get_variable_neighborhood",
         "get_repeat_structure",
+        "get_datasets",
+        "get_structure_db",
     }
     assert "pii.status" in server.instructions
 
@@ -207,3 +214,37 @@ def test_search_shows_short_plain_text(store):
 
     assert _short("<p>" + "word " * 50 + "</p>").endswith("...")
     assert len(_short("word " * 50)) == 100
+
+
+def test_withheld_choices_name_the_dataset_columns_not_choices(store):
+    store.questions["crop"] = dict(
+        store.questions["crop"],
+        appearance="search('crops')",
+        choices=[{"value": "crop_id", "label": "crop_name"}],
+        choices_withheld=["presidio:PERSON"],
+    )
+    out = store.get_choice_list("crop")
+    assert "choices withheld (presidio:PERSON)" in out
+    assert "value column `crop_id`, label column `crop_name`" in out
+    assert "crop_id = crop_name" not in out
+
+
+def test_lookup_shows_where_a_value_comes_from(store):
+    out = store.lookup_variable("prev")
+    assert (
+        "Data source: pulldata: prev_round.owner where prev_round.phone = ${phone}"
+        in out
+    )
+
+
+def test_datasets_describe_the_join_to_the_form(store):
+    out = store.get_datasets()
+    assert out.startswith("prev_round: 2 rows, 2 columns")
+    assert "prev_round_safe" in out
+    assert (
+        "prev_round.phone = ${phone} (in submissions); "
+        "unique in the dataset: one dataset row per match"
+    ) in out
+    assert "prev reads owner" in out
+    assert "owner  non-null 2/2, distinct 1" in out
+    assert "Fictional Owner" not in out

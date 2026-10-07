@@ -16,7 +16,7 @@ def built(tmp_path):
     path = tmp_path / "farm.xml"
     path.write_text(XML, encoding="utf-8")
     contract = parse_contract(path)
-    questions = build_questions(path)
+    questions = build_questions(contract)
     table = cast_wide(ROWS, contract)
     return table, questions, build_dictionary(table, questions, contract, SENTINELS)
 
@@ -122,7 +122,7 @@ def test_cast_fallback_surfaces(tmp_path):
     path.write_text(XML, encoding="utf-8")
     contract = parse_contract(path)
     table = cast_wide([dict(ROWS[0], area="about two")], contract)
-    vardict = build_dictionary(table, build_questions(path), contract, SENTINELS)
+    vardict = build_dictionary(table, build_questions(contract), contract, SENTINELS)
     assert vardict["variables"]["area"]["parquet"]["cast_fallback"] == (
         "1 of 1 values do not parse as double"
     )

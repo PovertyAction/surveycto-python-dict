@@ -15,6 +15,7 @@ dependencies = [
     "en-core-web-lg",
     "mcp[cli]>=2.0.0,<3",
     "openpyxl>=3.1,<4",
+    "duckdb>=1.1,<2",
 ]
 
 [dependency-groups]
@@ -28,6 +29,7 @@ scto-mcp   = "surveycto_python_dict.mcp_server:main"
 scto-survey = "surveycto_python_dict.survey:main"
 scto-stats = "surveycto_python_dict.stats:main"
 scto-codebook = "surveycto_python_dict.codebook:main"
+scto-duckdb = "surveycto_python_dict.database:main"
 
 [build-system]
 requires = ["hatchling"]

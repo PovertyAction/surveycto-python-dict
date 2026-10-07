@@ -4,8 +4,10 @@ Every non-2xx response raises ``SurveyCTOError`` with status and URL; nothing re
 Endpoint shapes are recorded in ``docs/api-endpoints.md``.
 """
 
+import io
 import os
 import xml.etree.ElementTree as ET
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -102,14 +104,24 @@ class Client:
         url = f"{self.base_url}/api/v2/datasets/data/csv/{dataset_id}"
         return self._send("GET", url).text
 
-    def pull_form_files(self, form_id: str) -> dict[str, bytes]:
-        """Return every file attached to the form, keyed by filename, via its manifest."""
+    def pull_form_files(self, form_id: str, filenames: list[str]) -> dict[str, bytes]:
+        """Return the form's attached CSVs ``filenames``, keyed by filename.
+
+        The manifest serves each attached CSV zipped: ``prices.csv`` is the single
+        member of ``prices.zip``.
+        """
         manifest = self._send(
             "GET", f"{self.base_url}/forms/{form_id}/manifest"
         ).content
+        urls = {
+            media.findtext(f"{_MANIFEST_NS}filename"): media.findtext(
+                f"{_MANIFEST_NS}downloadUrl"
+            )
+            for media in ET.fromstring(manifest).iter(f"{_MANIFEST_NS}mediaFile")
+        }
         files = {}
-        for media in ET.fromstring(manifest).iter(f"{_MANIFEST_NS}mediaFile"):
-            name = media.findtext(f"{_MANIFEST_NS}filename")
-            url = media.findtext(f"{_MANIFEST_NS}downloadUrl")
-            files[name] = self._send("GET", url).content
+        for name in filenames:
+            url = urls[f"{name.removesuffix('.csv')}.zip"]
+            with zipfile.ZipFile(io.BytesIO(self._send("GET", url).content)) as z:
+                files[name] = z.read(name)
         return files

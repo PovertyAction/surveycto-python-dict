@@ -15,7 +15,8 @@ You explain one SurveyCTO form and its data from the outputs `scto-build` writes
 | `<form>_variable_dictionary.json` | One entry per parquet column: stats, types, sentinels, `pii` |
 | `<form>_variable_graph.json` | Questions linked by calculation, relevance, constraint and repeat |
 | `<form>.parquet` | The submissions. **Do not read it** unless the columns you need are cleared (below) |
-| `<form>_pii_review.parquet` | `KEY` plus every flagged column, for the people cleaning the data. **Never read it** |
+| `<form>_pii_review.xlsx` | `KEY` plus every flagged column, for the people cleaning the data. **Never read it** |
+| `<form>.duckdb` | `just duckdb`: views over the parquet and the descriptions as tables. **Read values only through the `*_safe` views**: `submissions_safe`, and `<repeat>_safe` for each repeat group long (`KEY`, `instance`, one column per field), and `<dataset>_safe` for each dataset the form reads. `dataset_links` gives each `pulldata()`/`search()` join; `dataset_codebook` gives each dataset column's readers and `pii` |
 | `<form>_summary_stats.csv` | `just stats`: per column, eligible rows under skip logic, sentinels apart, then stats; flagged PII columns get counts only |
 
 ## How to look things up
@@ -40,7 +41,7 @@ uv run scto-survey --config config.toml <command>
 | Repeat groups | `get_repeat_structure()` | `repeats` |
 | Form overview | `get_survey_info()` | `info` |
 
-A name can be a question (`med_internship`) or a column (`med_internship_6`); a column
+A name can be a question (`water_source`) or a column (`water_source_3`); a column
 lookup returns its question with every column it produced. Read the JSON files
 directly only for what the tools do not show, such as a whole section.
 
@@ -52,13 +53,16 @@ Every column carries `pii.status` with the `basis` for it:
 |---|---|---|
 | `cleared_by_form` | The form marks the field `publishable` | May be read |
 | `whitelisted` | Reviewed by the team (`reviewed`), a system column, a number/date, an inline-choice select, or a calculate whose inputs are all cleared (`lineage:...`) | May be read |
-| `contains_pii` | Device metadata, GPS, or an attachment | Do not read |
+| `contains_pii` | Blacklisted by the team (`reviewed`), device metadata, GPS, or an attachment | Do not read |
 | `may_contain_pii` | Presidio found names, phones, emails or places (`presidio:PERSON`, ...) in its values | Do not read |
 | `no_hits` | Free text where Presidio found nothing | Treat as unreviewed; ask before reading |
 
 This is a signal, not enforcement. When a task needs a flagged column's values, say so
-and leave the reading to the user, who reviews `<form>_pii_review.parquet` and adds the
-columns they clear to `[pii] whitelist` in `config.toml`. `presidio.hit_rows` counts the
+and leave the reading to the user, who reviews `<form>_pii_review.xlsx` and adds the
+columns they clear to `[pii] whitelist` in `config.toml` (and personal ones to
+`[pii] blacklist`). A `search()` select with `choices_withheld` has no choice list in
+the outputs: its dataset held what Presidio flags; `get_choice_list` names the dataset's
+value and label columns instead. `presidio.hit_rows` counts the
 rows with a hit and `presidio.hit_keys` gives up to five of their `KEY`s; quote counts
 and KEYs, never values.
 

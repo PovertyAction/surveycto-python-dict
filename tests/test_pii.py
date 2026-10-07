@@ -13,7 +13,6 @@ from surveycto_python_dict.pii import (
     PiiConfig,
     build_analyzer,
     classify,
-    review_table,
 )
 from surveycto_python_dict.questions import build_questions
 from surveycto_python_dict.xml_contract import parse_contract
@@ -44,7 +43,7 @@ def form(tmp_path):
     path = tmp_path / "farm.xml"
     path.write_text(XML, encoding="utf-8")
     contract = parse_contract(path)
-    questions = build_questions(path)
+    questions = build_questions(contract)
     table = cast_wide(ROWS, contract)
     return table, questions, build_dictionary(table, questions, contract, SENTINELS)
 
@@ -172,19 +171,6 @@ def test_missing_spacy_model_raises():
         build_analyzer(PiiConfig(languages={"xx": "xx_no_such_model"}))
 
 
-def test_review_table_has_key_and_flagged_columns(form, blocks):
-    review = review_table(form[0], blocks)
-    assert review.schema.names[0] == "KEY"
-    flagged = {
-        c
-        for c, b in blocks.items()
-        if b["status"] in ("contains_pii", "may_contain_pii")
-    }
-    assert set(review.schema.names[1:]) == flagged
-    assert review.num_rows == form[0].num_rows
-    assert isinstance(review, pa.Table)
-
-
 def test_hit_keys_capped_at_five_with_the_full_count(analyzer):
     from surveycto_python_dict.pii import _scan
 
@@ -198,3 +184,42 @@ def test_hit_keys_capped_at_five_with_the_full_count(analyzer):
     )
     assert block["presidio"]["hit_rows"] == 8
     assert block["presidio"]["hit_keys"] == [f"uuid:{i}" for i in range(5)]
+
+
+def test_blacklist_outranks_publishable_and_breaks_lineage(form, analyzer):
+    blocks, spy = _classify(
+        form, analyzer, PiiConfig(whitelist=("owner",), blacklist=("phone",))
+    )
+    assert blocks["phone"] == {"status": "contains_pii", "basis": ["reviewed"]}
+    assert blocks["tag"]["status"] != "whitelisted"
+    assert "3104567890" not in spy.texts
+
+
+def test_blacklisted_publishable_question_is_contains_pii(form, analyzer):
+    blocks, _ = _classify(form, analyzer)
+    cleared = next(c for c, b in blocks.items() if b["status"] == "cleared_by_form")
+    blocks, _ = _classify(form, analyzer, PiiConfig(blacklist=(cleared,)))
+    assert blocks[cleared] == {"status": "contains_pii", "basis": ["reviewed"]}
+
+
+def test_name_on_both_lists_raises(form, analyzer):
+    with pytest.raises(ValueError, match="owner"):
+        _classify(form, analyzer, PiiConfig(whitelist=("owner",), blacklist=("owner",)))
+
+
+def test_untrusted_publishable_goes_through_the_other_rules(form, analyzer):
+    blocks, spy = _classify(form, analyzer, PiiConfig(trust_publishable=False))
+    assert blocks["plots"] == {
+        "status": "whitelisted",
+        "basis": ["type:integer", "publishable"],
+    }
+    assert blocks["village"]["status"] in ("may_contain_pii", "no_hits")
+    assert blocks["village"]["basis"][0] == "type:text"
+    assert blocks["village"]["basis"][-1] == "publishable"
+    assert "Villa Ficticia Uno" in spy.texts
+
+
+def test_blacklist_and_whitelist_still_rank_above_untrusted_publishable(form, analyzer):
+    config = PiiConfig(trust_publishable=False, whitelist=("village",))
+    blocks, _ = _classify(form, analyzer, config)
+    assert blocks["village"] == {"status": "whitelisted", "basis": ["reviewed"]}

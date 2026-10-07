@@ -1,13 +1,17 @@
-"""PI-facing codebook: ``<form>_codebook.xlsx`` with a Variables and a Summary stats sheet.
+"""The xlsx outputs: the PI-facing codebook and the PII review workbook.
 
-Built from the outputs ``scto-build`` writes; it adds no submission values beyond the
-summary stats, which give flagged PII columns counts only.
+``<form>_codebook.xlsx`` has a Variables and a Summary stats sheet, built from the
+outputs ``scto-build`` writes; it adds no submission values beyond the summary stats,
+which give flagged PII columns counts only. ``<form>_pii_review.xlsx`` is the opposite:
+the flagged columns' values, for the people cleaning the data.
 """
 
+import datetime as dt
 import json
 import re
 from pathlib import Path
 
+import pyarrow as pa
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -95,6 +99,47 @@ def _sheet(workbook: Workbook, title: str, header: list[str], rows: list[list]) 
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
             if name in _PERCENT and isinstance(cell.value, (int, float)):
                 cell.number_format = "0.0%"
+
+
+REVIEW_COLUMNS = ["column", "label", "status", "basis", "hit_rows", "non_null"]
+
+
+def write_pii_review(table: pa.Table, vardict: dict, path: Path) -> Path:
+    """Write ``KEY`` plus every flagged column to ``path``: a Columns and a Values sheet.
+
+    Text stays text, so IDs keep their leading zeros. Timestamps are UTC, written
+    without the zone, which Excel does not store.
+    """
+    variables = vardict["variables"]
+    flagged = [
+        c
+        for c in table.schema.names
+        if variables[c]["pii"]["status"] in ("contains_pii", "may_contain_pii")
+    ]
+    columns = [
+        [
+            c,
+            plain_label((variables[c]["survey"] or {}).get("question_text") or ""),
+            variables[c]["pii"]["status"],
+            ", ".join(variables[c]["pii"]["basis"]),
+            variables[c]["pii"].get("presidio", {}).get("hit_rows", ""),
+            variables[c]["non_null_count"],
+        ]
+        for c in flagged
+    ]
+    values = [
+        [
+            v.replace(tzinfo=None) if isinstance(v, dt.datetime) else v
+            for v in row.values()
+        ]
+        for row in table.select(["KEY", *flagged]).to_pylist()
+    ]
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    _sheet(workbook, "Columns", REVIEW_COLUMNS, columns)
+    _sheet(workbook, "Values", ["KEY", *flagged], values)
+    workbook.save(path)
+    return path
 
 
 def write_codebook(form_dir: Path, form_id: str, sentinels: dict[int, str]) -> Path:

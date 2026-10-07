@@ -5,6 +5,7 @@ import json
 import pytest
 
 from surveycto_python_dict.questions import build_questions, write_sections
+from surveycto_python_dict.xml_contract import parse_contract
 
 # SurveyCTO's compiled shape: expressions use absolute paths wrapped in spaces,
 # choices are inline <item>s, notes are read-only strings with original="note".
@@ -101,6 +102,8 @@ _KEYS = [
     "references",
     "group_path",
     "publishable",
+    "choices_withheld",
+    "data_source",
     "question_order",
 ]
 
@@ -113,7 +116,7 @@ def _write(tmp_path, xml=_XML):
 
 @pytest.fixture
 def questions(tmp_path):
-    return build_questions(_write(tmp_path))
+    return build_questions(parse_contract(_write(tmp_path)))
 
 
 @pytest.fixture
@@ -233,7 +236,7 @@ def test_unknown_field_shape_raises(tmp_path):
         '<input ref="/shop/ok/photo"><label>Photo</label></input>',
     )
     with pytest.raises(ValueError, match="ok/photo"):
-        build_questions(_write(tmp_path, xml))
+        build_questions(parse_contract(_write(tmp_path, xml)))
 
 
 def test_unmapped_path_in_expression_raises(tmp_path):
@@ -241,15 +244,37 @@ def test_unmapped_path_in_expression_raises(tmp_path):
         "string-length( /shop/ok/owner )", "string-length( /shop/ok/ghost )"
     )
     with pytest.raises(ValueError, match="ghost"):
-        build_questions(_write(tmp_path, xml))
+        build_questions(parse_contract(_write(tmp_path, xml)))
 
 
-def test_itext_label_raises(tmp_path):
-    xml = _XML.replace(
-        "<label>Owner name</label>", "<label ref=\"jr:itext('owner:label')\"/>"
+_ITEXT = """<itext>
+        <translation lang="french">
+          <text id="owner:label"><value>Nom du proprietaire</value></text>
+          <text id="consent-1:label"><value>Oui</value></text>
+        </translation>
+        <translation default="true()" lang="english">
+          <text id="owner:label"><value>Owner of <output value=" /shop/ok/n_staff "/></value>
+            <value form="image">jr://images/owner.jpg</value></text>
+          <text id="consent-1:label"><value>Yes</value></text>
+        </translation>
+      </itext>
+    </model>"""
+
+
+def test_itext_labels_come_from_the_default_translation(tmp_path):
+    xml = (
+        _XML.replace("</model>", _ITEXT)
+        .replace(
+            "<label>Owner name</label>", "<label ref=\"jr:itext('owner:label')\"/>"
+        )
+        .replace("<label>Yes</label>", "<label ref=\"jr:itext('consent-1:label')\"/>")
     )
-    with pytest.raises(ValueError, match="itext"):
-        build_questions(_write(tmp_path, xml))
+    by_name = {
+        q["variable_name"]: q
+        for q in build_questions(parse_contract(_write(tmp_path, xml)))
+    }
+    assert by_name["owner"]["question_text"] == "Owner of ${n_staff}"
+    assert by_name["consent"]["choices"][0] == {"value": "1", "label": "Yes"}
 
 
 # -- sections ----------------------------------------------------------------------
@@ -269,3 +294,75 @@ def test_write_sections_one_file_per_group_level(questions, tmp_path):
     assert "price" in [q["variable_name"] for q in ok]
     ungrouped = json.loads(paths["ungrouped"].read_text(encoding="utf-8"))
     assert [q["variable_name"] for q in ungrouped] == ["consent", "dur"]
+
+
+def test_caseid_preload_is_typed_caseid(tmp_path):
+    path = tmp_path / "cases.xml"
+    path.write_text(
+        """<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml"
+        xmlns:jr="http://openrosa.org/javarosa">
+  <h:head><model>
+    <instance><visit id="visit" version="1"><caseid/></visit></instance>
+    <bind nodeset="/visit/caseid" type="string" jr:preload="property" jr:preloadParams="caseid"/>
+  </model></h:head>
+  <h:body/>
+</h:html>""",
+        encoding="utf-8",
+    )
+    assert [
+        (q["variable_name"], q["type"]) for q in build_questions(parse_contract(path))
+    ] == [("caseid", "caseid")]
+
+
+def test_compiled_repeat_count_calculate_is_the_count_entry(tmp_path):
+    path = tmp_path / "counted.xml"
+    path.write_text(
+        """<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml"
+        xmlns:jr="http://openrosa.org/javarosa">
+  <h:head><model>
+    <instance><visit id="visit" version="1">
+      <go/><n_kids/><kids_count/><kids jr:template=""><kid_age/></kids>
+    </visit></instance>
+    <bind nodeset="/visit/go" type="select1"/>
+    <bind nodeset="/visit/n_kids" type="int"/>
+    <bind nodeset="/visit/kids_count" type="string" readonly="true()" calculate=" /visit/n_kids  + 1"/>
+    <bind nodeset="/visit/kids" relevant=" /visit/go  = 1"/>
+    <bind nodeset="/visit/kids/kid_age" type="int"/>
+  </model></h:head>
+  <h:body>
+    <select1 ref="/visit/go"><label>Go?</label>
+      <item><label>Yes</label><value>1</value></item>
+    </select1>
+    <input ref="/visit/n_kids"><label>Kids</label></input>
+    <group ref="/visit/kids"><label>Kids</label>
+      <repeat jr:count=" /visit/kids_count " nodeset="/visit/kids">
+        <input ref="/visit/kids/kid_age"><label>Age</label></input>
+      </repeat>
+    </group>
+  </h:body>
+</h:html>""",
+        encoding="utf-8",
+    )
+    questions = build_questions(parse_contract(path))
+    counts = [q for q in questions if q["variable_name"] == "kids_count"]
+    assert len(counts) == 1
+    assert counts[0]["type"] == "repeat_count"
+    assert counts[0]["relevance"] is None
+    assert counts[0]["calculation"] == "${n_kids} + 1"
+
+
+def test_appearance_paths_are_written_as_names(tmp_path):
+    xml = _XML.replace(
+        'appearance="numbers"',
+        "appearance=\"search('roster', 'matches', 'id',  /shop/ok/owner )\"",
+    )
+    by_name = {
+        q["variable_name"]: q
+        for q in build_questions(parse_contract(_write(tmp_path, xml)))
+    }
+    assert (
+        by_name["n_staff"]["appearance"]
+        == "search('roster', 'matches', 'id', ${owner})"
+    )

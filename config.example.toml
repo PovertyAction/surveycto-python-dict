@@ -3,10 +3,18 @@ form_id = "my_form"
 out_dir = "data/out"   # relative to this file; raw pulls go to <out_dir>/<form_id>/raw
 
 [pii]
-# Column or question names you reviewed and cleared.
+# Column or question names you reviewed and cleared; dataset columns as dataset.column.
 whitelist = []
+# Column or question names you reviewed as personal data; outranks publishable.
+blacklist = []
+# false: publishable fields are not cleared; they go through the type rules and Presidio.
+# trust_publishable = true
 # languages = { es = "es_core_news_lg", en = "en_core_web_lg" }
 # score_threshold = 0.4
 # max_distinct = 1000
 # seed = 0
 # id_patterns = { NATIONAL_ID = '\b\d{8,10}\b' }
+
+# The columns that identify a row of a dataset the form reads (checked unique).
+# [datasets.my_dataset]
+# key = ["hhid", "round"]

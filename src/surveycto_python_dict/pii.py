@@ -2,8 +2,10 @@
 
 Each column gets ``{"status", "basis"[, "presidio"]}``; the first matching rule wins:
 
-0. ``whitelisted`` / ``reviewed``: the column or its question is on the user's whitelist.
-1. ``cleared_by_form``: the question is ``publishable``.
+0. ``contains_pii`` / ``reviewed``: the column or its question is on the user's
+   blacklist; ``whitelisted`` / ``reviewed``: on the whitelist.
+1. ``cleared_by_form``: the question is ``publishable``. With ``trust_publishable =
+   false`` this rule is skipped and ``publishable`` is only noted in the basis.
 2. ``contains_pii``: device metadata columns; geo and attachment question types.
 3. ``whitelisted``: system columns; integer, decimal, date, datetime and time
    questions; selects with inline choices; calculates whose every reference is
@@ -11,19 +13,26 @@ Each column gets ``{"status", "basis"[, "presidio"]}``; the first matching rule 
 4. ``may_contain_pii`` / ``no_hits``: everything else, scanned with Presidio on its
    distinct non-null values (sampled with ``seed`` above ``max_distinct``).
 
-Presidio runs only on submission values. Blocks hold entity counts, the number of hit
+Presidio runs on submission values, on ``search()`` choice lists before they enter
+any output (``screen_search_choices``), and on the datasets the form reads
+(``dataset_codebook``). Blocks hold entity counts, the number of hit
 rows and up to five of their KEYs, never matched text.
 """
 
+import csv
 import random
 import warnings
 from collections import Counter
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pyarrow as pa
 import spacy
 from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
 from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+from surveycto_python_dict.contract import search_universe
+from surveycto_python_dict.xml_contract import FormContract
 
 _DEVICE_COLUMNS = {
     "deviceid",
@@ -71,6 +80,18 @@ class PiiConfig:
     seed: int = 0
     # Column or question names the user reviewed and cleared.
     whitelist: tuple[str, ...] = ()
+    # Column or question names the user reviewed as personal data; above publishable.
+    blacklist: tuple[str, ...] = ()
+    # False: publishable clears nothing; the column goes through the other rules.
+    trust_publishable: bool = True
+
+    def __post_init__(self):
+        """Raise when a name is on both the whitelist and the blacklist."""
+        both = set(self.whitelist) & set(self.blacklist)
+        if both:
+            raise ValueError(
+                f"on both the whitelist and the blacklist: {', '.join(sorted(both))}"
+            )
 
 
 def build_analyzer(config: PiiConfig) -> AnalyzerEngine:
@@ -106,9 +127,17 @@ def build_analyzer(config: PiiConfig) -> AnalyzerEngine:
 class _Rules:
     """Question-level rules, memoised so calculate lineage resolves once."""
 
-    def __init__(self, questions: list[dict], whitelist: set[str]):
+    def __init__(
+        self,
+        questions: list[dict],
+        whitelist: set[str],
+        blacklist: set[str],
+        trust_publishable: bool,
+    ):
         self.by_name = {q["variable_name"]: q for q in questions}
         self.whitelist = whitelist
+        self.blacklist = blacklist
+        self.trust_publishable = trust_publishable
         self._memo: dict[str, dict | None] = {}
 
     def static(self, name: str) -> dict | None:
@@ -120,9 +149,11 @@ class _Rules:
 
     def _decide(self, q: dict) -> dict | None:
         qtype = q["type"]
+        if q["variable_name"] in self.blacklist:
+            return {"status": "contains_pii", "basis": ["reviewed"]}
         if q["variable_name"] in self.whitelist:
             return {"status": "whitelisted", "basis": ["reviewed"]}
-        if q["publishable"]:
+        if q["publishable"] and self.trust_publishable:
             return {"status": "cleared_by_form", "basis": ["publishable"]}
         if qtype in _CONTAINS_TYPES:
             return {"status": "contains_pii", "basis": [f"type:{qtype}"]}
@@ -151,6 +182,46 @@ class _Rules:
         return [f"type:{q['type']}"] + (["pulldata"] if self._pulldata(q) else [])
 
 
+def _entities(value: str, config: PiiConfig, analyzer) -> set[str]:
+    return {
+        r.entity_type
+        for lang in config.languages
+        for r in analyzer.analyze(
+            text=value,
+            language=lang,
+            entities=[*config.entities, *config.id_patterns],
+            score_threshold=config.score_threshold,
+        )
+    }
+
+
+def screen_search_choices(
+    contract: FormContract, datasets_dir: Path, config: PiiConfig, analyzer
+) -> None:
+    """Give each ``search()`` select its dataset choices when they hold no PII.
+
+    All or nothing: a blacklisted question, or any Presidio hit among the choices'
+    values and labels, withholds the whole list (``node.choices_withheld`` says why) and
+    the select keeps the items naming the dataset's columns. A whitelisted question
+    gets its list unscanned.
+    """
+    for node in contract.nodes.values():
+        source = node.data_source
+        if not source or source["kind"] != "search":
+            continue
+        if node.name in config.blacklist:
+            node.choices_withheld = ["reviewed"]
+            continue
+        universe = search_universe(node, datasets_dir / f"{source['dataset']}.csv")
+        if node.name not in config.whitelist:
+            texts = sorted({t for c in universe for t in (c["value"], c["label"]) if t})
+            found = sorted({e for t in texts for e in _entities(t, config, analyzer)})
+            if found:
+                node.choices_withheld = [f"presidio:{e}" for e in found]
+                continue
+        node.choice_items = universe
+
+
 def _scan(
     column: pa.ChunkedArray,
     keys: list[str],
@@ -164,20 +235,9 @@ def _scan(
         distinct = sorted(
             random.Random(config.seed).sample(distinct, config.max_distinct)
         )
-    entities = (*config.entities, *config.id_patterns)
     found: dict[str, set[str]] = {}
     for value in distinct:
-        types = {
-            r.entity_type
-            for lang in config.languages
-            for r in analyzer.analyze(
-                text=value,
-                language=lang,
-                entities=list(entities),
-                score_threshold=config.score_threshold,
-            )
-        }
-        for t in types:
+        for t in _entities(value, config, analyzer):
             found.setdefault(t, set()).add(value)
     hits = set().union(*found.values()) if found else set()
     hit_keys = sorted({k for k, v in zip(keys, values, strict=True) if v in hits})
@@ -199,10 +259,17 @@ def classify(
     """Return the PII block for every column of ``table``."""
     variables = vardict["variables"]
     question_names = {q["variable_name"] for q in questions}
-    whitelist = set(config.whitelist)
-    for name in sorted(whitelist - question_names - set(variables)):
+    whitelist, blacklist = set(config.whitelist), set(config.blacklist)
+    # dataset.column names belong to dataset_codebook.
+    form_names = {n for n in whitelist | blacklist if "." not in n}
+    for name in sorted(form_names - question_names - set(variables)):
         warnings.warn(f"variable `{name}` cannot be found", UserWarning, stacklevel=2)
-    rules = _Rules(questions, whitelist & question_names)
+    rules = _Rules(
+        questions,
+        whitelist & question_names,
+        blacklist & question_names,
+        config.trust_publishable,
+    )
     keys = table.column("KEY").to_pylist()
 
     blocks = {}
@@ -210,9 +277,11 @@ def classify(
         entry = variables[column]
         question = entry["question"]
         q = rules.by_name.get(question)
-        if column in whitelist or question in rules.whitelist:
+        if column in blacklist or question in rules.blacklist:
+            block = {"status": "contains_pii", "basis": ["reviewed"]}
+        elif column in whitelist or question in rules.whitelist:
             block = {"status": "whitelisted", "basis": ["reviewed"]}
-        elif q is not None and q["publishable"]:
+        elif q is not None and q["publishable"] and config.trust_publishable:
             block = {"status": "cleared_by_form", "basis": ["publishable"]}
         elif column in _DEVICE_COLUMNS and entry.get("system"):
             block = {"status": "contains_pii", "basis": [f"device:{column}"]}
@@ -228,8 +297,70 @@ def classify(
                     config,
                     analyzer,
                 )
+            if q is not None and q["publishable"]:
+                block = {**block, "basis": [*block["basis"], "publishable"]}
         blocks[column] = block
     return blocks
+
+
+def dataset_codebook(
+    datasets_dir: Path, questions: list[dict], config: PiiConfig, analyzer
+) -> list[dict]:
+    """Return one row per column of each dataset the form reads, with its pii block.
+
+    A dataset has no XML, so a column gets only its counts, the questions that read
+    it, and a status: ``dataset.column`` on the blacklist or whitelist (``reviewed``),
+    else Presidio on its values. Hits are counted by CSV row (1 = first data row).
+    """
+    whitelist, blacklist = set(config.whitelist), set(config.blacklist)
+    rows = []
+    for csv_path in sorted(datasets_dir.glob("*.csv")):
+        dataset = csv_path.stem
+        with open(csv_path, encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            records = list(reader)
+        numbers = list(range(1, len(records) + 1))
+        for column in reader.fieldnames:
+            name = f"{dataset}.{column}"
+            values = [r[column] or None for r in records]
+            if name in blacklist:
+                block = {"status": "contains_pii", "basis": ["reviewed"]}
+            elif name in whitelist:
+                block = {"status": "whitelisted", "basis": ["reviewed"]}
+            else:
+                block = _scan(
+                    pa.chunked_array([pa.array(values, pa.string())]),
+                    numbers,
+                    ["dataset"],
+                    config,
+                    analyzer,
+                )
+            read_by = [
+                q["variable_name"]
+                for q in questions
+                if q["data_source"]
+                and q["data_source"]["dataset"] == dataset
+                and column
+                in [q["data_source"].get("column")]
+                + [m["column"] for m in q["data_source"]["match"]]
+            ]
+            rows.append(
+                {
+                    "dataset": dataset,
+                    "column": column,
+                    "rows": len(records),
+                    "non_null": sum(v is not None for v in values),
+                    "distinct": len({v for v in values if v is not None}),
+                    "read_by": read_by,
+                    "pii": block,
+                }
+            )
+    found = {f"{r['dataset']}.{r['column']}" for r in rows}
+    for name in sorted({n for n in whitelist | blacklist if "." in n} - found):
+        warnings.warn(
+            f"dataset column `{name}` cannot be found", UserWarning, stacklevel=2
+        )
+    return rows
 
 
 def attach(vardict: dict, blocks: dict[str, dict]) -> None:
@@ -237,9 +368,3 @@ def attach(vardict: dict, blocks: dict[str, dict]) -> None:
     for column, block in blocks.items():
         vardict["variables"][column]["pii"] = block
     vardict["summary"]["pii"] = dict(Counter(b["status"] for b in blocks.values()))
-
-
-def review_table(table: pa.Table, blocks: dict[str, dict]) -> pa.Table:
-    """Return KEY plus every ``contains_pii`` / ``may_contain_pii`` column."""
-    flagged = [c for c in table.schema.names if blocks[c]["status"] in _FLAGGED]
-    return table.select(["KEY", *flagged])

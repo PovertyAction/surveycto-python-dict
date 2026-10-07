@@ -25,6 +25,7 @@ _SURVEY_KEYS = (
     "type",
     "choice_list",
     "choices",
+    "choices_withheld",
     "relevance",
     "group_relevances",
     "constraint",
@@ -125,7 +126,7 @@ def build_dictionary(
                     {"value": "1", "label": label},
                     {"value": "0", "label": "not chosen"},
                 ]
-            elif question["type"] == "select_one":
+            elif question["type"] == "select_one" and not question["choices_withheld"]:
                 entry["value_labels"] = question["choices"]
             entry["survey"] = {k: question[k] for k in _SURVEY_KEYS}
             entry["survey"]["original_variable_name"] = question["variable_name"]

@@ -7,6 +7,7 @@ Configuration is a TOML file (``--config``, default ``config.toml``)::
 
     [pii]  # every key optional; see PiiConfig
     whitelist = ["village_name"]
+    blacklist = ["respondent_id"]
 
 Credentials and the study's sentinel codes come from the environment or ``.env``:
 ``SCTO_SERVER``, ``SCTO_USER``, ``SCTO_PASSWORD``, ``SCTO_KEY_PATH`` for encrypted forms,
@@ -27,6 +28,7 @@ from dotenv import load_dotenv
 
 from surveycto_python_dict.api import Client, MissingEnvVar, env_key_path
 from surveycto_python_dict.cast import cast_wide
+from surveycto_python_dict.codebook import write_pii_review
 from surveycto_python_dict.contract import form_entry, resolve_datasets
 from surveycto_python_dict.dictionary import build_dictionary, build_graph, write_json
 from surveycto_python_dict.pii import (
@@ -34,12 +36,13 @@ from surveycto_python_dict.pii import (
     attach,
     build_analyzer,
     classify,
-    review_table,
+    dataset_codebook,
+    screen_search_choices,
 )
 from surveycto_python_dict.questions import build_questions, write_sections
 from surveycto_python_dict.xml_contract import parse_contract
 
-_TOP_KEYS = {"form_id", "out_dir", "pii"}
+_TOP_KEYS = {"form_id", "out_dir", "pii", "datasets"}
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,8 @@ class Config:
     form_id: str
     out_dir: Path
     pii: PiiConfig
+    # [datasets.<name>] key: the columns that identify a dataset row.
+    dataset_keys: dict[str, list[str]]
 
     @property
     def form_dir(self) -> Path:
@@ -75,12 +80,17 @@ def load_config(path: Path) -> Config:
     _check_keys("[pii]", set(pii), {f.name for f in fields(PiiConfig)})
     if "entities" in pii:
         pii["entities"] = tuple(pii["entities"])
-    if "whitelist" in pii:
-        pii["whitelist"] = tuple(pii["whitelist"])
+    for key in ("whitelist", "blacklist"):
+        if key in pii:
+            pii[key] = tuple(pii[key])
+    datasets = data.get("datasets", {})
+    for name, section in datasets.items():
+        _check_keys(f"[datasets.{name}]", set(section), {"key"})
     return Config(
         form_id=data["form_id"],
         out_dir=Path(path).parent / data["out_dir"],
         pii=PiiConfig(**pii),
+        dataset_keys={name: section["key"] for name, section in datasets.items()},
     )
 
 
@@ -117,11 +127,8 @@ def pull(cfg: Config, client: Client) -> Path:
     sources = resolve_datasets(contract, form_entry(form_list, cfg.form_id))
     if sources:
         (raw / "datasets").mkdir(exist_ok=True)
-    attached = (
-        client.pull_form_files(cfg.form_id)
-        if any(s.kind == "form_file" for s in sources.values())
-        else {}
-    )
+    form_files = [s.ref for s in sources.values() if s.kind == "form_file"]
+    attached = client.pull_form_files(cfg.form_id, form_files) if form_files else {}
     for name, source in sources.items():
         out = raw / "datasets" / f"{name}.csv"
         if source.kind == "server_dataset":
@@ -146,14 +153,14 @@ def pull(cfg: Config, client: Client) -> Path:
 def build(cfg: Config, sentinels: dict[int, str], analyzer=None) -> dict[str, Path]:
     """Build every output from the raw dir; return the written paths by name."""
     raw, out, form = cfg.raw_dir, cfg.form_dir, cfg.form_id
+    analyzer = analyzer or build_analyzer(cfg.pii)
     contract = parse_contract(raw / "form.xml")
-    questions = build_questions(raw / "form.xml")
+    screen_search_choices(contract, raw / "datasets", cfg.pii, analyzer)
+    questions = build_questions(contract)
     rows = json.loads((raw / "wide.json").read_text(encoding="utf-8"))
     table = cast_wide(rows, contract)
     vardict = build_dictionary(table, questions, contract, sentinels)
-    blocks = classify(
-        table, vardict, questions, cfg.pii, analyzer or build_analyzer(cfg.pii)
-    )
+    blocks = classify(table, vardict, questions, cfg.pii, analyzer)
     attach(vardict, blocks)
 
     paths = {
@@ -162,14 +169,17 @@ def build(cfg: Config, sentinels: dict[int, str], analyzer=None) -> dict[str, Pa
         "parquet": out / f"{form}.parquet",
         "dictionary": out / f"{form}_variable_dictionary.json",
         "graph": out / f"{form}_variable_graph.json",
-        "pii_review": out / f"{form}_pii_review.parquet",
+        "pii_review": out / f"{form}_pii_review.xlsx",
+        "dataset_codebook": out / f"{form}_dataset_codebook.json",
     }
     write_json(questions, paths["questions"])
     write_sections(questions, paths["sections"])
     pq.write_table(table, paths["parquet"])
     write_json(vardict, paths["dictionary"])
     write_json(build_graph(questions, vardict), paths["graph"])
-    pq.write_table(review_table(table, blocks), paths["pii_review"])
+    write_pii_review(table, vardict, paths["pii_review"])
+    codebook = dataset_codebook(raw / "datasets", questions, cfg.pii, analyzer)
+    write_json(codebook, paths["dataset_codebook"])
 
     fallbacks = vardict["summary"]["n_cast_fallback"]
     print(

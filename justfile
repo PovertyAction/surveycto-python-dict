@@ -17,12 +17,15 @@ setup:
 pull cfg=config:
     uv run scto-pull --config {{ cfg }}
 
-[doc("Build questions.json, sections, parquet, dictionary, graph and PII review from the raw pull; safe to rerun")]
+[doc("Build questions.json, sections, parquet, dictionary, graph, PII review and dataset codebook from the raw pull")]
 build cfg=config:
     uv run scto-build --config {{ cfg }}
 
-[doc("Pull, then build")]
-run cfg=config: (pull cfg) (build cfg)
+[doc("Every output from the raw pull: build, stats, codebook, duckdb. Rerun after editing [pii] lists")]
+outputs cfg=config: (build cfg) (stats cfg) (codebook cfg) (duckdb cfg)
+
+[doc("Pull, then every output")]
+run cfg=config: (pull cfg) (outputs cfg)
 
 [doc("Write <form>_summary_stats.csv: stats per column over the rows where it was asked, sentinels apart")]
 stats cfg=config:
@@ -32,11 +35,15 @@ stats cfg=config:
 codebook cfg=config:
     uv run scto-codebook --config {{ cfg }}
 
+[doc("Write <form>.duckdb (submissions, repeats long, datasets, each with *_safe; descriptions as tables) and its map <form>_db.json / .sql")]
+duckdb cfg=config: (stats cfg)
+    uv run scto-duckdb --config {{ cfg }}
+
 [doc("Serve the built outputs to a local agent over stdio (survey-expert MCP)")]
 mcp cfg=config:
     uv run scto-mcp --config {{ cfg }}
 
-[doc("Query the built outputs from the shell, e.g. `just survey var age`")]
+[doc("Ask about the form from the shell, e.g. `just survey var age`, `just survey db`; another form: `just config=data/x.toml survey info`")]
 survey *args:
     uv run scto-survey --config {{ config }} {{ args }}
 

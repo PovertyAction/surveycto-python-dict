@@ -1,14 +1,18 @@
 """Stage 8: config, scto-pull (HTTP mocked) and scto-build end to end."""
 
+import io
 import json
+import zipfile
 
 import pyarrow.parquet as pq
 import pytest
 import responses
 from farm_form import ROWS, SENTINELS, XML
+from openpyxl import load_workbook
 
 from surveycto_python_dict.api import Client, MissingEnvVar
 from surveycto_python_dict.cli import build, env_sentinels, load_config, pull
+from surveycto_python_dict.codebook import REVIEW_COLUMNS
 
 BASE = "https://acme.surveycto.com"
 _ENCRYPTED_XML = XML.replace(
@@ -21,8 +25,8 @@ _FORM_LIST = b"""<?xml version="1.0"?>
 </xforms>"""
 _MANIFEST = b"""<?xml version="1.0"?>
 <manifest xmlns="http://openrosa.org/xforms/xformsManifest">
-  <mediaFile><filename>prev_round.csv</filename><hash>md5:x</hash>
-    <downloadUrl>https://acme.surveycto.com/forms/farm/files/prev_round.csv</downloadUrl></mediaFile>
+  <mediaFile><filename>prev_round.zip</filename><hash>md5:x</hash>
+    <downloadUrl>https://acme.surveycto.com/forms/farm/files/prev_round.zip</downloadUrl></mediaFile>
 </manifest>"""
 
 
@@ -91,7 +95,10 @@ def _mock_server(xml: str, wide_method: str):
     responses.get(f"{BASE}/formList", body=_FORM_LIST)
     responses.get(f"{BASE}/forms/farm/xml", body=xml.encode())
     responses.get(f"{BASE}/forms/farm/manifest", body=_MANIFEST)
-    responses.get(f"{BASE}/forms/farm/files/prev_round.csv", body=b"phone,owner\n")
+    zipped = io.BytesIO()
+    with zipfile.ZipFile(zipped, "w") as z:
+        z.writestr("prev_round.csv", b"phone,owner\n")
+    responses.get(f"{BASE}/forms/farm/files/prev_round.zip", body=zipped.getvalue())
     responses.add(wide_method, f"{BASE}/api/v2/forms/data/wide/json/farm", json=ROWS)
 
 
@@ -146,7 +153,8 @@ def test_build_writes_every_output(built):
         "parquet": "farm.parquet",
         "dictionary": "farm_variable_dictionary.json",
         "graph": "farm_variable_graph.json",
-        "pii_review": "farm_pii_review.parquet",
+        "pii_review": "farm_pii_review.xlsx",
+        "dataset_codebook": "farm_dataset_codebook.json",
     }
     assert all(p.exists() for p in outputs.values())
     assert (form_dir / "sections" / "section_plot.json").exists()
@@ -159,13 +167,20 @@ def test_build_outputs_agree(built):
     assert table.num_rows == len(ROWS)
     assert list(vardict["variables"]) == table.schema.names
     assert all("pii" in v for v in vardict["variables"].values())
-    review = pq.read_table(outputs["pii_review"])
     flagged = [
         n
         for n, v in vardict["variables"].items()
         if v["pii"]["status"] in ("contains_pii", "may_contain_pii")
     ]
-    assert review.schema.names == ["KEY", *flagged]
+    review = load_workbook(outputs["pii_review"])
+    assert review.sheetnames == ["Columns", "Values"]
+    columns = list(review["Columns"].iter_rows(values_only=True))
+    assert columns[0] == tuple(REVIEW_COLUMNS)
+    assert [row[0] for row in columns[1:]] == flagged
+    values = list(review["Values"].iter_rows(values_only=True))
+    assert values[0] == ("KEY", *flagged)
+    assert len(values) == 1 + len(ROWS)
+    assert [row[0] for row in values[1:]] == table.column("KEY").to_pylist()
 
 
 def test_build_dictionary_holds_no_flagged_value(built):

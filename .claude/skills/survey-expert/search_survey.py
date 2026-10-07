@@ -38,6 +38,52 @@ def _short(text: str, limit: int = 100) -> str:
     return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
+def _withheld(q: dict) -> str:
+    columns = q["choices"][0]
+    return (
+        f"choices withheld ({', '.join(q['choices_withheld'])}); read from the dataset "
+        f"in `{q['appearance']}`, value column `{columns['value']}`, "
+        f"label column `{columns['label']}`"
+    )
+
+
+_REF_ONLY = re.compile(r"\$\{([^}]+)\}")
+
+
+def _source_line(source: dict) -> str:
+    match = " and ".join(
+        f"{source['dataset']}.{m['column']} = {m['value']}" for m in source["match"]
+    )
+    if source["kind"] == "pulldata":
+        return f"pulldata: {source['dataset']}.{source['column']} where {match}"
+    return f"search: choices from {source['dataset']}" + (
+        f" where {match}" if match else ""
+    )
+
+
+def render_structure(form_id: str, objects: list[dict]) -> str:
+    """Render ``<form>_db.json`` as commented SQL: grain, key, joins and columns."""
+    lines = [
+        f"-- {form_id}.duckdb: every table and view, what one row is, its key and joins.",
+        "-- Read values only from the *_safe views; the description tables are open.",
+    ]
+    for o in objects:
+        lines += ["", f"-- {o['kind']} {o['name']}: {o['grain']}"]
+        lines.append(f"--   key: {', '.join(o['key'])}")
+        lines += [f"--   join: {j}" for j in o["joins"]]
+        columns = o["columns"]
+        if len(columns) > 100:
+            lines.append(
+                f"--   columns: {len(columns)}, one row each in the dictionary table"
+            )
+        else:
+            lines.append(
+                f"--   columns ({len(columns)}): "
+                + ", ".join(f"{c['name']} {c['type']}" for c in columns)
+            )
+    return "\n".join(lines)
+
+
 class SurveyStore:
     """One form's questions, dictionary and graph."""
 
@@ -56,7 +102,9 @@ class SurveyStore:
         self.variables = dictionary["variables"]
         self.graph = load("variable_graph")
         self.columns = {n["id"]: n["columns"] for n in self.graph["nodes"]}
-        self.review_file = f"{form_id}_pii_review.parquet"
+        self.repeat_of = {n["id"]: n["repeat_group"] for n in self.graph["nodes"]}
+        self.dataset_columns = load("dataset_codebook")
+        self.review_file = f"{form_id}_pii_review.xlsx"
 
     # -- lookups -------------------------------------------------------------------
 
@@ -97,11 +145,15 @@ class SurveyStore:
                 lines.append(f"{label}: {q[key]}")
         for gate in q["group_relevances"]:
             lines.append(f"Group relevance: {gate}")
-        if q["choices"]:
+        if q["choices_withheld"]:
+            lines.append(_withheld(q))
+        elif q["choices"]:
             lines.append(
                 "Choices: "
                 + "; ".join(f"{c['value']} = {c['label']}" for c in q["choices"])
             )
+        if q["data_source"]:
+            lines.append(f"Data source: {_source_line(q['data_source'])}")
         if q["publishable"]:
             lines.append("Publishable: yes")
         columns = self.columns.get(q["variable_name"], [])
@@ -164,6 +216,8 @@ class SurveyStore:
         q = self.questions.get(name)
         if q is None:
             return self.lookup_variable(name)
+        if q["choices_withheld"]:
+            return f"{name} ({q['type']}): {_withheld(q)}"
         if not q["choices"]:
             return f"{name} ({q['type']}) is not a select question."
         return f"{name} ({q['type']}):\n" + "\n".join(
@@ -233,6 +287,74 @@ class SurveyStore:
             for name, g in groups.items()
         )
 
+    def _table_of(self, value: str | None) -> str:
+        """Return the table a ``${field}`` lives in: submissions or its repeat view."""
+        match = _REF_ONLY.fullmatch(value or "")
+        if match is None:
+            return "a literal or expression"
+        return self.repeat_of.get(match.group(1)) or "submissions"
+
+    def get_datasets(self) -> str:
+        """Describe each dataset the form reads and how its rows join to the form."""
+        by_dataset: dict[str, list[dict]] = {}
+        for column in self.dataset_columns:
+            by_dataset.setdefault(column["dataset"], []).append(column)
+        if not by_dataset:
+            return "The form reads no datasets."
+        blocks = []
+        for dataset, columns in by_dataset.items():
+            n_rows = columns[0]["rows"]
+            statuses = dict(Counter(c["pii"]["status"] for c in columns))
+            lines = [
+                f"{dataset}: {n_rows} rows, {len(columns)} columns, pii {statuses}",
+                f"  In <form>.duckdb: {dataset} (every column, plus row) and "
+                f"{dataset}_safe (row plus whitelisted columns).",
+                "  Joins to the form (dataset column = form value):",
+            ]
+            joins: dict[tuple, list[str]] = {}
+            for q in self.questions.values():
+                source = q["data_source"]
+                if not source or source["dataset"] != dataset:
+                    continue
+                for m in source["match"] or [{"column": None, "value": None}]:
+                    what = (
+                        f"{q['variable_name']} reads {source['column']}"
+                        if source["kind"] == "pulldata"
+                        else f"{q['variable_name']} takes its choices from these rows"
+                    )
+                    joins.setdefault((m["column"], m["value"]), []).append(what)
+            by_name = {c["column"]: c for c in columns}
+            for (column, value), uses in joins.items():
+                if column is None:
+                    lines.append(f"    (no filter): {'; '.join(uses)}")
+                    continue
+                key = by_name[column]
+                unique = (
+                    "unique in the dataset: one dataset row per match"
+                    if key["distinct"] == key["non_null"] == n_rows
+                    else f"not unique: {key['distinct']} distinct in {key['non_null']} rows"
+                )
+                lines.append(
+                    f"    {dataset}.{column} = {value} (in {self._table_of(value)}); "
+                    f"{unique}"
+                )
+                lines += [f"      {use}" for use in uses]
+            lines.append("  Columns:")
+            lines += [
+                f"    {c['column']}  non-null {c['non_null']}/{n_rows}, "
+                f"distinct {c['distinct']}  pii: {c['pii']['status']}"
+                + (f"  read by {', '.join(c['read_by'])}" if c["read_by"] else "")
+                for c in columns
+            ]
+            blocks.append("\n".join(lines))
+        return "\n\n".join(blocks)
+
+    def get_structure_db(self) -> str:
+        """Map ``<form>.duckdb``: each object, what one row is, its key, joins and columns."""
+        path = self.form_dir / f"{self.form_id}_db.json"
+        objects = json.loads(path.read_text(encoding="utf-8"))
+        return render_structure(self.form_id, objects)
+
     def get_survey_info(self) -> str:
         """Summarise the form and its outputs."""
         d, s = self.dataset, self.summary
@@ -296,6 +418,8 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
     hood.add_argument("--depth", type=int, default=1)
     commands.add_parser("repeats", help="repeat-group structure")
     commands.add_parser("info", help="form summary")
+    commands.add_parser("datasets", help="datasets the form reads and their joins")
+    commands.add_parser("db", help="map of <form>.duckdb: tables, keys and joins")
     args = parser.parse_args(argv)
 
     if store is None:
@@ -308,6 +432,8 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
         "neighborhood": lambda: store.get_variable_neighborhood(args.name, args.depth),
         "repeats": store.get_repeat_structure,
         "info": store.get_survey_info,
+        "datasets": store.get_datasets,
+        "db": store.get_structure_db,
     }[args.command]()
     print(answer)
 
