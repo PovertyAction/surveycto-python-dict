@@ -274,6 +274,9 @@ class _Parser:
             return node
         if kind == "name" and self.peek() == ("op", "("):
             return self.call(value)
+        if (kind, value) == ("name", "null"):
+            # `${a} != null`: a path to no node, which the form reads as empty.
+            return lambda row: ""
         raise UnsupportedExpression(f"unsupported {value!r} in {self.expr!r}")
 
     def call(self, name: str) -> Callable:

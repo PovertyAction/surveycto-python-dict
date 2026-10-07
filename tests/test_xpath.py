@@ -69,6 +69,8 @@ def ev(expr, **values):
         ("de-duplicate(',', ${l}) = 'a,b'", {"l": "a,b,a"}, True),
         ("substr(${t}, 1, 3) = 'bc'", {"t": "abcd"}, True),
         ("substr(${t}, 2) = 'cd'", {"t": "abcd"}, True),
+        ("${a} != null", {"a": "x"}, True),
+        ("${a} != null", {"a": None}, False),
     ],
 )
 def test_evaluates(expr, values, expected):
