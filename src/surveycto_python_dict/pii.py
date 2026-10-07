@@ -57,8 +57,9 @@ _CONTAINS_TYPES = {
 }
 _TYPED_SAFE = {"integer", "decimal", "date", "datetime", "time"}
 _SELECT_TYPES = {"select_one", "select_multiple"}
-_SAFE = {"cleared_by_form", "whitelisted"}
-_FLAGGED = {"contains_pii", "may_contain_pii"}
+# The statuses whose values may be read, and those that hold or may hold PII.
+SAFE = {"cleared_by_form", "whitelisted"}
+FLAGGED = {"contains_pii", "may_contain_pii"}
 # Enough KEYs to find examples; the review parquet has every flagged row.
 _MAX_HIT_KEYS = 5
 # A search() list longer than this stays in its dataset: a filter on a field can leave
@@ -184,7 +185,7 @@ class _Rules:
 
     def _safe(self, name: str) -> bool:
         block = self.static(name)
-        return block is not None and block["status"] in _SAFE
+        return block is not None and block["status"] in SAFE
 
     @staticmethod
     def _pulldata(q: dict) -> bool:

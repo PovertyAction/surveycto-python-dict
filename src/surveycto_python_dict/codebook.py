@@ -9,7 +9,6 @@ the flagged columns' values, for the people cleaning the data.
 
 import datetime as dt
 import json
-import re
 from pathlib import Path
 
 import pyarrow as pa
@@ -20,6 +19,7 @@ from openpyxl.utils import get_column_letter
 
 from surveycto_python_dict.stats import COLUMNS as STATS_COLUMNS
 from surveycto_python_dict.stats import write_form_stats
+from surveycto_python_dict.survey import gates, plain_label, rule
 
 VARIABLE_COLUMNS = [
     "variable",
@@ -38,29 +38,17 @@ VARIABLE_COLUMNS = [
 ]
 _WRAPPED = {"label", "relevance", "value_labels", "frequencies", "sentinel_detail"}
 _PERCENT = {"missing_rate", "selected_share"}
-_TAG_RE = re.compile(r"<[^>]+>")
 # One style object each: openpyxl hashes every cell's style into the workbook.
 _HEADER_FONT = Font(bold=True)
 _HEADER_FILL = PatternFill("solid", fgColor="DDE5F0")
 _WRAP = Alignment(wrap_text=True, vertical="top")
 
 
-def plain_label(text: str) -> str:
-    """Return a label without HTML tags, whitespace collapsed."""
-    return " ".join(_TAG_RE.sub(" ", text).split())
-
-
 def _variable_rows(variables: dict) -> list[list]:
     rows = []
     for name, v in variables.items():
         survey = v["survey"] or {}
-        gates = [
-            *survey.get("group_relevances", []),
-            *filter(None, [survey.get("relevance")]),
-        ]
-        relevance = (
-            gates[0] if len(gates) == 1 else " and ".join(f"({g})" for g in gates)
-        )
+        relevance = rule(gates(survey)) if survey else ""
         rows.append(
             [
                 name,

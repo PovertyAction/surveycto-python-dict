@@ -16,14 +16,14 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
+from surveycto_python_dict.pii import FLAGGED
+from surveycto_python_dict.survey import gates, rule
 from surveycto_python_dict.xpath import (
     UnsupportedExpression,
     compile_expression,
     reads_self,
     to_number,
 )
-
-_FLAGGED = {"contains_pii", "may_contain_pii"}
 
 COLUMNS = [
     "variable",
@@ -210,13 +210,15 @@ def _eligibility(
     """Return (per-row eligibility, composed rule, evaluated, note)."""
     if q is None:
         return [True] * n_rows, "", True, ""
-    gates = [*q["group_relevances"], *([q["relevance"]] if q["relevance"] else [])]
-    rule = " and ".join(f"({g})" for g in gates)
+    conditions = gates(q)
+    composed = rule(conditions)
     if q["disabled"]:
-        return [False] * n_rows, rule, True, "disabled"
+        return [False] * n_rows, composed, True, "disabled"
     own = data.values[column]
     try:
-        tests = [_gate(data, g, q["variable_name"], iterations, own) for g in gates]
+        tests = [
+            _gate(data, g, q["variable_name"], iterations, own) for g in conditions
+        ]
         eligible = [all(t(r) for t in tests) for r in range(n_rows)]
         # A repeat instance exists only up to the repeat count, at every level.
         for level, repeat in enumerate(data.repeat_chain(q["variable_name"])):
@@ -226,8 +228,8 @@ def _eligibility(
                 e and instance <= c for e, c in zip(eligible, limits, strict=True)
             ]
     except UnsupportedExpression as e:
-        return [True] * n_rows, rule, False, f"{e}; counted over all rows"
-    return eligible, rule, True, ""
+        return [True] * n_rows, composed, False, f"{e}; counted over all rows"
+    return eligible, composed, True, ""
 
 
 def _fmt(x: float) -> float:
@@ -305,7 +307,7 @@ def summary_stats(
             answered_when_skipped=outside,
             n_valid=len(valid),
         )
-        if pii not in _FLAGGED and valid:
+        if pii not in FLAGGED and valid:
             out.update(_describe(valid, entry, q, is_binary))
         rows.append(out)
     return rows

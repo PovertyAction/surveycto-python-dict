@@ -47,9 +47,8 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
+from surveycto_python_dict.pii import SAFE
 from surveycto_python_dict.survey import render_structure
-
-_SAFE = {"cleared_by_form", "whitelisted"}
 
 
 def _ident(name: str) -> str:
@@ -198,7 +197,7 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
     codebook = _load(form_dir / f"{form}_dataset_codebook.json")
     variables = dictionary["variables"]
     repeat_of = {node["id"]: node["repeat_group"] for node in graph["nodes"]}
-    cleared = {c for c, v in variables.items() if v["pii"]["status"] in _SAFE}
+    cleared = {c for c, v in variables.items() if v["pii"]["status"] in SAFE}
     assert "KEY" in cleared
     # The view each column is read from: its repeat's long view, or submissions.
     table_of = {
@@ -426,7 +425,7 @@ def _write_datasets(
         for c in entries:
             statuses.setdefault(c["column"], []).append(c["pii"]["status"])
         cleared = [
-            c for c in d["columns"] if statuses.get(c) and set(statuses[c]) <= _SAFE
+            c for c in d["columns"] if statuses.get(c) and set(statuses[c]) <= SAFE
         ]
         con.execute(
             f"CREATE VIEW {_q('dataset', did + '_safe')} AS SELECT "
