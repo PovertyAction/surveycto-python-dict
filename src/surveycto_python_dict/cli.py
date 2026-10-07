@@ -48,6 +48,7 @@ from surveycto_python_dict.pii import (
     warn_unknown_names,
 )
 from surveycto_python_dict.questions import build_questions, write_sections
+from surveycto_python_dict.survey import render_mermaid
 from surveycto_python_dict.xml_contract import FormContract, parse_contract
 
 _TOP_KEYS = {"forms", "server_datasets", "out_dir", "pii", "datasets"}
@@ -260,7 +261,7 @@ def build_form(
 
 
 def write_flow(cfg: Config) -> Path:
-    """Write ``flow.json``: how the project's forms chain through datasets."""
+    """Write ``flow.json``, how the project's forms chain through datasets, and ``flow.md``."""
     forms = {}
     for form in cfg.forms:
         contract = parse_contract(cfg.form_raw(form) / "form.xml")
@@ -275,6 +276,15 @@ def write_flow(cfg: Config) -> Path:
     )
     path = cfg.out_dir / "flow.json"
     write_json(flow, path)
+    (cfg.out_dir / "flow.md").write_text(
+        "# How the forms chain\n\n"
+        "Green: filled from the publishing form's answers. Orange: carried from another "
+        "dataset. Yellow: both. Grey: no project form fills it. A dashed read is not "
+        "attached to the form on the server.\n\n"
+        f"```mermaid\n{render_mermaid(flow)}\n```\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     print(
         "[flow] "
         + "; ".join(f"{f['form_id']} stage {f['stage']}" for f in flow["forms"])

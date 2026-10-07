@@ -10,9 +10,16 @@ Two forms that both cover a dataset raise; a dataset no form covers is external
 
 A form's stage is 1 when it reads nothing another project form publishes, else one
 more than the latest stage it reads from; a form reading its own dataset doesn't count.
+
+Each published column gets the origin of the field behind it: ``entered`` (a question
+the enumerator answers, a ``search()`` pick included), ``metadata`` (a preload such as
+the username), ``carried`` (a calculate that traces back to a ``pulldata()`` from
+another dataset) or ``calculated`` (any other calculate).
 """
 
 import csv
+import re
+from collections import Counter
 from pathlib import Path
 
 from surveycto_python_dict.contract import DatasetSource
@@ -40,6 +47,39 @@ def _field(contract: FormContract, column: str) -> str | None:
     if m["kind"] != "matched" or "string_key" in m or m["choice_code"] is not None:
         return None
     return m["node_path"]
+
+
+def _origins(contract: FormContract) -> dict[str, tuple[str, set[str]]]:
+    """Return each field's origin and, when carried, the datasets it comes from."""
+    path_re = re.compile(rf"/{re.escape(contract.formid)}/([\w.-]+(?:/[\w.-]+)*)")
+    origins: dict[str, tuple[str, set[str]]] = {}
+
+    def origin(path: str, visiting: frozenset) -> tuple[str, set[str]]:
+        if path in origins:
+            return origins[path]
+        node = contract.nodes[path]
+        source = node.data_source
+        if node.preload:
+            found = ("metadata", set())
+        elif source and source["kind"] == "pulldata":
+            found = ("carried", {source["dataset"]})
+        elif node.calculate:
+            refs = {
+                r
+                for r in path_re.findall(node.calculate)
+                if r in contract.nodes and r != path and r not in visiting
+            }
+            inputs = [origin(r, visiting | {path}) for r in sorted(refs)]
+            carried = set().union(*(f for k, f in inputs if k == "carried"))
+            found = ("carried", carried) if carried else ("calculated", set())
+        else:
+            found = ("entered", set())
+        origins[path] = found
+        return found
+
+    for path in contract.nodes:
+        origin(path, frozenset())
+    return origins
 
 
 def _reads(contract: FormContract, name: str, columns: list[str]) -> list[dict]:
@@ -94,6 +134,8 @@ def build_flow(
                 "columns": columns,
                 "published_by": None,
                 "publish_map": {},
+                "origins": {},
+                "origin_counts": {},
                 "read_by": [],
             }
         return datasets[dataset_id]
@@ -117,6 +159,8 @@ def build_flow(
                         "columns": columns,
                         "published_by": None,
                         "publish_map": {},
+                        "origins": {},
+                        "origin_counts": {},
                         "read_by": [],
                     },
                 )
@@ -131,6 +175,7 @@ def build_flow(
                 }
             )
 
+    origin_of = {form: _origins(contract) for form, (contract, _) in forms.items()}
     for node in datasets.values():
         if node["kind"] != "server_dataset":
             continue
@@ -145,8 +190,17 @@ def build_flow(
                 f"{', '.join(publishers)}; which one publishes it cannot be told"
             )
         if publishers:
-            node["published_by"] = publishers[0]
-            node["publish_map"] = covering[publishers[0]]
+            form = publishers[0]
+            node["published_by"] = form
+            node["publish_map"] = covering[form]
+            origins = origin_of[form]
+            node["origins"] = {
+                column: {"kind": origins[path][0], "from": sorted(origins[path][1])}
+                for column, path in covering[form].items()
+            }
+            node["origin_counts"] = dict(
+                Counter(o["kind"] for o in node["origins"].values())
+            )
 
     publisher = {d["id"]: d["published_by"] for d in datasets.values()}
     upstream = {

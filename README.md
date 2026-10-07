@@ -81,10 +81,20 @@ gets its list unscanned; a blacklisted one never has its dataset read.
   outside the project).
 - **Stages.** A form is stage 1 when it reads nothing another project form publishes,
   else one more than the latest stage it reads from.
+- **Origins.** Each published column takes the origin of the field behind it:
+  `entered` (a question the enumerator answers, a `search()` pick included),
+  `calculated` (from the form's own fields), `carried` (a calculate that traces back to
+  a `pulldata()` from another dataset, which it names) or `metadata` (a preload).
+
+`flow.md`, next to `flow.json`, draws the chain as a Mermaid diagram (Obsidian, VS Code
+and GitHub render it): forms, datasets coloured by how they are filled (green from the
+form's answers, orange carried, yellow both, grey external), publishes, and reads, dashed
+when the form does not attach the dataset.
 
 `uv run scto-survey --config config.toml --form <form> flow` prints the stages, each
-dataset's publisher and readers, and the reads without an attachment; `flow <dataset>`
-traces each column from the field that publishes it to the fields that read it.
+dataset's publisher, origins and readers, and the reads without an attachment;
+`flow <dataset>` traces each column from the field that publishes it, with its origin,
+to the fields that read it.
 
 ## Querying with DuckDB
 

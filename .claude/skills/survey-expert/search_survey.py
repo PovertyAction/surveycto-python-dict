@@ -88,6 +88,81 @@ def _leaf(path: str) -> str:
     return path.rsplit("/", 1)[-1]
 
 
+_ORIGINS = ("entered", "calculated", "carried", "metadata")
+
+
+def _origin_text(d: dict) -> str:
+    """Return a published dataset's column origins: ``4 entered, 7 carried from x``."""
+    counts = d["origin_counts"]
+    carried_from = sorted({x for o in d["origins"].values() for x in o["from"]})
+    return ", ".join(
+        f"{counts[k]} {k}"
+        + (f" from {', '.join(carried_from)}" if k == "carried" else "")
+        for k in _ORIGINS
+        if k in counts
+    )
+
+
+def _tone(d: dict) -> str:
+    """Return how a dataset is filled: entered, carried, mixed or external."""
+    if not d["published_by"]:
+        return "external"
+    counts = d["origin_counts"]
+    if not counts.get("carried"):
+        return "entered"
+    return "mixed" if counts.get("entered") or counts.get("calculated") else "carried"
+
+
+def _mermaid_id(prefix: str, name: str) -> str:
+    return prefix + re.sub(r"\W", "_", name)
+
+
+def _mermaid_text(text: str) -> str:
+    return text.replace('"', "#quot;")
+
+
+def render_mermaid(flow: dict) -> str:
+    """Render ``flow.json`` as a Mermaid flowchart: forms, datasets, publishes, reads.
+
+    A dataset's colour says how it is filled: green when its columns come from the
+    publishing form's answers (entered or calculated from them), orange when they are
+    carried from another dataset, yellow when both, grey when no project form fills it.
+    """
+    lines = ["flowchart LR"]
+    for f in flow["forms"]:
+        fid = _mermaid_id("f_", f["form_id"])
+        lines.append(f'  {fid}["{_mermaid_text(f["form_id"])}<br/>stage {f["stage"]}"]')
+        lines.append(f"  class {fid} form")
+    for d in flow["datasets"]:
+        did = _mermaid_id("d_", d["id"])
+        label = f"{d['id']}<br/>{d['rows']} rows"
+        if d["published_by"]:
+            label += f"<br/>{_origin_text(d)}"
+        lines.append(f'  {did}[("{_mermaid_text(label)}")]')
+        lines.append(f"  class {did} {_tone(d)}")
+        if d["published_by"]:
+            lines.append(
+                f"  {_mermaid_id('f_', d['published_by'])} -->|publishes| {did}"
+            )
+    for r in flow["reads"]:
+        arrow = "-->" if r["attached"] else "-.->"
+        label = f"{len(r['fields'])} fields" + (
+            "" if r["attached"] else ", not attached"
+        )
+        lines.append(
+            f"  {_mermaid_id('d_', r['dataset'])} {arrow}|{label}| "
+            f"{_mermaid_id('f_', r['form'])}"
+        )
+    lines += [
+        "  classDef form fill:#e3f2fd,stroke:#1565c0",
+        "  classDef entered fill:#c8e6c9,stroke:#2e7d32",
+        "  classDef carried fill:#ffe0b2,stroke:#ef6c00",
+        "  classDef mixed fill:#fff59d,stroke:#f9a825",
+        "  classDef external fill:#eeeeee,stroke:#757575",
+    ]
+    return "\n".join(lines)
+
+
 def render_flow(flow: dict, dataset: str | None = None) -> str:
     """Render ``flow.json``: forms by stage, then each dataset's publisher and readers.
 
@@ -114,7 +189,9 @@ def render_flow(flow: dict, dataset: str | None = None) -> str:
             source = d["publish_map"].get(column)
             line = f"  {column}"
             if source:
-                line += f"  <- {d['published_by']}.{source}"
+                origin = d["origins"][column]
+                line += f"  <- {d['published_by']}.{source} ({origin['kind']}"
+                line += f" from {', '.join(origin['from'])})" if origin["from"] else ")"
             if column in readers:
                 line += f"  -> {', '.join(readers[column])}"
             lines.append(line)
@@ -135,7 +212,7 @@ def render_flow(flow: dict, dataset: str | None = None) -> str:
     lines += ["", "Datasets:"]
     for d in flow["datasets"]:
         source = (
-            f"published by {d['published_by']}"
+            f"published by {d['published_by']} ({_origin_text(d)})"
             if d["published_by"]
             else ("attached file" if d["kind"] == "form_file" else "external")
         )

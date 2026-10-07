@@ -6,7 +6,7 @@ import pytest
 
 from surveycto_python_dict.contract import form_entry, resolve_datasets
 from surveycto_python_dict.flow import build_flow
-from surveycto_python_dict.survey import render_flow
+from surveycto_python_dict.survey import render_flow, render_mermaid
 from surveycto_python_dict.xml_contract import parse_contract
 
 # listing publishes `households`: hhid and village at the top, plot_size from a repeat.
@@ -149,9 +149,37 @@ def test_render_flow_shows_stages_and_column_lineage(flow):
     assert "  visit reads zones (area)" in text
     lineage = render_flow(flow, "households")
     assert (
-        "  village  <- listing.village  -> visit.hh (search), visit.where (pulldata)"
-        in (lineage)
+        "  village  <- listing.village (entered)  -> visit.hh (search), "
+        "visit.where (pulldata)" in lineage
     )
+
+
+def test_published_columns_carry_their_origin(tmp_path):
+    # village filled from the zones lookup through a calculate: carried, not entered.
+    listing = _LISTING.replace(
+        '<bind nodeset="/listing/village" type="string"/>',
+        '<bind nodeset="/listing/hhid_zone" type="string" '
+        "calculate=\"pulldata('zones', 'zone_name', 'zone_id',  /listing/zone )\"/>"
+        '<bind nodeset="/listing/village" type="string" '
+        "calculate=\"concat( /listing/hhid_zone , '-')\"/>",
+    ).replace("<hhid/>", "<hhid/><hhid_zone/>")
+    flow = _flow(tmp_path, {"listing": listing, "visit": _VISIT})
+    households = next(d for d in flow["datasets"] if d["id"] == "households")
+    assert households["origins"]["village"] == {"kind": "carried", "from": ["zones"]}
+    assert households["origins"]["hhid"] == {"kind": "entered", "from": []}
+    assert households["origin_counts"] == {"entered": 3, "carried": 1}
+    assert "published by listing (3 entered, 1 carried from zones)" in render_flow(flow)
+
+
+def test_mermaid_colours_datasets_by_how_they_are_filled(flow):
+    chart = render_mermaid(flow)
+    assert chart.startswith("flowchart LR")
+    assert '  d_households[("households<br/>2 rows<br/>4 entered")]' in chart
+    assert "  class d_households entered" in chart
+    assert "  class d_zones external" in chart
+    assert "  f_listing -->|publishes| d_households" in chart
+    # visit reads zones without attaching it: a dashed edge.
+    assert "  d_zones -.->|1 fields, not attached| f_visit" in chart
 
 
 # The same two forms with fewer reads: listing without its zones lookup, visit reading
