@@ -379,8 +379,8 @@ class SurveyStore:
             statuses = dict(Counter(c["pii"]["status"] for c in columns))
             lines = [
                 f"{dataset}: {n_rows} rows, {len(columns)} columns, pii {statuses}",
-                f"  In <form>.duckdb: {dataset} (every column, plus row) and "
-                f"{dataset}_safe (row plus whitelisted columns).",
+                f"  In <form>.duckdb: dataset.{dataset} (every column, plus row) and "
+                f"dataset.{dataset}_safe (row plus whitelisted columns).",
                 "  Joins to the form (dataset column = form value):",
             ]
             joins: dict[tuple, list[str]] = {}

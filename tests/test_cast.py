@@ -208,3 +208,42 @@ def test_select_one_with_leading_zero_or_text_codes_stays_string(codes_contract)
 def test_select_one_code_outside_its_choices_falls_back_to_text(codes_contract):
     table = cast_wide([{"KEY": "k1", "level": "2.5"}], codes_contract)
     assert table.schema.field("level").type == pa.string()
+
+
+_FILTERED_XML = """<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml">
+  <h:head><model>
+    <instance><shop id="shop" version="1"><n/><pick/></shop></instance>
+    <instance id="towns"><root>
+      <item><label>North</label><name>11</name><zone>1</zone></item>
+      <item><label>South</label><name>21</name><zone>2</zone></item>
+      <item><label>East</label><name>31</name><zone>3</zone></item>
+    </root></instance>
+    <bind nodeset="/shop/n" type="int"/>
+    <bind nodeset="/shop/pick" type="select"/>
+  </model></h:head>
+  <h:body>
+    <input ref="/shop/n"><label>N</label></input>
+    <select ref="/shop/pick"><label>Towns</label>
+      <itemset nodeset="instance('towns')/root/item[zone &lt;=  /shop/n ]">
+        <value ref="name"/><label ref="label"/>
+      </itemset>
+    </select>
+  </h:body>
+</h:html>
+"""
+
+
+def test_list_filtered_per_submission_gets_only_picked_binaries(tmp_path):
+    path = tmp_path / "shop.xml"
+    path.write_text(_FILTERED_XML, encoding="utf-8")
+    rows = [
+        {"KEY": "uuid:a", "n": "1", "pick_11": "1"},
+        {"KEY": "uuid:b", "n": "2", "pick_21": "1"},
+    ]
+    table = cast_wide(rows, parse_contract(path))
+    assert [c for c in table.schema.names if c.startswith("pick_")] == [
+        "pick_11",
+        "pick_21",
+    ]
+    assert table.column("pick_11").to_pylist() == [1, 0]

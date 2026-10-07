@@ -17,7 +17,7 @@ writes: one folder per form, `<out_dir>/<form>/`, and the project's `<out_dir>/f
 | `<form>_variable_graph.json` | Questions linked by calculation, relevance, constraint and repeat |
 | `<form>.parquet` | The submissions. **Do not read it** unless the columns you need are cleared (below) |
 | `<form>_pii_review.xlsx` | `KEY` plus every flagged column, for the people cleaning the data. **Never read it** |
-| `<form>.duckdb` | `just duckdb`: views over the parquet and the descriptions as tables. **Read values only through the `*_safe` views**: `submissions_safe`, and `<repeat>_safe` for each repeat group long (`KEY`, `instance`, one column per field), and `<dataset>_safe` for each dataset the form reads. `dataset_links` gives each `pulldata()`/`search()` join; `dataset_codebook` gives each dataset column's readers and `pii` |
+| `<form>.duckdb` | `just duckdb`: views over the parquet and the descriptions as tables. **Read values only through the `*_safe` views**: `submissions_safe`, and `<repeat>_safe` for each repeat group long (`KEY`, one `<repeat>_index` per enclosing repeat, one column per field), and `dataset.<name>_safe` for each dataset the form reads. `dataset_links` gives each `pulldata()`/`search()` join; `dataset_codebook` gives each dataset column's readers and `pii` |
 | `flow.json` | The project: which form publishes each dataset, which forms read it (fields and columns), and each form's stage |
 | `<form>_summary_stats.csv` | `just stats`: per column, eligible rows under skip logic, sentinels apart, then stats; flagged PII columns get counts only |
 

@@ -3,7 +3,8 @@
 Empty strings and absent keys are null. A select_multiple comes as per-choice
 binaries present only when chosen: within one field (and one repeat instance), an
 unchosen binary is 0 when any sibling was chosen, else null; every choice gets its
-column. A column that cannot be typed (a value that does not parse, a column the
+column, except where the form filters the list per submission: there only the choices
+someone picked at that instance do, since an unoffered choice is not unchosen. A column that cannot be typed (a value that does not parse, a column the
 form does not define) is kept as text, with the reason in its ``cast_fallback``
 field metadata; the reason never quotes a value.
 """
@@ -115,6 +116,7 @@ def _columns(names: list[str], contract: FormContract) -> list[_Column]:
     order = {path: i for i, path in enumerate(contract.nodes)}
     columns: dict[str, _Column] = {}
     multi_instances: dict[str, set[tuple[int, ...]]] = {}
+    picked: dict[tuple[str, tuple[int, ...]], set[str]] = {}
     for position, name in enumerate(names):
         if is_system_column(name):
             arrow_type = (
@@ -139,6 +141,7 @@ def _columns(names: list[str], contract: FormContract) -> list[_Column]:
             continue
         if node.is_select_multiple and m["choice_code"] is not None:
             multi_instances.setdefault(node.path, set()).add(iterations)
+            picked.setdefault((node.path, iterations), set()).add(str(m["choice_code"]))
             codes = [str(c["value"]) for c in node.choice_items]
             if str(m["choice_code"]) not in codes:
                 columns[name] = _text(
@@ -170,6 +173,11 @@ def _columns(names: list[str], contract: FormContract) -> list[_Column]:
             instances = {()}
         for iterations in instances:
             for index, item in enumerate(node.choice_items):
+                if (
+                    node.choices_per_submission
+                    and str(item["value"]) not in picked[path, iterations]
+                ):
+                    continue
                 name = _binary_name(node, item["value"], iterations)
                 m = contract.map_column(name)
                 if m["kind"] != "matched" or m["node_path"] != path:

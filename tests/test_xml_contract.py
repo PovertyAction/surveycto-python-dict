@@ -669,3 +669,59 @@ class TestEncrypted:
 
     def test_no_public_key_is_not_encrypted(self, contract):
         assert contract.encrypted is False
+
+
+# Choice lists behind an itemset: a static filter applies, a filter on a field does not.
+_XML_ITEMSET = """<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml"
+        xmlns:jr="http://openrosa.org/javarosa">
+  <h:head><model>
+    <itext><translation lang="English" default="true()">
+      <text id="sizes-0"><value>Small</value></text>
+      <text id="sizes-1"><value>Large</value></text>
+      <text id="sizes-2"><value>Other</value></text>
+    </translation></itext>
+    <instance><shop id="shop" version="1"><n/><size/><pick/></shop></instance>
+    <instance id="sizes"><root>
+      <item><itextId>sizes-0</itextId><name>1</name><filter>1</filter></item>
+      <item><itextId>sizes-1</itextId><name>2</name><filter>2</filter></item>
+      <item><itextId>sizes-2</itextId><name>-66</name><filter>3</filter></item>
+    </root></instance>
+    <instance id="towns"><root>
+      <item><label>North</label><name>11</name><zone>1</zone></item>
+      <item><label>South</label><name>21</name><zone>2</zone></item>
+    </root></instance>
+    <bind nodeset="/shop/n" type="int"/>
+    <bind nodeset="/shop/size" type="select1"/>
+    <bind nodeset="/shop/pick" type="select"/>
+  </model></h:head>
+  <h:body>
+    <input ref="/shop/n"><label>N</label></input>
+    <select1 ref="/shop/size"><label>Size</label>
+      <itemset nodeset="instance('sizes')/root/item[filter &lt; 3]">
+        <value ref="name"/><label ref="jr:itext(itextId)"/>
+      </itemset>
+    </select1>
+    <select ref="/shop/pick"><label>Towns</label>
+      <itemset nodeset="instance('towns')/root/item[zone &lt;=  /shop/n ]">
+        <value ref="name"/><label ref="label"/>
+      </itemset>
+    </select>
+  </h:body>
+</h:html>
+"""
+
+
+def test_itemset_choices_with_static_and_field_filters(tmp_path):
+    path = tmp_path / "shop.xml"
+    path.write_text(_XML_ITEMSET, encoding="utf-8")
+    nodes = parse_contract(path).nodes
+    assert nodes["size"].choice_items == [
+        {"label": "Small", "value": "1"},
+        {"label": "Large", "value": "2"},
+    ]
+    # zone <= /shop/n depends on the submission: every item is a possible choice.
+    assert nodes["pick"].choice_items == [
+        {"label": "North", "value": "11"},
+        {"label": "South", "value": "21"},
+    ]

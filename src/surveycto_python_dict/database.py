@@ -1,17 +1,21 @@
 """``<form>.duckdb``: SQL over the built outputs, for people and agents.
 
-Views read ``<form>.parquet`` directly, so the parquet stays the only copy of the
-submissions:
+Views read the parquet files; nothing is copied into the database:
 
-- ``submissions``: every column, wide.
+- ``submissions``: every column, wide, from ``<form>.parquet``.
 - ``submissions_safe``: only the ``cleared_by_form`` and ``whitelisted`` columns.
-- ``<repeat>``: each repeat group long, one row per instance that has any value, keyed
-  by ``KEY`` and ``instance`` (``instance_1``, ``instance_2``, ... when nested). A
-  column keeps its wide name without the instance suffix: ``score_3`` -> ``score``.
+- ``<repeat>``: each repeat group long, from ``long/<repeat>.parquet``, which the
+  build reshapes from the wide parquet: one row per instance that has any value, keyed
+  by ``KEY`` and one ``<repeat>_index`` per repeat from the outermost down
+  (``KEY, hh_index, member_index``). A column keeps its wide name without the instance
+  suffix: ``score_3`` -> ``score``. Columns written under another form version, with
+  more or fewer instance numbers than the field's nesting (``ragged`` in the
+  dictionary), stay in ``submissions`` only.
 - ``<repeat>_safe``: the same, limited to cleared columns.
-- ``<dataset>``: each server dataset or attached CSV the form reads, named as the
-  form names it, every column as text, with ``row`` (1 = first data row).
-- ``<dataset>_safe``: ``row`` plus the dataset's whitelisted columns.
+- ``dataset.<name>``: each server dataset or attached CSV the form reads, in the
+  ``dataset`` schema under the name the form uses, every column as text, with ``row``
+  (1 = first data row).
+- ``dataset.<name>_safe``: ``row`` plus the dataset's whitelisted columns.
 
 Agents read values only through the ``*_safe`` views. That is a convention, like the
 ``pii`` signal itself, not access control.
@@ -28,10 +32,14 @@ MCP's ``get_structure_db`` reads, and rendered for people as ``<form>_db.sql``.
 """
 
 import json
+from functools import reduce
 from pathlib import Path
 
 import duckdb
 import pandas as pd
+import pyarrow as pa
+import pyarrow.compute as pc
+import pyarrow.parquet as pq
 
 from surveycto_python_dict.survey import render_structure
 
@@ -46,35 +54,45 @@ def _literal(text: str) -> str:
     return "'" + text.replace("'", "''") + "'"
 
 
-def _instance_keys(depth: int) -> list[str]:
-    return (
-        ["instance"] if depth == 1 else [f"instance_{i}" for i in range(1, depth + 1)]
-    )
+def _repeat_keys(repeat: str, groups: dict) -> list[str]:
+    """Return ``KEY`` and one ``<repeat>_index`` per repeat from the outermost to ``repeat``."""
+    chain = []
+    while repeat is not None:
+        chain.insert(0, repeat)
+        repeat = groups[repeat]["parent"]
+    return ["KEY", *(f"{r}_index" for r in chain)]
 
 
-def _repeat_view(repeat: str, columns: dict[str, list[int]], depth: int) -> str:
-    """Return the SELECT that stacks ``repeat``'s wide columns into one row per instance.
+def _long_table(
+    table: pa.Table, columns: dict[str, list[int]], keys: list[str]
+) -> pa.Table:
+    """Stack a repeat's wide columns into one row per instance that has any value.
 
-    ``columns`` maps each wide column to its ``repeat_iteration`` (outer first).
+    ``columns`` maps each wide column to its repeat instances, outer first; a column
+    keeps its name without the instance suffix: ``score_3`` -> ``score``.
     """
     by_instance: dict[tuple[int, ...], list[str]] = {}
     for column, iterations in columns.items():
         by_instance.setdefault(tuple(iterations), []).append(column)
-    selects = []
+    parts = []
     for iterations, wide in sorted(by_instance.items()):
         suffix = "".join(f"_{i}" for i in iterations)
-        assert all(c.endswith(suffix) for c in wide), (repeat, iterations)
-        keys = [
-            f"{i} AS {_ident(k)}"
-            for i, k in zip(iterations, _instance_keys(depth), strict=True)
-        ]
-        values = [f"{_ident(c)} AS {_ident(c[: -len(suffix)])}" for c in wide]
-        present = " OR ".join(f"{_ident(c)} IS NOT NULL" for c in wide)
-        selects.append(
-            f"SELECT KEY, {', '.join(keys + values)} FROM submissions WHERE {present}"
+        rows = table.select(["KEY", *wide])
+        rows = rows.filter(reduce(pc.or_, [pc.is_valid(rows[c]) for c in wide]))
+        index = [pa.array([i] * rows.num_rows, pa.int32()) for i in iterations]
+        parts.append(
+            pa.Table.from_arrays(
+                [rows["KEY"].combine_chunks(), *index]
+                + [rows[c].combine_chunks() for c in wide],
+                names=[*keys, *(c.removesuffix(suffix) for c in wide)],
+            )
         )
-    order = ", ".join(["KEY", *_instance_keys(depth)])
-    return "\nUNION ALL BY NAME\n".join(selects) + f"\nORDER BY {order}"
+    if not parts:
+        # No submission reached the repeat: its long table is the keys, no rows.
+        types = [table.schema.field("KEY").type] + [pa.int32()] * (len(keys) - 1)
+        return pa.schema(list(zip(keys, types, strict=True))).empty_table()
+    long = pa.concat_tables(parts, promote_options="permissive")
+    return long.sort_by([(k, "ascending") for k in keys])
 
 
 # The description tables: what one row is, the key, and what each refers to.
@@ -136,7 +154,8 @@ def write_database(
     variables = dictionary["variables"]
     repeat_of = {node["id"]: node["repeat_group"] for node in graph["nodes"]}
     safe = [c for c, v in variables.items() if v["pii"]["status"] in _SAFE]
-    assert "KEY" in safe
+    cleared = set(safe)
+    assert "KEY" in cleared
 
     path = form_dir / f"{form_id}.duckdb"
     path.unlink(missing_ok=True)
@@ -154,44 +173,49 @@ def write_database(
     con.execute(
         f"CREATE VIEW submissions AS SELECT * FROM read_parquet({_literal(parquet)})"
     )
+    # Straight from the file: binding through `submissions` re-reads every column.
     con.execute(
         "CREATE VIEW submissions_safe AS SELECT "
         + ", ".join(_ident(c) for c in safe)
-        + " FROM submissions"
+        + f" FROM read_parquet({_literal(parquet)})"
     )
 
-    for repeat, group in graph["repeat_groups"].items():
+    groups = graph["repeat_groups"]
+    long_dir = form_dir / "long"
+    long_dir.mkdir(exist_ok=True)
+    for old in long_dir.glob("*.parquet"):
+        old.unlink()
+    table = pq.read_table(parquet) if groups else None
+    for repeat, group in groups.items():
+        keys = _repeat_keys(repeat, groups)
         columns = {
             c: v["repeat_iteration"]
             for c, v in variables.items()
-            if v["question"] is not None and repeat_of[v["question"]] == repeat
+            if v["question"] is not None
+            and repeat_of[v["question"]] == repeat
+            and not v.get("ragged")
         }
+        long_path = long_dir / f"{repeat}.parquet"
+        pq.write_table(_long_table(table, columns, keys), long_path)
+        source = _literal(long_path.resolve().as_posix())
         con.execute(
-            f"CREATE VIEW {_ident(repeat)} AS {_repeat_view(repeat, columns, group['depth'])}"
+            f"CREATE VIEW {_ident(repeat)} AS SELECT * FROM read_parquet({source})"
         )
         # A long column is cleared when every wide column it stacks is.
         long_safe: dict[str, bool] = {}
         for column, iterations in columns.items():
-            name = column[: -len("".join(f"_{i}" for i in iterations))]
-            long_safe[name] = long_safe.get(name, True) and column in safe
-        keep = ["KEY", *_instance_keys(group["depth"])]
-        keep += [name for name, cleared in long_safe.items() if cleared]
+            name = column.removesuffix("".join(f"_{i}" for i in iterations))
+            long_safe[name] = long_safe.get(name, True) and column in cleared
+        keep = keys + [name for name, cleared in long_safe.items() if cleared]
         con.execute(
             f"CREATE VIEW {_ident(repeat + '_safe')} AS SELECT "
             + ", ".join(_ident(c) for c in keep)
             + f" FROM {_ident(repeat)}"
         )
-        # An instance joins its parent on KEY and the parent's instance numbers.
-        keys = ["KEY", *_instance_keys(group["depth"])]
-        parent_keys = ["KEY"]
-        if group["depth"] > 1:
-            parent_keys += _instance_keys(group["depth"] - 1)
+        # An instance joins its parent on the parent's keys, named alike in both.
         for suffix in ("", "_safe"):
             parent = (group["parent"] or "submissions") + suffix
-            on = " AND ".join(
-                f"{repeat}{suffix}.{k} = {parent}.{p}"
-                for k, p in zip(keys, parent_keys, strict=False)
-            )
+            on = " AND ".join(f"{repeat}{suffix}.{k} = {parent}.{k}" for k in keys[:-1])
             structure[repeat + suffix] = {
                 "grain": f"one row per instance of the repeat {repeat} that has any value",
                 "key": keys,
@@ -202,10 +226,13 @@ def write_database(
     codebook = json.loads(
         (form_dir / f"{form_id}_dataset_codebook.json").read_text(encoding="utf-8")
     )
+    # Their own schema: a dataset may share a name with a repeat or a description table.
+    con.execute("CREATE SCHEMA dataset")
     for dataset, csv_path in sorted(datasets.items()):
         source = _literal(csv_path.resolve().as_posix())
+        view = f"dataset.{_ident(dataset)}"
         con.execute(
-            f"CREATE VIEW {_ident(dataset)} AS SELECT row_number() OVER () AS row, * "
+            f"CREATE VIEW {view} AS SELECT row_number() OVER () AS row, * "
             f"FROM read_csv({source}, header = true, all_varchar = true)"
         )
         cleared = [
@@ -214,9 +241,9 @@ def write_database(
             if c["dataset"] == dataset and c["pii"]["status"] in _SAFE
         ]
         con.execute(
-            f"CREATE VIEW {_ident(dataset + '_safe')} AS SELECT "
+            f"CREATE VIEW dataset.{_ident(dataset + '_safe')} AS SELECT "
             + ", ".join(_ident(c) for c in ["row", *cleared])
-            + f" FROM {_ident(dataset)}"
+            + f" FROM {view}"
         )
         # The key the config declares for the dataset ([datasets.<name>] key), checked
         # on the rows that have all of it; without one, the CSV row is the key.
@@ -229,9 +256,9 @@ def write_database(
             cols = ", ".join(_ident(c) for c in key)
             complete = " AND ".join(f"{_ident(c)} IS NOT NULL" for c in key)
             repeated, partial = con.sql(
-                f"SELECT (SELECT count(*) FROM (SELECT {cols} FROM {_ident(dataset)} "
+                f"SELECT (SELECT count(*) FROM (SELECT {cols} FROM {view} "
                 f"WHERE {complete} GROUP BY ALL HAVING count(*) > 1)), "
-                f"(SELECT count(*) FROM {_ident(dataset)} WHERE NOT ({complete}))"
+                f"(SELECT count(*) FROM {view} WHERE NOT ({complete}))"
             ).fetchone()
             assert repeated == 0, f"{dataset}: key {key} repeats in {repeated} groups"
             if partial:
@@ -240,6 +267,7 @@ def write_database(
         # left; a literal match is a filter.
         by_column = {c["column"]: c for c in codebook if c["dataset"] == dataset}
         for suffix in ("", "_safe"):
+            name = f"dataset.{dataset}{suffix}"
             joins = []
             for q in questions:
                 source = q["data_source"]
@@ -248,12 +276,12 @@ def write_database(
                 for m in source["match"]:
                     value = m["value"] or ""
                     if not (value.startswith("${") and value.endswith("}")):
-                        line = f"filter: {dataset}{suffix}.{m['column']} = {value}"
+                        line = f"filter: {name}.{m['column']} = {value}"
                     elif m["column"] not in by_column:
                         # The form names a column the dataset does not have: the
                         # lookup never finds a row.
                         line = (
-                            f"{dataset}{suffix}.{m['column']} = ${{{value[2:-1]}}}  "
+                            f"{name}.{m['column']} = ${{{value[2:-1]}}}  "
                             f"({m['column']} is not a column of {dataset}: "
                             f"{q['variable_name']} finds no row)"
                         )
@@ -264,18 +292,15 @@ def write_database(
                         unique = (
                             column["distinct"] == column["non_null"] == column["rows"]
                         )
-                        line = (
-                            f"{dataset}{suffix}.{m['column']} = {table}.{field}  "
-                            + (
-                                "(many to one: the column is unique in the dataset)"
-                                if unique
-                                else f"(not unique: {column['distinct']} distinct "
-                                f"values in {column['non_null']} rows)"
-                            )
+                        line = f"{name}.{m['column']} = {table}.{field}  " + (
+                            "(many to one: the column is unique in the dataset)"
+                            if unique
+                            else f"(not unique: {column['distinct']} distinct "
+                            f"values in {column['non_null']} rows)"
                         )
                     if line not in joins:
                         joins.append(line)
-            structure[dataset + suffix] = {
+            structure[name] = {
                 "grain": grain + note,
                 "key": key,
                 "joins": joins,
@@ -290,6 +315,7 @@ def write_database(
                     "question": v["question"],
                     "repeat_group": repeat_of.get(v["question"]),
                     "repeat_iteration": v.get("repeat_iteration"),
+                    "ragged": v.get("ragged", False),
                     "choice_value": v.get("choice_value"),
                     "system": v.get("system", False),
                     "arrow_type": v["parquet"]["arrow_type"],
@@ -399,14 +425,20 @@ def write_database(
     structure.update(_DESCRIPTIONS)
 
     # The finished file's own schema, with what each object is.
-    objects = []
-    for name, kind in con.sql(
-        "SELECT table_name, table_type FROM information_schema.tables"
+    # One query for every column: each query binds every view again.
+    columns_of: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    for schema, table_name, column, data_type in con.sql(
+        "SELECT table_schema, table_name, column_name, data_type "
+        "FROM information_schema.columns ORDER BY table_schema, table_name, "
+        "ordinal_position"
     ).fetchall():
-        columns = con.sql(
-            "SELECT column_name, data_type FROM information_schema.columns "
-            f"WHERE table_name = {_literal(name)} ORDER BY ordinal_position"
-        ).fetchall()
+        columns_of.setdefault((schema, table_name), []).append((column, data_type))
+    objects = []
+    for schema, table_name, kind in con.sql(
+        "SELECT table_schema, table_name, table_type FROM information_schema.tables"
+    ).fetchall():
+        name = table_name if schema == "main" else f"{schema}.{table_name}"
+        columns = columns_of[schema, table_name]
         objects.append(
             {
                 "name": name,
@@ -440,4 +472,10 @@ def main(argv: list[str] | None = None) -> None:
         path = write_database(
             cfg.form_dir(form), form, form_datasets(cfg, form), cfg.dataset_keys
         )
-        print(f"[duckdb] {form} -> {path}")
+        con = duckdb.connect(str(path), read_only=True)
+        (ragged,) = con.sql("SELECT count(*) FROM dictionary WHERE ragged").fetchone()
+        con.close()
+        note = (
+            f"; {ragged} columns from other form versions stay wide" if ragged else ""
+        )
+        print(f"[duckdb] {form}{note} -> {path}")

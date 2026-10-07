@@ -43,7 +43,7 @@ list and every server dataset pulled (`raw/datasets/<id>.csv`): the ones in
 | `<form>_summary_stats.csv` | `just stats`: per column, counts over the rows where it was asked (skip logic evaluated per row), sentinels apart, then mean/quartiles, frequencies or shares; flagged PII columns get counts only |
 | `<form>_codebook.xlsx` | `just codebook`: for PIs. Variables (label, type, group, relevance, value labels, missing, sentinels, PII status) and Summary stats; no values of flagged PII columns |
 | `<form>_dataset_codebook.json` | One row per column of each dataset the form reads: counts, the questions that read it, and a `pii` block (Presidio, or `dataset.column` on the whitelist/blacklist) |
-| `<form>.duckdb` | `just duckdb` (runs `just stats` first): views over the parquet (`submissions`, `submissions_safe`, and each repeat group long as `<repeat>` / `<repeat>_safe`, one row per instance with any value), each dataset next to them (`<dataset>`, `<dataset>_safe`), and the descriptions as tables (`dictionary`, `questions`, `choices`, `edges`, `dataset_links`, `dataset_codebook`, `stats`) |
+| `<form>.duckdb` | `just duckdb` (runs `just stats` first): views over the parquet (`submissions`, `submissions_safe`, and each repeat group long as `<repeat>` / `<repeat>_safe` from `long/<repeat>.parquet`: one row per instance with any value, keyed by `KEY` and one `<repeat>_index` per enclosing repeat), each dataset in the `dataset` schema (`dataset.<name>`, `dataset.<name>_safe`), and the descriptions as tables (`dictionary`, `questions`, `choices`, `edges`, `dataset_links`, `dataset_codebook`, `stats`) |
 
 The `pii` block is a signal for the people cleaning the data, not enforcement:
 `cleared_by_form` (publishable), `whitelisted`, `contains_pii`, `may_contain_pii`
@@ -85,8 +85,9 @@ traces each column from the field that publishes it to the fields that read it.
 
 ## Querying with DuckDB
 
-`<form>.duckdb` holds views, not copies: `<form>.parquet` stays the only copy of the
-submissions, and `just duckdb` rebuilds the file. Select in SQL, clean in pandas:
+`<form>.duckdb` holds views, not copies: they read `<form>.parquet` and the long
+reshapes `just duckdb` writes to `long/<repeat>.parquet`, and `just duckdb` rebuilds
+them all. Select in SQL, clean in pandas:
 
 ```python
 import duckdb

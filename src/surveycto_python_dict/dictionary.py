@@ -114,6 +114,10 @@ def build_dictionary(
                     entry["repeat_iteration"] = [
                         i for _, i in mapped["repeat_iterations"]
                     ]
+                if mapped.get("ragged"):
+                    # More or fewer repeat indices than the field's nesting: written
+                    # under another form version.
+                    entry["ragged"] = True
             if "choice_value" in meta:
                 # A select_multiple binary stands for one choice: 1 chosen, 0 not.
                 entry["choice_value"] = meta["choice_value"]

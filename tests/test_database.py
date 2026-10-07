@@ -39,9 +39,12 @@ def database(tmp_path, analyzer):
 def test_views_and_tables(database):
     con, _ = database
     objects = con.sql(
-        "SELECT table_name, table_type FROM information_schema.tables ORDER BY ALL"
+        "SELECT table_schema, table_name, table_type FROM information_schema.tables "
+        "ORDER BY ALL"
     ).fetchall()
-    assert objects == [
+    assert [(f"{s}.{n}" if s != "main" else n, t) for s, n, t in objects] == [
+        ("dataset.prev_round", "VIEW"),
+        ("dataset.prev_round_safe", "VIEW"),
         ("choices", "BASE TABLE"),
         ("dataset_codebook", "BASE TABLE"),
         ("dataset_links", "BASE TABLE"),
@@ -49,8 +52,6 @@ def test_views_and_tables(database):
         ("edges", "BASE TABLE"),
         ("plot", "VIEW"),
         ("plot_safe", "VIEW"),
-        ("prev_round", "VIEW"),
-        ("prev_round_safe", "VIEW"),
         ("questions", "BASE TABLE"),
         ("stats", "BASE TABLE"),
         ("submissions", "VIEW"),
@@ -90,16 +91,27 @@ def test_safe_view_has_only_cleared_columns(database):
 
 def test_repeat_is_long_with_one_row_per_answered_instance(database):
     con, _ = database
-    rows = con.sql("SELECT KEY, instance, plot_size FROM plot").fetchall()
+    rows = con.sql("SELECT KEY, plot_index, plot_size FROM plot").fetchall()
     assert rows == [("uuid:aaa", 1, 0.75), ("uuid:bbb", 2, None)]
     columns = con.sql("SELECT * FROM plot LIMIT 0").columns
-    assert columns[:2] == ["KEY", "instance"]
+    assert columns[:2] == ["KEY", "plot_index"]
     assert "plot_size" in columns
     assert all(not c.endswith(("_1_1", "_2_2")) for c in columns)
     # A select_multiple binary keeps its choice code: plot_crop_1_1 -> plot_crop_1.
     assert con.sql(
         "SELECT plot_crop_1 FROM plot WHERE KEY = 'uuid:aaa'"
     ).fetchone() == (1,)
+
+
+def test_repeat_no_submission_reached_is_its_keys_without_rows():
+    import pyarrow as pa
+
+    from surveycto_python_dict.database import _long_table
+
+    wide = pa.table({"KEY": ["uuid:aaa"], "area": [1.5]})
+    long = _long_table(wide, {}, ["KEY", "hh_index", "member_index"])
+    assert long.num_rows == 0
+    assert long.schema.names == ["KEY", "hh_index", "member_index"]
 
 
 def test_repeat_safe_view_drops_flagged_columns(database):
@@ -109,7 +121,7 @@ def test_repeat_safe_view_drops_flagged_columns(database):
            WHERE repeat_group = 'plot' AND pii_status NOT IN ('cleared_by_form', 'whitelisted')"""
     ).fetchall()
     safe = con.sql("SELECT * FROM plot_safe LIMIT 0").columns
-    assert safe[:2] == ["KEY", "instance"]
+    assert safe[:2] == ["KEY", "plot_index"]
     assert not {q for (q,) in flagged} & set(safe)
 
 
@@ -132,7 +144,7 @@ def test_rebuild_replaces_the_file(database):
 
 def test_dataset_sits_next_to_the_survey_as_text(database):
     con, _ = database
-    assert con.sql("SELECT plot_code, owner FROM prev_round").fetchall() == [
+    assert con.sql("SELECT plot_code, owner FROM dataset.prev_round").fetchall() == [
         ("007", "Fictional Owner")
     ]
 
@@ -160,8 +172,8 @@ def test_dataset_codebook_lists_readers_and_status(database):
 
 def test_dataset_safe_view_has_row_and_whitelisted_columns(database):
     con, _ = database
-    assert con.sql("SELECT * FROM prev_round_safe").fetchall() == [(1, "007")]
-    assert con.sql("SELECT * FROM prev_round_safe LIMIT 0").columns == [
+    assert con.sql("SELECT * FROM dataset.prev_round_safe").fetchall() == [(1, "007")]
+    assert con.sql("SELECT * FROM dataset.prev_round_safe LIMIT 0").columns == [
         "row",
         "plot_code",
     ]
@@ -175,20 +187,20 @@ def test_structure_comes_from_the_finished_database(database):
     names = [o["name"] for o in objects]
     # Every object in the file, and only those.
     in_file = {
-        n
-        for (n,) in con.sql(
-            "SELECT table_name FROM information_schema.tables"
+        n if s == "main" else f"{s}.{n}"
+        for s, n in con.sql(
+            "SELECT table_schema, table_name FROM information_schema.tables"
         ).fetchall()
     }
     assert set(names) == in_file
     plot = next(o for o in objects if o["name"] == "plot_safe")
     assert plot["kind"] == "view"
-    assert plot["key"] == ["KEY", "instance"]
+    assert plot["key"] == ["KEY", "plot_index"]
     assert plot["joins"] == ["plot_safe.KEY = submissions_safe.KEY  (many to one)"]
-    assert {"name": "instance", "type": "INTEGER"} in plot["columns"]
-    prev = next(o for o in objects if o["name"] == "prev_round_safe")
+    assert {"name": "plot_index", "type": "INTEGER"} in plot["columns"]
+    prev = next(o for o in objects if o["name"] == "dataset.prev_round_safe")
     assert prev["joins"] == [
-        "prev_round_safe.phone = submissions_safe.phone  "
+        "dataset.prev_round_safe.phone = submissions_safe.phone  "
         "(many to one: the column is unique in the dataset)"
     ]
 
@@ -204,7 +216,7 @@ def test_declared_dataset_key_is_checked_and_named(database):
     con.close()
     write_database(form_dir, "farm", _datasets(form_dir), {"prev_round": ["phone"]})
     objects = json.loads((form_dir / "farm_db.json").read_text(encoding="utf-8"))
-    prev = next(o for o in objects if o["name"] == "prev_round")
+    prev = next(o for o in objects if o["name"] == "dataset.prev_round")
     assert prev["key"] == ["phone"]
     assert prev["grain"] == "one row per phone"
     _datasets(form_dir)["prev_round"].write_text(
@@ -226,7 +238,7 @@ def test_a_match_column_missing_from_the_dataset_is_reported(database):
     )
     write_database(form_dir, "farm", _datasets(form_dir), {})
     objects = json.loads((form_dir / "farm_db.json").read_text(encoding="utf-8"))
-    prev = next(o for o in objects if o["name"] == "prev_round")
+    prev = next(o for o in objects if o["name"] == "dataset.prev_round")
     assert prev["joins"] == [
-        "prev_round.phone = ${phone}  (phone is not a column of prev_round: prev finds no row)"
+        "dataset.prev_round.phone = ${phone}  (phone is not a column of prev_round: prev finds no row)"
     ]

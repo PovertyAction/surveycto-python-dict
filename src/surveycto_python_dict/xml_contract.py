@@ -16,6 +16,10 @@ of the variable dictionary:
   carrying one extra trailing index = the choice code.
 - A bind's `publishable` attribute marks fields SurveyCTO leaves unencrypted on
   encrypted forms.
+- A select with a choice filter lists its choices through an `<itemset>` over a
+  secondary instance (`instance('list')/root/item[filter]`). A filter on the items'
+  own columns (`filter < 3`) is applied; one that reads the submission (`current()`,
+  a field's path) keeps every item, since it is decided per submission.
 
 The contract maps every wide-JSON column to its node and type; `questions.json`
 is built from the same XML.
@@ -27,6 +31,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field
+
+from surveycto_python_dict.xpath import compile_expression
 
 # pulldata()/search() args are parsed by the balanced, quote-aware
 # _split_call_args walker below (a node value at the group level is still a
@@ -154,6 +160,9 @@ class Node:
     choice_items: list[dict] = field(default_factory=list)
     # Why a `search()` select's dataset choices were left out, e.g. ["presidio:PERSON"].
     choices_withheld: list[str] | None = None
+    # The list is filtered per submission (an itemset filter or a search() filter on a
+    # field): each submission sees part of choice_items.
+    choices_per_submission: bool = False
 
 
 # search('dataset','mode','col','val'[,'col2','val2'...]) on a select's appearance.
@@ -569,6 +578,58 @@ def _label_text(label) -> str:
 
 
 _ITEXT_REF = re.compile(r"^jr:itext\('([^']+)'\)$")
+_ITEMSET = re.compile(r"^instance\('([^']+)'\)/root/item(?:\[(.*)\])?$", re.DOTALL)
+# A choice filter that reads the submission: current() or a path to a field.
+_READS_FORM = re.compile(r"current\(\)|(?<![\w)\]])/[A-Za-z_]")
+_QUOTED = re.compile(r"('[^']*'|\"[^\"]*\")")
+
+
+class _Item:
+    """A secondary-instance item as an expression row: its columns by name."""
+
+    def __init__(self, columns: dict[str, str]):
+        self.columns = columns
+
+    def ref(self, name: str):
+        return self.columns[name] or None
+
+
+def _itemset_choices(
+    itemset, instances: dict, itext: dict[str, str]
+) -> tuple[list[dict], bool]:
+    """Return the choices an ``<itemset>`` lists, its filter applied when static.
+
+    The flag says the filter reads the submission, so each one sees part of the list.
+    """
+    nodeset = itemset.get("nodeset")
+    match = _ITEMSET.match(nodeset)
+    if match is None:
+        raise ValueError(f"itemset {nodeset!r} is not instance('...')/root/item[...]")
+    items = instances[match.group(1)]
+    predicate = match.group(2)
+    per_submission = bool(predicate and _READS_FORM.search(predicate))
+    if predicate and not per_submission:
+        # The items' columns become ${column} refs, outside quoted literals.
+        names = sorted({k for item in items for k in item}, key=len, reverse=True)
+        word = re.compile(r"(?<![\w$'{-])(" + "|".join(names) + r")(?![\w(-])")
+        parts = _QUOTED.split(predicate)
+        expr = "".join(
+            p if i % 2 else word.sub(r"${\1}", p) for i, p in enumerate(parts)
+        )
+        keep = compile_expression(expr)
+        items = [item for item in items if keep(_Item(item))]
+    refs = {_ln(c.tag): c.get("ref") for c in itemset}
+    label_id = re.fullmatch(r"jr:itext\((\w+)\)", refs["label"])
+    choices = [
+        {
+            "label": itext[item[label_id.group(1)]]
+            if label_id
+            else item[refs["label"]],
+            "value": item[refs["value"]],
+        }
+        for item in items
+    ]
+    return choices, per_submission
 
 
 def _default_itext(model) -> dict[str, str]:
@@ -617,6 +678,16 @@ def parse_contract(xml_path) -> FormContract:
     if primary is None:
         raise RuntimeError(f"Could not find primary instance in {xml_path}")
     itext = _default_itext(model) if model is not None else {}
+    # Static secondary instances (choice lists behind an itemset), item by item.
+    instances = {
+        inst.get("id"): [
+            {_ln(c.tag): (c.text or "") for c in item}
+            for item in inst.iter()
+            if _ln(item.tag) == "item"
+        ]
+        for inst in (model if model is not None else [])
+        if _ln(inst.tag) == "instance" and inst.get("id")
+    }
 
     def label_text(label) -> str:
         ref = label.get("ref")
@@ -670,6 +741,7 @@ def parse_contract(xml_path) -> FormContract:
     controls: dict[str, str] = {}
     appearances: dict[str, str] = {}
     items: dict[str, list[dict]] = {}
+    filtered: set[str] = set()  # selects whose list is filtered per submission
     labels: dict[str, str] = {}
     mediatypes: dict[str, str] = {}
     counts: dict[str, str] = {}
@@ -708,6 +780,13 @@ def parse_contract(xml_path) -> FormContract:
                     for it in el
                     if _ln(it.tag) == "item"
                 ]
+                for itemset in (c for c in el if _ln(c.tag) == "itemset"):
+                    choices, per_submission = _itemset_choices(
+                        itemset, instances, itext
+                    )
+                    items[rel] += choices
+                    if per_submission:
+                        filtered.add(rel)
             ap = el.get("appearance")
             if ap:
                 appearances[rel] = ap
@@ -727,6 +806,12 @@ def parse_contract(xml_path) -> FormContract:
         ctl = controls.get(path)
         ap = appearances.get(path)
         select_multiple = ctl == "select" or b.get("type") == "select"
+        source = _parse_data_source(ap, b.get("calculate"))
+        searched_by_field = bool(
+            source
+            and source["kind"] == "search"
+            and any(v is None for v in source["filter"].values())
+        )
         nodes[path] = Node(
             path=path,
             name=toks[-1],
@@ -748,7 +833,8 @@ def parse_contract(xml_path) -> FormContract:
             pulldata=_parse_pulldata(b.get("calculate")),
             preload=b.get("preload"),
             preload_params=b.get("preloadParams"),
-            data_source=_parse_data_source(ap, b.get("calculate")),
+            data_source=source,
+            choices_per_submission=path in filtered or searched_by_field,
             original=b.get("original"),
             label=labels.get(path),
             mediatype=mediatypes.get(path),

@@ -260,14 +260,14 @@ harder to find.
    choice code: map positions to codes through the routing variable after reshaping.
 2. **Suggested: work each repeat at its own level, from its long view.** `just duckdb`
    writes `<repeat>` / `<repeat>_safe`: one row per instance with any value, keyed by
-   `KEY` and `instance` (`instance_1`, `instance_2` for a nested repeat), each field
+   `KEY` and one `<repeat>_index` per repeat from the outermost down, each field
    under its name without the instance suffix. A household roster becomes one row per
    member. Clean and aggregate at that level, then merge the results back to the
    submission table on `KEY`.
    ```python
    con = duckdb.connect("data/out/<form>/<form>.duckdb", read_only=True)
    roster = con.sql(
-       "SELECT KEY, instance AS member, member_name, member_age FROM roster_safe"
+       "SELECT KEY, roster_index AS member, member_name, member_age FROM roster_safe"
    ).df()
    assert not roster.duplicated(["KEY", "member"]).any()
 
