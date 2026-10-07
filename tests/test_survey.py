@@ -299,3 +299,17 @@ def test_project_commands_need_no_form(store, capsys):
     config.write_text('forms = ["farm", "visit"]\nout_dir = "out"\n', encoding="utf-8")
     main(["--config", str(config), "flow"])
     assert "Stage 1:\n  farm" in capsys.readouterr().out
+
+
+def test_survey_info_lists_questions_with_no_column(tmp_path, analyzer):
+    from farm_form import ROWS
+
+    config = tmp_path / "config.toml"
+    config.write_text('forms = ["farm"]\nout_dir = "out"\n', encoding="utf-8")
+    cfg = load_config(config)
+    # Nobody answered `visit`: the export has no column for it.
+    write_pull(cfg, rows=[{k: v for k, v in r.items() if k != "visit"} for r in ROWS])
+    build(cfg, SENTINELS, analyzer)
+    store = SurveyStore(cfg.form_dir("farm"), "farm")
+    assert store.summary["questions_without_columns"] == ["visit"]
+    assert "no submission holds a value: 1 (visit)" in store.get_survey_info()

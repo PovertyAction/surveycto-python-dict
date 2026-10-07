@@ -800,6 +800,7 @@ class SurveyStore:
         top_groups = sorted(
             {q["group_path"][0] for q in self.questions.values() if q["group_path"]}
         )
+        absent = s["questions_without_columns"]
         return "\n".join(
             [
                 f"{d['name']} (version {d['form_version']}): submissions: {d['n_observations']}, "
@@ -807,6 +808,8 @@ class SurveyStore:
                 f"pii: {s['pii']}",
                 f"columns kept as text: {s['n_cast_fallback']}; all missing: {s['n_all_missing']}",
                 f"top-level groups: {', '.join(top_groups) or '-'}",
+                f"questions with no column, since no submission holds a value: "
+                f"{len(absent)}" + (f" ({', '.join(absent)})" if absent else ""),
                 f"PII review file: {self.review_file}",
             ]
         )

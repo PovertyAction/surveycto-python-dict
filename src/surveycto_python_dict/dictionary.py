@@ -180,6 +180,15 @@ def build_dictionary(
             "by_arrow_type": dict(
                 Counter(v["parquet"]["arrow_type"] for v in variables.values())
             ),
+            # No submission holds a value for these, so the export has no column. A
+            # repeat_count entry describes the repeat, not a field of its own.
+            "questions_without_columns": [
+                q["variable_name"]
+                for q in questions
+                if q["type"] != "repeat_count"
+                and q["variable_name"]
+                not in {v["question"] for v in variables.values()}
+            ],
         },
         "variables": variables,
     }

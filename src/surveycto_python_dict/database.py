@@ -38,6 +38,7 @@ the MCP's ``get_structure_db`` reads, and rendered for people as ``<project>_db.
 """
 
 import json
+from collections import Counter
 from functools import reduce
 from pathlib import Path
 
@@ -272,6 +273,7 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                 "joins": [f"{on}  (many to one)"],
             }
 
+    n_columns = Counter(v["question"] for v in variables.values())
     tables = {
         "dictionary": pd.DataFrame(
             [
@@ -305,6 +307,8 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                     "question_text": q["question_text"],
                     "group_path": q["group_path"],
                     "repeat_group": repeat_of.get(q["variable_name"]),
+                    # 0: no submission holds a value, so the data has no column.
+                    "n_columns": n_columns.get(q["variable_name"], 0),
                     "relevance": q["relevance"],
                     "group_relevances": q["group_relevances"],
                     "constraint": q["constraint"],
