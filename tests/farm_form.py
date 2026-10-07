@@ -1,5 +1,7 @@
 """Synthetic farm form in SurveyCTO's compiled shape, with API-shaped fictional rows."""
 
+import json
+
 XML = """<?xml version="1.0"?>
 <h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml"
         xmlns:jr="http://openrosa.org/javarosa">
@@ -117,3 +119,23 @@ SENTINELS = {
     -66: "Other (specify)",
     -55: "Not in list",
 }
+
+
+# The form list a pull saves: farm attaches prev_round.csv, which its pulldata() reads.
+FORM_LIST = b"""<?xml version="1.0"?>
+<xforms xmlns="http://openrosa.org/xforms/xformsList">
+  <xform><formID>farm</formID><version>3</version><datasets></datasets>
+    <files>{"files":[{"filename":"prev_round.csv","timestamp":1}]}</files></xform>
+</xforms>"""
+
+
+def write_pull(cfg, prev_round="phone,owner\n", xml=XML, rows=ROWS):
+    """Write what ``pull`` leaves for a config whose only form is farm."""
+    cfg.raw_dir.mkdir(parents=True)
+    (cfg.raw_dir / "formList.xml").write_bytes(FORM_LIST)
+    (cfg.raw_dir / "datasets.json").write_text("[]", encoding="utf-8")
+    raw = cfg.form_raw("farm")
+    (raw / "files").mkdir(parents=True)
+    (raw / "form.xml").write_text(xml, encoding="utf-8")
+    (raw / "wide.json").write_text(json.dumps(rows), encoding="utf-8")
+    (raw / "files" / "prev_round.csv").write_text(prev_round, encoding="utf-8")

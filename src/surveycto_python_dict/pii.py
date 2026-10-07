@@ -11,7 +11,9 @@ Each column gets ``{"status", "basis"[, "presidio"]}``; the first matching rule 
    questions; selects with inline choices; calculates whose every reference is
    cleared or whitelisted and that do not ``pulldata()``.
 4. ``may_contain_pii`` / ``no_hits``: everything else, scanned with Presidio on its
-   distinct non-null values (sampled with ``seed`` above ``max_distinct``).
+   distinct non-null values (sampled with ``seed`` above ``max_distinct``). With
+   ``no_personal_data`` the project declares it holds none: every column past the
+   device and system columns is ``whitelisted`` / ``project``, and Presidio never runs.
 
 Presidio runs on submission values, on ``search()`` choice lists before they enter
 any output (``screen_search_choices``), and on the datasets the form reads
@@ -84,6 +86,9 @@ class PiiConfig:
     blacklist: tuple[str, ...] = ()
     # False: publishable clears nothing; the column goes through the other rules.
     trust_publishable: bool = True
+    # True: the project holds no personal data (study metadata, say); every column
+    # past the blacklist, publishable and device rules is whitelisted, unscanned.
+    no_personal_data: bool = False
 
     def __post_init__(self):
         """Raise when a name is on both the whitelist and the blacklist."""
@@ -196,7 +201,7 @@ def _entities(value: str, config: PiiConfig, analyzer) -> set[str]:
 
 
 def screen_search_choices(
-    contract: FormContract, datasets_dir: Path, config: PiiConfig, analyzer
+    contract: FormContract, datasets: dict[str, Path], config: PiiConfig, analyzer
 ) -> None:
     """Give each ``search()`` select its dataset choices when they hold no PII.
 
@@ -212,8 +217,8 @@ def screen_search_choices(
         if node.name in config.blacklist:
             node.choices_withheld = ["reviewed"]
             continue
-        universe = search_universe(node, datasets_dir / f"{source['dataset']}.csv")
-        if node.name not in config.whitelist:
+        universe = search_universe(node, datasets[source["dataset"]])
+        if node.name not in config.whitelist and not config.no_personal_data:
             texts = sorted({t for c in universe for t in (c["value"], c["label"]) if t})
             found = sorted({e for t in texts for e in _entities(t, config, analyzer)})
             if found:
@@ -260,10 +265,6 @@ def classify(
     variables = vardict["variables"]
     question_names = {q["variable_name"] for q in questions}
     whitelist, blacklist = set(config.whitelist), set(config.blacklist)
-    # dataset.column names belong to dataset_codebook.
-    form_names = {n for n in whitelist | blacklist if "." not in n}
-    for name in sorted(form_names - question_names - set(variables)):
-        warnings.warn(f"variable `{name}` cannot be found", UserWarning, stacklevel=2)
     rules = _Rules(
         questions,
         whitelist & question_names,
@@ -287,6 +288,8 @@ def classify(
             block = {"status": "contains_pii", "basis": [f"device:{column}"]}
         elif entry.get("system"):
             block = {"status": "whitelisted", "basis": ["system"]}
+        elif config.no_personal_data:
+            block = {"status": "whitelisted", "basis": ["project"]}
         else:
             block = rules.static(question) if question is not None else None
             if block is None:
@@ -304,18 +307,23 @@ def classify(
 
 
 def dataset_codebook(
-    datasets_dir: Path, questions: list[dict], config: PiiConfig, analyzer
+    datasets: dict[str, Path],
+    questions: list[dict],
+    config: PiiConfig,
+    analyzer,
+    scanned: dict[tuple[Path, str], dict],
 ) -> list[dict]:
     """Return one row per column of each dataset the form reads, with its pii block.
 
     A dataset has no XML, so a column gets only its counts, the questions that read
     it, and a status: ``dataset.column`` on the blacklist or whitelist (``reviewed``),
     else Presidio on its values. Hits are counted by CSV row (1 = first data row).
+    ``scanned`` keeps each Presidio result by CSV and column, so forms that read the
+    same dataset scan it once.
     """
     whitelist, blacklist = set(config.whitelist), set(config.blacklist)
     rows = []
-    for csv_path in sorted(datasets_dir.glob("*.csv")):
-        dataset = csv_path.stem
+    for dataset, csv_path in sorted(datasets.items()):
         with open(csv_path, encoding="utf-8-sig", newline="") as f:
             reader = csv.DictReader(f)
             records = list(reader)
@@ -327,14 +335,18 @@ def dataset_codebook(
                 block = {"status": "contains_pii", "basis": ["reviewed"]}
             elif name in whitelist:
                 block = {"status": "whitelisted", "basis": ["reviewed"]}
+            elif config.no_personal_data:
+                block = {"status": "whitelisted", "basis": ["project"]}
             else:
-                block = _scan(
-                    pa.chunked_array([pa.array(values, pa.string())]),
-                    numbers,
-                    ["dataset"],
-                    config,
-                    analyzer,
-                )
+                if (csv_path, column) not in scanned:
+                    scanned[csv_path, column] = _scan(
+                        pa.chunked_array([pa.array(values, pa.string())]),
+                        numbers,
+                        ["dataset"],
+                        config,
+                        analyzer,
+                    )
+                block = scanned[csv_path, column]
             read_by = [
                 q["variable_name"]
                 for q in questions
@@ -355,12 +367,13 @@ def dataset_codebook(
                     "pii": block,
                 }
             )
-    found = {f"{r['dataset']}.{r['column']}" for r in rows}
-    for name in sorted({n for n in whitelist | blacklist if "." in n} - found):
-        warnings.warn(
-            f"dataset column `{name}` cannot be found", UserWarning, stacklevel=2
-        )
     return rows
+
+
+def warn_unknown_names(config: PiiConfig, known: set[str]) -> None:
+    """Warn for each whitelist or blacklist name that no form or dataset of the project has."""
+    for name in sorted((set(config.whitelist) | set(config.blacklist)) - known):
+        warnings.warn(f"`{name}` cannot be found", UserWarning, stacklevel=2)
 
 
 def attach(vardict: dict, blocks: dict[str, dict]) -> None:

@@ -99,6 +99,16 @@ class Client:
             "POST", url, files={"private_key": ("private_key.pem", key)}
         ).json()
 
+    def list_datasets(self) -> list[dict]:
+        """Return every server dataset's metadata (no records), following ``nextCursor``."""
+        url = f"{self.base_url}/api/v2/datasets"
+        page = self._send("GET", url).json()
+        datasets = page["data"]
+        while page["nextCursor"]:
+            page = self._send("GET", url, params={"cursor": page["nextCursor"]}).json()
+            datasets += page["data"]
+        return datasets
+
     def pull_dataset(self, dataset_id: str) -> str:
         """Return a server dataset as CSV text."""
         url = f"{self.base_url}/api/v2/datasets/data/csv/{dataset_id}"

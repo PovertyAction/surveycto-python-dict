@@ -2,8 +2,9 @@
 
 Configuration is a TOML file (``--config``, default ``config.toml``)::
 
-    form_id = "my_form"
-    out_dir = "data/out"  # relative to the config file
+    forms = ["listing", "baseline"]
+    server_datasets = ["households"]  # pulled besides the ones the forms read
+    out_dir = "data/out/my_project"  # relative to the config file
 
     [pii]  # every key optional; see PiiConfig
     whitelist = ["village_name"]
@@ -11,8 +12,13 @@ Configuration is a TOML file (``--config``, default ``config.toml``)::
 
 Credentials and the study's sentinel codes come from the environment or ``.env``:
 ``SCTO_SERVER``, ``SCTO_USER``, ``SCTO_PASSWORD``, ``SCTO_KEY_PATH`` for encrypted forms,
-and ``SCTO_SENTINELS`` (``"-99=Don't know;-88=Refused"``) for building. Raw pulls go to
-``<out_dir>/<form_id>/raw/``; built outputs to ``<out_dir>/<form_id>/``.
+and ``SCTO_SENTINELS`` (``"-99=Don't know;-88=Refused"``) for building.
+
+Layout under ``out_dir``: ``raw/`` holds the form list, the server's dataset list
+(``datasets.json``) and every server dataset pulled (``raw/datasets/<id>.csv``), each
+once for the whole project; ``<form>/raw/`` holds a form's XML, its submissions and the
+CSV files attached to it (``files/``); ``<form>/`` holds its built outputs; and
+``flow.json`` says how the forms chain through datasets.
 """
 
 import argparse
@@ -29,8 +35,9 @@ from dotenv import load_dotenv
 from surveycto_python_dict.api import Client, MissingEnvVar, env_key_path
 from surveycto_python_dict.cast import cast_wide
 from surveycto_python_dict.codebook import write_pii_review
-from surveycto_python_dict.contract import form_entry, resolve_datasets
+from surveycto_python_dict.contract import DatasetSource, form_entry, resolve_datasets
 from surveycto_python_dict.dictionary import build_dictionary, build_graph, write_json
+from surveycto_python_dict.flow import build_flow
 from surveycto_python_dict.pii import (
     PiiConfig,
     attach,
@@ -38,32 +45,38 @@ from surveycto_python_dict.pii import (
     classify,
     dataset_codebook,
     screen_search_choices,
+    warn_unknown_names,
 )
 from surveycto_python_dict.questions import build_questions, write_sections
-from surveycto_python_dict.xml_contract import parse_contract
+from surveycto_python_dict.xml_contract import FormContract, parse_contract
 
-_TOP_KEYS = {"form_id", "out_dir", "pii", "datasets"}
+_TOP_KEYS = {"forms", "server_datasets", "out_dir", "pii", "datasets"}
 
 
 @dataclass(frozen=True)
 class Config:
     """A parsed config file."""
 
-    form_id: str
+    forms: tuple[str, ...]
+    # Server datasets pulled besides the ones the forms read.
+    server_datasets: tuple[str, ...]
     out_dir: Path
     pii: PiiConfig
     # [datasets.<name>] key: the columns that identify a dataset row.
     dataset_keys: dict[str, list[str]]
 
     @property
-    def form_dir(self) -> Path:
-        """Return where built outputs go."""
-        return self.out_dir / self.form_id
-
-    @property
     def raw_dir(self) -> Path:
-        """Return where raw pulls go."""
-        return self.form_dir / "raw"
+        """Return where the project-wide pulls go: form list and server datasets."""
+        return self.out_dir / "raw"
+
+    def form_dir(self, form: str) -> Path:
+        """Return where a form's built outputs go."""
+        return self.out_dir / form
+
+    def form_raw(self, form: str) -> Path:
+        """Return where a form's XML, submissions and attached files go."""
+        return self.form_dir(form) / "raw"
 
 
 def _check_keys(section: str, got: set[str], allowed: set[str]) -> None:
@@ -86,8 +99,11 @@ def load_config(path: Path) -> Config:
     datasets = data.get("datasets", {})
     for name, section in datasets.items():
         _check_keys(f"[datasets.{name}]", set(section), {"key"})
+    if not data["forms"]:
+        raise ValueError("forms is empty: name at least one form")
     return Config(
-        form_id=data["form_id"],
+        forms=tuple(data["forms"]),
+        server_datasets=tuple(data.get("server_datasets", ())),
         out_dir=Path(path).parent / data["out_dir"],
         pii=PiiConfig(**pii),
         dataset_keys={name: section["key"] for name, section in datasets.items()},
@@ -115,47 +131,98 @@ def env_sentinels() -> dict[int, str]:
     return table
 
 
+def _sources(
+    cfg: Config, form: str, contract: FormContract
+) -> dict[str, DatasetSource]:
+    """Resolve the datasets ``form`` reads against the pulled form and dataset lists."""
+    form_list = (cfg.raw_dir / "formList.xml").read_bytes()
+    server = json.loads((cfg.raw_dir / "datasets.json").read_text(encoding="utf-8"))
+    return resolve_datasets(
+        contract, form_entry(form_list, form), {d["id"] for d in server}
+    )
+
+
+def form_datasets(cfg: Config, form: str) -> dict[str, Path]:
+    """Return the CSV of each dataset ``form`` reads, by the name the form uses."""
+    contract = parse_contract(cfg.form_raw(form) / "form.xml")
+    return {
+        name: (
+            cfg.raw_dir / "datasets" / f"{s.ref}.csv"
+            if s.kind == "server_dataset"
+            else cfg.form_raw(form) / "files" / s.ref
+        )
+        for name, s in _sources(cfg, form, contract).items()
+    }
+
+
 def pull(cfg: Config, client: Client) -> Path:
-    """Pull the form list, XML, referenced datasets and wide JSON into the raw dir."""
+    """Pull every form's XML, submissions and attached files, and the server datasets.
+
+    The server datasets are the config's ``server_datasets`` plus every one a form
+    reads, each pulled once into ``raw/datasets/``.
+    """
     raw = cfg.raw_dir
-    raw.mkdir(parents=True, exist_ok=True)
-    form_list = client.pull_form_list()
-    (raw / "formList.xml").write_bytes(form_list)
-    (raw / "form.xml").write_bytes(client.pull_form_xml(cfg.form_id))
-    contract = parse_contract(raw / "form.xml")
+    (raw / "datasets").mkdir(parents=True, exist_ok=True)
+    (raw / "formList.xml").write_bytes(client.pull_form_list())
+    server = client.list_datasets()
+    (raw / "datasets.json").write_text(json.dumps(server, indent=1), encoding="utf-8")
+    unknown = sorted(set(cfg.server_datasets) - {d["id"] for d in server})
+    if unknown:
+        raise ValueError(f"server_datasets not on the server: {', '.join(unknown)}")
 
-    sources = resolve_datasets(contract, form_entry(form_list, cfg.form_id))
-    if sources:
-        (raw / "datasets").mkdir(exist_ok=True)
-    form_files = [s.ref for s in sources.values() if s.kind == "form_file"]
-    attached = client.pull_form_files(cfg.form_id, form_files) if form_files else {}
-    for name, source in sources.items():
-        out = raw / "datasets" / f"{name}.csv"
-        if source.kind == "server_dataset":
-            out.write_text(client.pull_dataset(source.ref), encoding="utf-8")
-        else:
-            out.write_bytes(attached[source.ref])
+    wanted = set(cfg.server_datasets)
+    for form in cfg.forms:
+        form_raw = cfg.form_raw(form)
+        form_raw.mkdir(parents=True, exist_ok=True)
+        (form_raw / "form.xml").write_bytes(client.pull_form_xml(form))
+        contract = parse_contract(form_raw / "form.xml")
+        sources = _sources(cfg, form, contract)
+        wanted |= {s.ref for s in sources.values() if s.kind == "server_dataset"}
+        form_files = [s.ref for s in sources.values() if s.kind == "form_file"]
+        if form_files:
+            (form_raw / "files").mkdir(exist_ok=True)
+            for name, data in client.pull_form_files(form, form_files).items():
+                (form_raw / "files" / name).write_bytes(data)
+        for name, s in sources.items():
+            if not s.attached:
+                print(f"[pull] {form} reads {name} ({s.ref}) but does not attach it")
 
-    key = env_key_path() if contract.encrypted else None
-    rows = client.pull_wide_json(cfg.form_id, key_path=key)
-    (raw / "wide.json").write_text(
-        json.dumps(rows, ensure_ascii=False), encoding="utf-8"
-    )
-    columns = len({c for r in rows for c in r})
-    print(
-        f"[pull] {cfg.form_id} v{contract.formdef_version}: {len(rows)} submissions, "
-        f"{columns} columns, {len(sources)} datasets, "
-        f"{'encrypted' if contract.encrypted else 'unencrypted'} -> {raw}"
-    )
+        key = env_key_path() if contract.encrypted else None
+        rows = client.pull_wide_json(form, key_path=key)
+        (form_raw / "wide.json").write_text(
+            json.dumps(rows, ensure_ascii=False), encoding="utf-8"
+        )
+        columns = len({c for r in rows for c in r})
+        print(
+            f"[pull] {form} v{contract.formdef_version}: {len(rows)} submissions, "
+            f"{columns} columns, reads {len(sources)} datasets, "
+            f"{'encrypted' if contract.encrypted else 'unencrypted'} -> {form_raw}"
+        )
+
+    for dataset in sorted(wanted):
+        (raw / "datasets" / f"{dataset}.csv").write_text(
+            client.pull_dataset(dataset), encoding="utf-8"
+        )
+    print(f"[pull] {len(wanted)} server datasets -> {raw / 'datasets'}")
     return raw
 
 
-def build(cfg: Config, sentinels: dict[int, str], analyzer=None) -> dict[str, Path]:
-    """Build every output from the raw dir; return the written paths by name."""
-    raw, out, form = cfg.raw_dir, cfg.form_dir, cfg.form_id
-    analyzer = analyzer or build_analyzer(cfg.pii)
+def build_form(
+    cfg: Config,
+    form: str,
+    sentinels: dict[int, str],
+    analyzer,
+    scanned: dict[tuple[Path, str], dict],
+) -> tuple[dict[str, Path], set[str]]:
+    """Build one form's outputs from its raw pull.
+
+    Return the written paths by name and the names the ``[pii]`` lists can use: each
+    question, column and ``dataset.column``.
+    """
+    raw, out = cfg.form_raw(form), cfg.form_dir(form)
     contract = parse_contract(raw / "form.xml")
-    screen_search_choices(contract, raw / "datasets", cfg.pii, analyzer)
+    datasets = form_datasets(cfg, form)
+    screen_search_choices(contract, datasets, cfg.pii, analyzer)
     questions = build_questions(contract)
     rows = json.loads((raw / "wide.json").read_text(encoding="utf-8"))
     table = cast_wide(rows, contract)
@@ -178,7 +245,7 @@ def build(cfg: Config, sentinels: dict[int, str], analyzer=None) -> dict[str, Pa
     write_json(vardict, paths["dictionary"])
     write_json(build_graph(questions, vardict), paths["graph"])
     write_pii_review(table, vardict, paths["pii_review"])
-    codebook = dataset_codebook(raw / "datasets", questions, cfg.pii, analyzer)
+    codebook = dataset_codebook(datasets, questions, cfg.pii, analyzer, scanned)
     write_json(codebook, paths["dataset_codebook"])
 
     fallbacks = vardict["summary"]["n_cast_fallback"]
@@ -187,6 +254,48 @@ def build(cfg: Config, sentinels: dict[int, str], analyzer=None) -> dict[str, Pa
         f"{table.num_columns} columns, {fallbacks} kept as text; "
         f"pii {dict(Counter(b['status'] for b in blocks.values()))} -> {out}"
     )
+    names = {q["variable_name"] for q in questions} | set(vardict["variables"])
+    names |= {f"{c['dataset']}.{c['column']}" for c in codebook}
+    return paths, names
+
+
+def write_flow(cfg: Config) -> Path:
+    """Write ``flow.json``: how the project's forms chain through datasets."""
+    forms = {}
+    for form in cfg.forms:
+        contract = parse_contract(cfg.form_raw(form) / "form.xml")
+        forms[form] = (contract, _sources(cfg, form, contract))
+    server = json.loads((cfg.raw_dir / "datasets.json").read_text(encoding="utf-8"))
+    flow = build_flow(
+        forms,
+        server,
+        cfg.server_datasets,
+        cfg.raw_dir / "datasets",
+        {form: cfg.form_raw(form) / "files" for form in cfg.forms},
+    )
+    path = cfg.out_dir / "flow.json"
+    write_json(flow, path)
+    print(
+        "[flow] "
+        + "; ".join(f"{f['form_id']} stage {f['stage']}" for f in flow["forms"])
+        + f" -> {path}"
+    )
+    return path
+
+
+def build(
+    cfg: Config, sentinels: dict[int, str], analyzer=None
+) -> dict[str, dict[str, Path]]:
+    """Build every form's outputs and ``flow.json``; return each form's paths."""
+    if analyzer is None and not cfg.pii.no_personal_data:
+        analyzer = build_analyzer(cfg.pii)
+    scanned: dict[tuple[Path, str], dict] = {}
+    paths, known = {}, set()
+    for form in cfg.forms:
+        paths[form], names = build_form(cfg, form, sentinels, analyzer, scanned)
+        known |= names
+    warn_unknown_names(cfg.pii, known)
+    write_flow(cfg)
     return paths
 
 

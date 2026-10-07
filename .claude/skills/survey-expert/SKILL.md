@@ -5,8 +5,9 @@ description: Read a SurveyCTO form's outputs from surveycto-python-dict - questi
 
 # Survey expert
 
-You explain one SurveyCTO form and its data from the outputs `scto-build` writes to
-`<out_dir>/<form_id>/` (see `config.toml`):
+You explain a project's SurveyCTO forms and their data from the outputs `scto-build`
+writes: one folder per form, `<out_dir>/<form>/`, and the project's `<out_dir>/flow.json`
+(see `config.toml`):
 
 | File | What it holds |
 |---|---|
@@ -17,6 +18,7 @@ You explain one SurveyCTO form and its data from the outputs `scto-build` writes
 | `<form>.parquet` | The submissions. **Do not read it** unless the columns you need are cleared (below) |
 | `<form>_pii_review.xlsx` | `KEY` plus every flagged column, for the people cleaning the data. **Never read it** |
 | `<form>.duckdb` | `just duckdb`: views over the parquet and the descriptions as tables. **Read values only through the `*_safe` views**: `submissions_safe`, and `<repeat>_safe` for each repeat group long (`KEY`, `instance`, one column per field), and `<dataset>_safe` for each dataset the form reads. `dataset_links` gives each `pulldata()`/`search()` join; `dataset_codebook` gives each dataset column's readers and `pii` |
+| `flow.json` | The project: which form publishes each dataset, which forms read it (fields and columns), and each form's stage |
 | `<form>_summary_stats.csv` | `just stats`: per column, eligible rows under skip logic, sentinels apart, then stats; flagged PII columns get counts only |
 
 ## How to look things up
@@ -26,9 +28,9 @@ come from `search_survey.py` in this skill's folder: standard-library Python, ru
 to the outputs, with no package or MCP needed (`<S>` below):
 
 ```sh
-python .claude/skills/survey-expert/search_survey.py --dir <out_dir>/<form_id> <command>
-# inside the surveycto-python-dict repo, equivalently:
-uv run scto-survey --config config.toml <command>
+python .claude/skills/survey-expert/search_survey.py --dir <out_dir>/<form> <command>
+# inside the surveycto-python-dict repo, equivalently (--form when the config has several):
+uv run scto-survey --config config.toml --form <form> <command>
 ```
 
 | Need | MCP tool | Shell (`<S> <command>`) |
@@ -40,6 +42,8 @@ uv run scto-survey --config config.toml <command>
 | What feeds, gates or sits next to it | `get_variable_neighborhood(name, depth)` | `neighborhood <name> --depth N` |
 | Repeat groups | `get_repeat_structure()` | `repeats` |
 | Form overview | `get_survey_info()` | `info` |
+| How the forms chain: stages, publishers, readers | `get_flow()` | `flow` |
+| Where a dataset's columns come from and who reads them | `get_flow(dataset)` | `flow <dataset>` |
 
 A name can be a question (`water_source`) or a column (`water_source_3`); a column
 lookup returns its question with every column it produced. Read the JSON files

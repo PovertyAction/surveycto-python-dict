@@ -9,8 +9,8 @@ submissions:
   by ``KEY`` and ``instance`` (``instance_1``, ``instance_2``, ... when nested). A
   column keeps its wide name without the instance suffix: ``score_3`` -> ``score``.
 - ``<repeat>_safe``: the same, limited to cleared columns.
-- ``<dataset>``: each server dataset or attached CSV the form reads, from
-  ``raw/datasets/``, every column as text, with ``row`` (1 = first data row).
+- ``<dataset>``: each server dataset or attached CSV the form reads, named as the
+  form names it, every column as text, with ``row`` (1 = first data row).
 - ``<dataset>_safe``: ``row`` plus the dataset's whitelisted columns.
 
 Agents read values only through the ``*_safe`` views. That is a convention, like the
@@ -117,7 +117,10 @@ _DESCRIPTIONS = {
 
 
 def write_database(
-    form_dir: Path, form_id: str, dataset_keys: dict[str, list[str]]
+    form_dir: Path,
+    form_id: str,
+    datasets: dict[str, Path],
+    dataset_keys: dict[str, list[str]],
 ) -> Path:
     """Write ``<form>.duckdb`` next to the outputs, replacing any earlier one."""
     form_dir = Path(form_dir)
@@ -199,8 +202,7 @@ def write_database(
     codebook = json.loads(
         (form_dir / f"{form_id}_dataset_codebook.json").read_text(encoding="utf-8")
     )
-    for csv_path in sorted((form_dir / "raw" / "datasets").glob("*.csv")):
-        dataset = csv_path.stem
+    for dataset, csv_path in sorted(datasets.items()):
         source = _literal(csv_path.resolve().as_posix())
         con.execute(
             f"CREATE VIEW {_ident(dataset)} AS SELECT row_number() OVER () AS row, * "
@@ -429,10 +431,13 @@ def main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-duckdb``."""
     import argparse
 
-    from surveycto_python_dict.cli import load_config
+    from surveycto_python_dict.cli import form_datasets, load_config
 
     parser = argparse.ArgumentParser(prog="scto-duckdb")
     parser.add_argument("--config", type=Path, default=Path("config.toml"))
     cfg = load_config(parser.parse_args(argv).config)
-    path = write_database(cfg.form_dir, cfg.form_id, cfg.dataset_keys)
-    print(f"[duckdb] {cfg.form_id} -> {path}")
+    for form in cfg.forms:
+        path = write_database(
+            cfg.form_dir(form), form, form_datasets(cfg, form), cfg.dataset_keys
+        )
+        print(f"[duckdb] {form} -> {path}")

@@ -7,7 +7,7 @@ import zipfile
 import pyarrow.parquet as pq
 import pytest
 import responses
-from farm_form import ROWS, SENTINELS, XML
+from farm_form import FORM_LIST, ROWS, SENTINELS, XML, write_pull
 from openpyxl import load_workbook
 
 from surveycto_python_dict.api import Client, MissingEnvVar
@@ -18,11 +18,6 @@ BASE = "https://acme.surveycto.com"
 _ENCRYPTED_XML = XML.replace(
     "<model>", '<model><submission base64RsaPublicKey="MIIBfake"/>'
 )
-_FORM_LIST = b"""<?xml version="1.0"?>
-<xforms xmlns="http://openrosa.org/xforms/xformsList">
-  <xform><formID>farm</formID><version>3</version><datasets></datasets>
-    <files>{"files":[{"filename":"prev_round.csv","timestamp":1}]}</files></xform>
-</xforms>"""
 _MANIFEST = b"""<?xml version="1.0"?>
 <manifest xmlns="http://openrosa.org/xforms/xformsManifest">
   <mediaFile><filename>prev_round.zip</filename><hash>md5:x</hash>
@@ -32,7 +27,7 @@ _MANIFEST = b"""<?xml version="1.0"?>
 
 def _config(tmp_path, extra=""):
     path = tmp_path / "config.toml"
-    path.write_text(f'form_id = "farm"\nout_dir = "out"\n{extra}', encoding="utf-8")
+    path.write_text(f'forms = ["farm"]\nout_dir = "out"\n{extra}', encoding="utf-8")
     return path
 
 
@@ -41,9 +36,18 @@ def _config(tmp_path, extra=""):
 
 def test_load_config_defaults_and_relative_out_dir(tmp_path):
     cfg = load_config(_config(tmp_path))
-    assert cfg.form_id == "farm"
+    assert cfg.forms == ("farm",)
+    assert cfg.server_datasets == ()
     assert cfg.out_dir == tmp_path / "out"
+    assert cfg.form_raw("farm") == tmp_path / "out" / "farm" / "raw"
     assert cfg.pii.score_threshold == 0.4
+
+
+def test_load_config_without_forms_raises(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('forms = []\nout_dir = "out"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="forms"):
+        load_config(path)
 
 
 def test_load_config_pii(tmp_path):
@@ -91,8 +95,18 @@ def test_load_config_unknown_key_raises(tmp_path, extra):
 # -- pull --------------------------------------------------------------------------
 
 
+_SERVER_DATASETS = {
+    "total": 1,
+    "limit": 20,
+    "data": [{"id": "households", "title": "Households", "uniqueRecordField": "hhid"}],
+    "nextCursor": None,
+}
+
+
 def _mock_server(xml: str, wide_method: str):
-    responses.get(f"{BASE}/formList", body=_FORM_LIST)
+    responses.get(f"{BASE}/formList", body=FORM_LIST)
+    responses.get(f"{BASE}/api/v2/datasets", json=_SERVER_DATASETS)
+    responses.get(f"{BASE}/api/v2/datasets/data/csv/households", body="hhid\n1\n")
     responses.get(f"{BASE}/forms/farm/xml", body=xml.encode())
     responses.get(f"{BASE}/forms/farm/manifest", body=_MANIFEST)
     zipped = io.BytesIO()
@@ -108,20 +122,49 @@ def test_pull_encrypted_form_uses_the_key(tmp_path, monkeypatch):
     key.write_bytes(b"KEY")
     monkeypatch.setenv("SCTO_KEY_PATH", str(key))
     _mock_server(_ENCRYPTED_XML, responses.POST)
-    raw = pull(load_config(_config(tmp_path)), Client("acme", "u", "p"))
-    assert raw == tmp_path / "out" / "farm" / "raw"
-    assert (raw / "form.xml").read_text(encoding="utf-8") == _ENCRYPTED_XML
-    assert json.loads((raw / "wide.json").read_text(encoding="utf-8")) == ROWS
-    assert (raw / "datasets" / "prev_round.csv").read_bytes() == b"phone,owner\n"
+    cfg = load_config(_config(tmp_path))
+    raw = pull(cfg, Client("acme", "u", "p"))
+    assert raw == tmp_path / "out" / "raw"
+    form_raw = cfg.form_raw("farm")
+    assert (form_raw / "form.xml").read_text(encoding="utf-8") == _ENCRYPTED_XML
+    assert json.loads((form_raw / "wide.json").read_text(encoding="utf-8")) == ROWS
+    assert (form_raw / "files" / "prev_round.csv").read_bytes() == b"phone,owner\n"
     assert (raw / "formList.xml").exists()
+    assert (
+        json.loads((raw / "datasets.json").read_text(encoding="utf-8"))
+        == (_SERVER_DATASETS["data"])
+    )
 
 
 @responses.activate
 def test_pull_unencrypted_form_needs_no_key(tmp_path, monkeypatch):
     monkeypatch.delenv("SCTO_KEY_PATH", raising=False)
     _mock_server(XML, responses.GET)
-    raw = pull(load_config(_config(tmp_path)), Client("acme", "u", "p"))
-    assert json.loads((raw / "wide.json").read_text(encoding="utf-8")) == ROWS
+    cfg = load_config(_config(tmp_path))
+    pull(cfg, Client("acme", "u", "p"))
+    wide = cfg.form_raw("farm") / "wide.json"
+    assert json.loads(wide.read_text(encoding="utf-8")) == ROWS
+
+
+@responses.activate
+def test_pull_listed_server_dataset_comes_once_into_raw(tmp_path, monkeypatch):
+    monkeypatch.delenv("SCTO_KEY_PATH", raising=False)
+    _mock_server(XML, responses.GET)
+    raw = pull(
+        load_config(_config(tmp_path, 'server_datasets = ["households"]\n')),
+        Client("acme", "u", "p"),
+    )
+    assert (raw / "datasets" / "households.csv").read_text(encoding="utf-8") == (
+        "hhid\n1\n"
+    )
+
+
+@responses.activate
+def test_pull_listed_dataset_missing_from_the_server_raises(tmp_path):
+    _mock_server(XML, responses.GET)
+    cfg = load_config(_config(tmp_path, 'server_datasets = ["nope"]\n'))
+    with pytest.raises(ValueError, match="nope"):
+        pull(cfg, Client("acme", "u", "p"))
 
 
 @responses.activate
@@ -138,15 +181,13 @@ def test_pull_encrypted_form_without_key_raises(tmp_path, monkeypatch):
 @pytest.fixture
 def built(tmp_path, analyzer):
     cfg = load_config(_config(tmp_path))
-    raw = cfg.out_dir / "farm" / "raw"
-    raw.mkdir(parents=True)
-    (raw / "form.xml").write_text(XML, encoding="utf-8")
-    (raw / "wide.json").write_text(json.dumps(ROWS), encoding="utf-8")
-    return build(cfg, SENTINELS, analyzer), cfg.out_dir / "farm"
+    write_pull(cfg)
+    return build(cfg, SENTINELS, analyzer)["farm"], cfg.out_dir / "farm"
 
 
 def test_build_writes_every_output(built):
     outputs, form_dir = built
+    assert (form_dir.parent / "flow.json").exists()
     assert {k: p.relative_to(form_dir).as_posix() for k, p in outputs.items()} == {
         "questions": "farm_questions.json",
         "sections": "sections",

@@ -13,6 +13,7 @@ from surveycto_python_dict.pii import (
     PiiConfig,
     build_analyzer,
     classify,
+    warn_unknown_names,
 )
 from surveycto_python_dict.questions import build_questions
 from surveycto_python_dict.xml_contract import parse_contract
@@ -160,10 +161,27 @@ def test_whitelisted_question_covers_its_columns_and_counts_for_lineage(form, an
     assert blocks["tag"] == {"status": "whitelisted", "basis": ["lineage:owner,phone"]}
 
 
-def test_whitelisted_unknown_name_warns_and_continues(form, analyzer):
-    with pytest.warns(UserWarning, match="variable `ghost` cannot be found"):
-        blocks, _ = _classify(form, analyzer, PiiConfig(whitelist=("ghost",)))
-    assert blocks["owner"]["status"] == "may_contain_pii"
+def test_unknown_name_warns(form, analyzer):
+    config = PiiConfig(whitelist=("ghost", "owner"), blacklist=("roster.ghost",))
+    with pytest.warns(UserWarning) as caught:
+        warn_unknown_names(config, {"owner"})
+    assert [str(w.message) for w in caught] == [
+        "`ghost` cannot be found",
+        "`roster.ghost` cannot be found",
+    ]
+
+
+def test_no_personal_data_keeps_blacklist_and_device_without_scanning(form):
+    config = PiiConfig(no_personal_data=True, blacklist=("phone",))
+    blocks, _ = _classify(form, None, config)
+    assert blocks["phone"] == {"status": "contains_pii", "basis": ["reviewed"]}
+    assert blocks["deviceid"] == {
+        "status": "contains_pii",
+        "basis": ["device:deviceid"],
+    }
+    assert blocks["owner"] == {"status": "whitelisted", "basis": ["project"]}
+    flagged = {c for c, b in blocks.items() if b["status"] == "contains_pii"}
+    assert flagged == {"phone", "deviceid"}
 
 
 def test_missing_spacy_model_raises():

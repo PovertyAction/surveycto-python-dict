@@ -347,11 +347,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--config", type=Path, default=Path("config.toml"))
     cfg = load_config(parser.parse_args(argv).config)
     load_dotenv()
-    rows = summary_stats(cfg.form_dir, cfg.form_id, env_sentinels())
-    path = write_csv(rows, cfg.form_dir / f"{cfg.form_id}_summary_stats.csv")
-    unevaluated = sum(1 for r in rows if not r["eligibility_evaluated"])
-    flagged = sum(1 for r in rows if r["answered_when_skipped"])
-    print(
-        f"[stats] {cfg.form_id}: {len(rows)} columns, {unevaluated} with relevance not "
-        f"evaluated, {flagged} answered where skip logic says skipped -> {path}"
-    )
+    sentinels = env_sentinels()
+    for form in cfg.forms:
+        rows = summary_stats(cfg.form_dir(form), form, sentinels)
+        path = write_csv(rows, cfg.form_dir(form) / f"{form}_summary_stats.csv")
+        unevaluated = sum(1 for r in rows if not r["eligibility_evaluated"])
+        flagged = sum(1 for r in rows if r["answered_when_skipped"])
+        print(
+            f"[stats] {form}: {len(rows)} columns, {unevaluated} with relevance not "
+            f"evaluated, {flagged} answered where skip logic says skipped -> {path}"
+        )

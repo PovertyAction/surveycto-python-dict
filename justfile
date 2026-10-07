@@ -13,11 +13,11 @@ default:
 setup:
     uv sync
 
-[doc("Download the form XML and the submissions (wide JSON) into <out_dir>/<form_id>/raw")]
+[doc("Download every form's XML and submissions (wide JSON) and every server dataset into <out_dir>")]
 pull cfg=config:
     uv run scto-pull --config {{ cfg }}
 
-[doc("Build questions.json, sections, parquet, dictionary, graph, PII review and dataset codebook from the raw pull")]
+[doc("Build each form's questions.json, sections, parquet, dictionary, graph, PII review and dataset codebook, then flow.json")]
 build cfg=config:
     uv run scto-build --config {{ cfg }}
 
@@ -39,9 +39,9 @@ codebook cfg=config:
 duckdb cfg=config: (stats cfg)
     uv run scto-duckdb --config {{ cfg }}
 
-[doc("Serve the built outputs to a local agent over stdio (survey-expert MCP)")]
-mcp cfg=config:
-    uv run scto-mcp --config {{ cfg }}
+[doc("Serve a form's built outputs to a local agent over stdio (survey-expert MCP); `just mcp <cfg> --form <form>` when the config has several")]
+mcp cfg=config *args:
+    uv run scto-mcp --config {{ cfg }} {{ args }}
 
 [doc("Ask about the form from the shell, e.g. `just survey var age`, `just survey db`; another form: `just config=data/x.toml survey info`")]
 survey *args:

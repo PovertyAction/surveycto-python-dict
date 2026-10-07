@@ -1,10 +1,9 @@
 """Stage 7: the survey store behind the MCP server, and the server's tool list."""
 
 import asyncio
-import json
 
 import pytest
-from farm_form import ROWS, SENTINELS, XML
+from farm_form import SENTINELS, write_pull
 
 from surveycto_python_dict.cli import build, load_config
 from surveycto_python_dict.survey import SurveyStore
@@ -13,18 +12,13 @@ from surveycto_python_dict.survey import SurveyStore
 @pytest.fixture
 def store(tmp_path, analyzer):
     config = tmp_path / "config.toml"
-    config.write_text('form_id = "farm"\nout_dir = "out"\n', encoding="utf-8")
+    config.write_text('forms = ["farm"]\nout_dir = "out"\n', encoding="utf-8")
     cfg = load_config(config)
-    cfg.raw_dir.mkdir(parents=True)
-    (cfg.raw_dir / "form.xml").write_text(XML, encoding="utf-8")
-    (cfg.raw_dir / "wide.json").write_text(json.dumps(ROWS), encoding="utf-8")
-    (cfg.raw_dir / "datasets").mkdir()
-    (cfg.raw_dir / "datasets" / "prev_round.csv").write_text(
-        "phone,owner\n3000000000,Fictional Owner\n3000000001,Fictional Owner\n",
-        encoding="utf-8",
+    write_pull(
+        cfg, "phone,owner\n3000000000,Fictional Owner\n3000000001,Fictional Owner\n"
     )
     build(cfg, SENTINELS, analyzer)
-    return SurveyStore(cfg.form_dir, "farm")
+    return SurveyStore(cfg.form_dir("farm"), "farm")
 
 
 def test_lookup_question_shows_text_logic_columns_and_pii(store):
@@ -116,6 +110,7 @@ def test_server_registers_the_tools(store):
         "get_variable_neighborhood",
         "get_repeat_structure",
         "get_datasets",
+        "get_flow",
         "get_structure_db",
     }
     assert "pii.status" in server.instructions
@@ -146,6 +141,26 @@ def test_survey_cli_from_a_directory_detects_the_form(store, capsys):
 
     main(["--dir", str(store.form_dir), "info"])
     assert "submissions: 2" in capsys.readouterr().out
+
+
+def test_survey_cli_flow_reads_the_project_flow(store, capsys):
+    from surveycto_python_dict.survey import main
+
+    main(["--dir", str(store.form_dir), "flow"])
+    out = capsys.readouterr().out
+    assert "Stage 1:\n  farm" in out
+    assert "farm/prev_round.csv: 2 rows, key -; attached file; read by farm" in out
+
+
+def test_survey_cli_config_with_several_forms_needs_form(tmp_path):
+    from surveycto_python_dict.survey import main
+
+    config = tmp_path / "config.toml"
+    config.write_text('forms = ["farm", "visit"]\nout_dir = "out"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="--form"):
+        main(["--config", str(config), "info"])
+    with pytest.raises(ValueError, match="nope"):
+        main(["--config", str(config), "--form", "nope", "info"])
 
 
 def test_survey_cli_directory_without_outputs_raises(tmp_path):

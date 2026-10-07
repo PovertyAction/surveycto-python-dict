@@ -4,37 +4,35 @@ import json
 
 import duckdb
 import pytest
-from farm_form import ROWS, SENTINELS, XML
+from farm_form import SENTINELS, write_pull
 
 from surveycto_python_dict.cli import build, load_config
 from surveycto_python_dict.database import write_database
 from surveycto_python_dict.stats import summary_stats, write_csv
 
 
+def _datasets(form_dir):
+    return {"prev_round": form_dir / "raw" / "files" / "prev_round.csv"}
+
+
 @pytest.fixture
 def database(tmp_path, analyzer):
     config = tmp_path / "config.toml"
     config.write_text(
-        'form_id = "farm"\nout_dir = "out"\n\n[pii]\n'
+        'forms = ["farm"]\nout_dir = "out"\n\n[pii]\n'
         'whitelist = ["prev_round.plot_code"]\nblacklist = ["prev_round.owner"]\n',
         encoding="utf-8",
     )
     cfg = load_config(config)
-    cfg.raw_dir.mkdir(parents=True)
-    (cfg.raw_dir / "form.xml").write_text(XML, encoding="utf-8")
-    (cfg.raw_dir / "wide.json").write_text(json.dumps(ROWS), encoding="utf-8")
-    (cfg.raw_dir / "datasets").mkdir()
-    (cfg.raw_dir / "datasets" / "prev_round.csv").write_text(
-        "phone,owner,plot_code\n3000000000,Fictional Owner,007\n", encoding="utf-8"
-    )
+    write_pull(cfg, "phone,owner,plot_code\n3000000000,Fictional Owner,007\n")
     build(cfg, SENTINELS, analyzer)
+    form_dir = cfg.form_dir("farm")
     write_csv(
-        summary_stats(cfg.form_dir, "farm", SENTINELS),
-        cfg.form_dir / "farm_summary_stats.csv",
+        summary_stats(form_dir, "farm", SENTINELS), form_dir / "farm_summary_stats.csv"
     )
-    path = write_database(cfg.form_dir, "farm", cfg.dataset_keys)
+    path = write_database(form_dir, "farm", _datasets(form_dir), cfg.dataset_keys)
     con = duckdb.connect(str(path), read_only=True)
-    yield con, cfg.form_dir
+    yield con, form_dir
     con.close()
 
 
@@ -126,7 +124,7 @@ def test_choices_and_edges(database):
 def test_rebuild_replaces_the_file(database):
     con, form_dir = database
     con.close()
-    write_database(form_dir, "farm", {})
+    write_database(form_dir, "farm", _datasets(form_dir), {})
     again = duckdb.connect(str(form_dir / "farm.duckdb"), read_only=True)
     assert again.sql("SELECT count(*) FROM submissions").fetchone() == (2,)
     again.close()
@@ -204,18 +202,18 @@ def test_structure_comes_from_the_finished_database(database):
 def test_declared_dataset_key_is_checked_and_named(database):
     con, form_dir = database
     con.close()
-    write_database(form_dir, "farm", {"prev_round": ["phone"]})
+    write_database(form_dir, "farm", _datasets(form_dir), {"prev_round": ["phone"]})
     objects = json.loads((form_dir / "farm_db.json").read_text(encoding="utf-8"))
     prev = next(o for o in objects if o["name"] == "prev_round")
     assert prev["key"] == ["phone"]
     assert prev["grain"] == "one row per phone"
-    (form_dir / "raw" / "datasets" / "prev_round.csv").write_text(
+    _datasets(form_dir)["prev_round"].write_text(
         "phone,owner,plot_code\n3000000000,Fictional Owner,007\n"
         "3000000001,Fictional Owner,008\n",
         encoding="utf-8",
     )
     with pytest.raises(AssertionError, match="repeats"):
-        write_database(form_dir, "farm", {"prev_round": ["owner"]})
+        write_database(form_dir, "farm", _datasets(form_dir), {"prev_round": ["owner"]})
 
 
 def test_a_match_column_missing_from_the_dataset_is_reported(database):
@@ -226,7 +224,7 @@ def test_a_match_column_missing_from_the_dataset_is_reported(database):
     codebook_path.write_text(
         json.dumps([c for c in codebook if c["column"] != "phone"]), encoding="utf-8"
     )
-    write_database(form_dir, "farm", {})
+    write_database(form_dir, "farm", _datasets(form_dir), {})
     objects = json.loads((form_dir / "farm_db.json").read_text(encoding="utf-8"))
     prev = next(o for o in objects if o["name"] == "prev_round")
     assert prev["joins"] == [

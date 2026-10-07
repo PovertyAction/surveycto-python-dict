@@ -4,7 +4,7 @@ import csv
 import json
 
 import pytest
-from farm_form import ROWS, SENTINELS, XML
+from farm_form import ROWS, SENTINELS, XML, write_pull
 
 from surveycto_python_dict.cli import build, load_config
 from surveycto_python_dict.stats import COLUMNS, summary_stats, write_csv
@@ -12,11 +12,9 @@ from surveycto_python_dict.stats import COLUMNS, summary_stats, write_csv
 
 def _build(tmp_path, analyzer, xml=XML, rows=ROWS):
     config = tmp_path / "config.toml"
-    config.write_text('form_id = "farm"\nout_dir = "out"\n', encoding="utf-8")
+    config.write_text('forms = ["farm"]\nout_dir = "out"\n', encoding="utf-8")
     cfg = load_config(config)
-    cfg.raw_dir.mkdir(parents=True)
-    (cfg.raw_dir / "form.xml").write_text(xml, encoding="utf-8")
-    (cfg.raw_dir / "wide.json").write_text(json.dumps(rows), encoding="utf-8")
+    write_pull(cfg, xml=xml, rows=rows)
     build(cfg, SENTINELS, analyzer)
     return cfg
 
@@ -25,7 +23,8 @@ def _build(tmp_path, analyzer, xml=XML, rows=ROWS):
 def stats(tmp_path, analyzer):
     cfg = _build(tmp_path, analyzer)
     return {
-        row["variable"]: row for row in summary_stats(cfg.form_dir, "farm", SENTINELS)
+        row["variable"]: row
+        for row in summary_stats(cfg.form_dir("farm"), "farm", SENTINELS)
     }
 
 
@@ -97,9 +96,9 @@ def test_unsupported_relevance_falls_back_to_all_rows(tmp_path, analyzer):
     )
     assert xml != XML
     cfg = _build(tmp_path, analyzer, xml)
-    area = {r["variable"]: r for r in summary_stats(cfg.form_dir, "farm", SENTINELS)}[
-        "area"
-    ]
+    area = {
+        r["variable"]: r for r in summary_stats(cfg.form_dir("farm"), "farm", SENTINELS)
+    }["area"]
     assert area["eligibility_evaluated"] is False
     assert "today()" in area["eligibility_note"]
     assert area["eligible"] == 2
@@ -108,7 +107,8 @@ def test_unsupported_relevance_falls_back_to_all_rows(tmp_path, analyzer):
 def test_csv_has_every_column_and_no_flagged_value(tmp_path, analyzer):
     cfg = _build(tmp_path, analyzer)
     path = write_csv(
-        summary_stats(cfg.form_dir, "farm", SENTINELS), cfg.form_dir / "s.csv"
+        summary_stats(cfg.form_dir("farm"), "farm", SENTINELS),
+        cfg.form_dir("farm") / "s.csv",
     )
     with path.open(encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
@@ -116,7 +116,9 @@ def test_csv_has_every_column_and_no_flagged_value(tmp_path, analyzer):
         rows = list(reader)
     assert len(rows) == len(
         json.loads(
-            (cfg.form_dir / "farm_variable_dictionary.json").read_text(encoding="utf-8")
+            (cfg.form_dir("farm") / "farm_variable_dictionary.json").read_text(
+                encoding="utf-8"
+            )
         )["variables"]
     )
     text = path.read_text(encoding="utf-8-sig")
@@ -135,7 +137,9 @@ _ONE_PLOT = {
 
 
 def _by_name(cfg):
-    return {r["variable"]: r for r in summary_stats(cfg.form_dir, "farm", SENTINELS)}
+    return {
+        r["variable"]: r for r in summary_stats(cfg.form_dir("farm"), "farm", SENTINELS)
+    }
 
 
 def test_repeat_instance_beyond_the_count_is_not_eligible(tmp_path, analyzer):

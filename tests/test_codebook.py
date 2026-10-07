@@ -1,10 +1,8 @@
 """PI-facing codebook: Variables and Summary stats sheets."""
 
-import json
-
 import openpyxl
 import pytest
-from farm_form import ROWS, SENTINELS, XML
+from farm_form import SENTINELS, write_pull
 
 from surveycto_python_dict.cli import build, load_config
 from surveycto_python_dict.codebook import plain_label, write_codebook
@@ -13,14 +11,12 @@ from surveycto_python_dict.codebook import plain_label, write_codebook
 @pytest.fixture
 def workbook(tmp_path, analyzer):
     config = tmp_path / "config.toml"
-    config.write_text('form_id = "farm"\nout_dir = "out"\n', encoding="utf-8")
+    config.write_text('forms = ["farm"]\nout_dir = "out"\n', encoding="utf-8")
     cfg = load_config(config)
-    cfg.raw_dir.mkdir(parents=True)
-    (cfg.raw_dir / "form.xml").write_text(XML, encoding="utf-8")
-    (cfg.raw_dir / "wide.json").write_text(json.dumps(ROWS), encoding="utf-8")
+    write_pull(cfg)
     build(cfg, SENTINELS, analyzer)
-    path = write_codebook(cfg.form_dir, "farm", SENTINELS)
-    assert path == cfg.form_dir / "farm_codebook.xlsx"
+    path = write_codebook(cfg.form_dir("farm"), "farm", SENTINELS)
+    assert path == cfg.form_dir("farm") / "farm_codebook.xlsx"
     return openpyxl.load_workbook(path)
 
 

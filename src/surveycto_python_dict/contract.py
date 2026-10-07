@@ -33,6 +33,8 @@ class DatasetSource:
 
     kind: str  # "server_dataset" | "form_file"
     ref: str  # dataset id | attached filename
+    # False: the XML reads a server dataset the form does not attach on the server.
+    attached: bool = True
 
 
 def _ln(tag: str) -> str:
@@ -69,9 +71,11 @@ def search_universe(node: Node, csv_path: Path) -> list[dict]:
     """Return a ``search()`` select's choices from its dataset, one per value.
 
     The select's one ``<item>`` whose value is a dataset column names the value and
-    label columns; any other item is a literal choice, kept after the dataset's. A
-    literal ``matches`` filter keeps the matching rows; a filter on a field keeps
-    every row, since it is decided per submission.
+    label columns; any other item is a literal choice, kept after the dataset's. The
+    first column/text pair is searched with the mode (``matches``: equal,
+    ``contains``: a substring); a second pair keeps the rows whose column equals its
+    value, whatever the mode. A pair whose value is a field keeps every row, since it
+    is decided per submission.
     """
     with open(csv_path, encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
@@ -79,34 +83,48 @@ def search_universe(node: Node, csv_path: Path) -> list[dict]:
     (columns,) = [i for i in node.choice_items if i["value"] in reader.fieldnames]
     literals = [i for i in node.choice_items if i is not columns]
     source = node.data_source
-    static = {c: v for c, v in source["filter"].items() if v is not None}
-    if static and source["mode"] != "matches":
-        raise ValueError(
-            f"{node.path}: search() mode {source['mode']!r} with a literal filter"
-        )
+    tests = {"matches": str.__eq__, "contains": str.__contains__}
+    if source["filter"] and source["mode"] not in tests:
+        raise ValueError(f"{node.path}: search() mode {source['mode']!r}")
+    pairs = [
+        (column, value, tests[source["mode"]] if i == 0 else str.__eq__)
+        for i, (column, value) in enumerate(source["filter"].items())
+        if value is not None
+    ]
     choices: dict[str, str] = {}
     for row in rows:
-        if all(row[c] == v for c, v in static.items()):
+        if all(test(row[column], value) for column, value, test in pairs):
             choices.setdefault(row[columns["value"]], row[columns["label"]])
     return [{"value": v, "label": label} for v, label in choices.items()] + literals
 
 
 def resolve_datasets(
-    contract: FormContract, entry: FormEntry
+    contract: FormContract, entry: FormEntry, server_ids: set[str]
 ) -> dict[str, DatasetSource]:
     """Map every dataset named in a ``pulldata()``/``search()`` to where it is pulled from.
 
-    The compiled XML lowercases a dataset name while the attached file keeps its case
-    (``search('prices')`` reads ``Prices.csv``), so files match case-insensitively.
+    Names match case-insensitively: the XML may spell a dataset ``hhRoster`` while the
+    server's id is ``hhroster``, and an attached file keeps its own case
+    (``search('prices')`` reads ``Prices.csv``). A dataset the form attaches comes
+    first, then an attached file, then any dataset in ``server_ids`` (``attached`` is
+    False: the form reads it without attaching it).
     """
     names = {n.data_source["dataset"] for n in contract.nodes.values() if n.data_source}
+
+    def match(name: str, candidates) -> list[str]:
+        return [c for c in candidates if c.lower() == name.lower()]
+
     resolved = {}
     for name in sorted(names):
-        files = [f for f in entry.filenames if f.lower() == f"{name}.csv".lower()]
-        if name in entry.dataset_ids:
-            resolved[name] = DatasetSource("server_dataset", name)
+        attached = match(name, entry.dataset_ids)
+        files = match(f"{name}.csv", entry.filenames)
+        on_server = match(name, server_ids)
+        if len(attached) == 1:
+            resolved[name] = DatasetSource("server_dataset", attached[0])
         elif len(files) == 1:
             resolved[name] = DatasetSource("form_file", files[0])
+        elif len(on_server) == 1:
+            resolved[name] = DatasetSource("server_dataset", on_server[0], False)
         else:
             raise UnresolvedDataset(
                 f"dataset {name!r} is referenced by form {entry.form_id!r} but is neither "

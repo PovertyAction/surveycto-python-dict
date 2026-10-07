@@ -10,11 +10,12 @@ from surveycto_python_dict.xml_contract import parse_contract
 _XML = """<?xml version="1.0"?>
 <h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml">
   <h:head><model>
-    <instance><shop id="shop" version="1"><size/><zone/><town/><buyer/></shop></instance>
+    <instance><shop id="shop" version="1"><size/><zone/><town/><buyer/><north/></shop></instance>
     <bind nodeset="/shop/size" type="select1"/>
     <bind nodeset="/shop/zone" type="select1"/>
     <bind nodeset="/shop/town" type="select1"/>
     <bind nodeset="/shop/buyer" type="select1"/>
+    <bind nodeset="/shop/north" type="select1"/>
   </model></h:head>
   <h:body>
     <select1 ref="/shop/size" appearance="search('sizes')"><label>Size</label>
@@ -29,6 +30,9 @@ _XML = """<?xml version="1.0"?>
     </select1>
     <select1 ref="/shop/buyer" appearance="search('buyers', 'matches', 'zone_code',  /shop/zone )"><label>Buyer</label>
       <item><label>buyer_name</label><value>buyer_id</value></item>
+    </select1>
+    <select1 ref="/shop/north" appearance="search('towns', 'contains', 'town_code', '1', 'zone_code', '2')"><label>North</label>
+      <item><label>town_code</label><value>town_code</value></item>
     </select1>
   </h:body>
 </h:html>
@@ -67,7 +71,8 @@ def _screen(form, analyzer, config=PiiConfig()):
     xml, datasets = form
     contract = parse_contract(xml)
     spy = Spy(analyzer)
-    screen_search_choices(contract, datasets, config, spy)
+    files = {p.stem: p for p in datasets.glob("*.csv")}
+    screen_search_choices(contract, files, config, spy)
     return {q["variable_name"]: q for q in build_questions(contract)}, spy
 
 
@@ -85,6 +90,10 @@ def test_universe_keeps_literal_extras_and_applies_literal_filters(form):
     assert [
         c["value"] for c in search_universe(nodes["town"], datasets / "towns.csv")
     ] == ["21", "22"]
+    # contains searches the first pair as a substring; the second pair is exact.
+    assert [
+        c["value"] for c in search_universe(nodes["north"], datasets / "towns.csv")
+    ] == ["21"]
     # A filter on a field is decided per submission: every row is a possible choice.
     assert [
         c["value"] for c in search_universe(nodes["buyer"], datasets / "buyers.csv")

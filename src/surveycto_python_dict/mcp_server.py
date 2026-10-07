@@ -70,6 +70,15 @@ def make_server(store: SurveyStore) -> MCPServer:
         return store.get_structure_db()
 
     @server.tool()
+    def get_flow(dataset: str | None = None) -> str:
+        """Show how the project's forms chain through datasets: stages, publishers, readers.
+
+        With ``dataset``, list its columns: the field each is published from and the
+        fields that read it, across forms.
+        """
+        return store.get_flow(dataset)
+
+    @server.tool()
     def get_datasets() -> str:
         """Describe the datasets the form reads and how their rows join to the form."""
         return store.get_datasets()
@@ -78,8 +87,20 @@ def make_server(store: SurveyStore) -> MCPServer:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Entry point for ``scto-mcp``: serve the form named in ``--config`` over stdio."""
+    """Entry point for ``scto-mcp``: serve one form of ``--config`` over stdio.
+
+    A config with several forms needs ``--form``.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=Path("config.toml"))
-    cfg = load_config(parser.parse_args(argv).config)
-    make_server(SurveyStore(cfg.form_dir, cfg.form_id)).run()
+    parser.add_argument("--form")
+    args = parser.parse_args(argv)
+    cfg = load_config(args.config)
+    form = args.form
+    if form is None:
+        if len(cfg.forms) > 1:
+            raise ValueError(f"the config has several forms; pass --form: {cfg.forms}")
+        (form,) = cfg.forms
+    if form not in cfg.forms:
+        raise ValueError(f"{form!r} is not in the config's forms: {cfg.forms}")
+    make_server(SurveyStore(cfg.form_dir(form), form)).run()

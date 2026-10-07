@@ -151,6 +151,21 @@ def test_pull_dataset(client):
     assert client.pull_dataset("roster") == "id,name\n1,a\n"
 
 
+@responses.activate
+def test_list_datasets_follows_the_cursor(client):
+    responses.get(
+        f"{BASE}/api/v2/datasets",
+        json={"data": [{"id": "b"}], "nextCursor": None},
+        match=[responses.matchers.query_param_matcher({"cursor": "c1"})],
+    )
+    responses.get(
+        f"{BASE}/api/v2/datasets",
+        json={"data": [{"id": "a"}], "nextCursor": "c1"},
+        match=[responses.matchers.query_param_matcher({})],
+    )
+    assert client.list_datasets() == [{"id": "a"}, {"id": "b"}]
+
+
 def _zipped(name: str, content: bytes) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:

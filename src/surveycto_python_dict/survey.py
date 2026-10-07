@@ -84,6 +84,78 @@ def render_structure(form_id: str, objects: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _leaf(path: str) -> str:
+    return path.rsplit("/", 1)[-1]
+
+
+def render_flow(flow: dict, dataset: str | None = None) -> str:
+    """Render ``flow.json``: forms by stage, then each dataset's publisher and readers.
+
+    With ``dataset``, list its columns instead: the field each one is published from
+    and the fields that read it.
+    """
+    datasets = {d["id"]: d for d in flow["datasets"]}
+    if dataset is not None:
+        d = datasets[dataset]
+        lines = [
+            f"{d['id']} ({d['title']}): {d['rows']} rows, key {d['key'] or '-'}, "
+            f"published by {d['published_by'] or 'no project form (external)'}"
+        ]
+        readers: dict[str, list[str]] = {}
+        for r in flow["reads"]:
+            if r["dataset"] != dataset:
+                continue
+            for f in r["fields"]:
+                for column in f["columns"]:
+                    readers.setdefault(column, []).append(
+                        f"{r['form']}.{_leaf(f['field'])} ({f['via']})"
+                    )
+        for column in d["columns"]:
+            source = d["publish_map"].get(column)
+            line = f"  {column}"
+            if source:
+                line += f"  <- {d['published_by']}.{source}"
+            if column in readers:
+                line += f"  -> {', '.join(readers[column])}"
+            lines.append(line)
+        return "\n".join(lines)
+
+    lines = []
+    for stage in sorted({f["stage"] for f in flow["forms"]}):
+        lines.append(f"Stage {stage}:")
+        for f in flow["forms"]:
+            if f["stage"] != stage:
+                continue
+            line = f"  {f['form_id']}"
+            if f["reads_from"]:
+                line += f"  (reads datasets published by {', '.join(f['reads_from'])})"
+            lines.append(line)
+            if f["publishes"]:
+                lines.append(f"    publishes: {', '.join(f['publishes'])}")
+    lines += ["", "Datasets:"]
+    for d in flow["datasets"]:
+        source = (
+            f"published by {d['published_by']}"
+            if d["published_by"]
+            else ("attached file" if d["kind"] == "form_file" else "external")
+        )
+        readers = ", ".join(d["read_by"]) or "no project form"
+        lines.append(
+            f"  {d['id']}: {d['rows']} rows, key {d['key'] or '-'}; {source}; "
+            f"read by {readers}"
+        )
+    unattached = [r for r in flow["reads"] if not r["attached"]]
+    if unattached:
+        lines += ["", "Read without being attached to the form on the server:"]
+        lines += [
+            f"  {r['form']} reads {r['dataset']} ("
+            + ", ".join(_leaf(f["field"]) for f in r["fields"])
+            + ")"
+            for r in unattached
+        ]
+    return "\n".join(lines)
+
+
 class SurveyStore:
     """One form's questions, dictionary and graph."""
 
@@ -355,6 +427,11 @@ class SurveyStore:
         objects = json.loads(path.read_text(encoding="utf-8"))
         return render_structure(self.form_id, objects)
 
+    def get_flow(self, dataset: str | None = None) -> str:
+        """Render the project's ``flow.json``, or one dataset's columns with ``dataset``."""
+        path = self.form_dir.parent / "flow.json"
+        return render_flow(json.loads(path.read_text(encoding="utf-8")), dataset)
+
     def get_survey_info(self) -> str:
         """Summarise the form and its outputs."""
         d, s = self.dataset, self.summary
@@ -373,15 +450,23 @@ class SurveyStore:
         )
 
 
-def _open(config: Path | None, directory: Path) -> SurveyStore:
-    """Open the outputs named by a config file, or the one form found in ``directory``."""
+def _open(config: Path | None, directory: Path, form: str | None) -> SurveyStore:
+    """Open a form's outputs named by a config file, or the one form in ``directory``.
+
+    A config with several forms needs ``form``.
+    """
     if config is not None:
         import tomllib
 
         data = tomllib.loads(config.read_text(encoding="utf-8"))
-        return SurveyStore(
-            config.parent / data["out_dir"] / data["form_id"], data["form_id"]
-        )
+        forms = data["forms"]
+        if form is None:
+            if len(forms) > 1:
+                raise ValueError(f"the config has several forms; pass --form: {forms}")
+            (form,) = forms
+        if form not in forms:
+            raise ValueError(f"{form!r} is not in the config's forms: {forms}")
+        return SurveyStore(config.parent / data["out_dir"] / form, form)
     found = sorted(directory.glob("*_questions.json"))
     if len(found) != 1:
         raise FileNotFoundError(
@@ -396,8 +481,9 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
 
     parser = argparse.ArgumentParser(prog="scto-survey")
     parser.add_argument(
-        "--config", type=Path, help="config.toml naming form_id and out_dir"
+        "--config", type=Path, help="config.toml naming the forms and out_dir"
     )
+    parser.add_argument("--form", help="which form, when the config has several")
     parser.add_argument(
         "--dir",
         type=Path,
@@ -420,10 +506,12 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
     commands.add_parser("info", help="form summary")
     commands.add_parser("datasets", help="datasets the form reads and their joins")
     commands.add_parser("db", help="map of <form>.duckdb: tables, keys and joins")
+    flow = commands.add_parser("flow", help="how the project's forms chain")
+    flow.add_argument("dataset", nargs="?", help="one dataset's columns, end to end")
     args = parser.parse_args(argv)
 
     if store is None:
-        store = _open(args.config, args.dir)
+        store = _open(args.config, args.dir, args.form)
     answer = {
         "var": lambda: store.lookup_variables(args.names),
         "search": lambda: store.search_questions(" ".join(args.query), args.max),
@@ -434,6 +522,7 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
         "info": store.get_survey_info,
         "datasets": store.get_datasets,
         "db": store.get_structure_db,
+        "flow": lambda: store.get_flow(args.dataset),
     }[args.command]()
     print(answer)
 

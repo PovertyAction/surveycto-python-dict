@@ -10,4 +10,5 @@ Base URL: `https://{server}.surveycto.com`, where `{server}` is the bare subdoma
 | Form attachments manifest | `GET /forms/{form_id}/manifest` | OpenRosa manifest XML; one `mediaFile` (`filename`, `hash`, `downloadUrl`) per attachment. |
 | Wide JSON, decrypted | `POST /api/v2/forms/data/wide/json/{form_id}?date=<epoch s>` | Private key as multipart file field `private_key`. `date` = oldest `CompletionDate` to return, in epoch seconds; `date=0` is throttled to once per 300 s, so `date=1` means "all". |
 | Wide JSON, no key | `GET /api/v2/forms/data/wide/json/{form_id}?date=<epoch s>` | On an encrypted form returns only publishable fields plus a fixed set of system columns. |
+| Server dataset list | `GET /api/v2/datasets` | JSON `{total, limit, data, nextCursor}`; one page of `data` per call, the next with `?cursor=<nextCursor>` until it is null. Each entry: `id`, `title`, `discriminator`, `groupId`, `uniqueRecordField`, `fieldNames`, `totalRecords`, dates. |
 | Server dataset | `GET /api/v2/datasets/data/csv/{dataset_id}` | CSV. |

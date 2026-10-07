@@ -177,5 +177,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--config", type=Path, default=Path("config.toml"))
     cfg = load_config(parser.parse_args(argv).config)
     load_dotenv()
-    path = write_codebook(cfg.form_dir, cfg.form_id, env_sentinels())
-    print(f"[codebook] {cfg.form_id} -> {path}")
+    sentinels = env_sentinels()
+    for form in cfg.forms:
+        path = write_codebook(cfg.form_dir(form), form, sentinels)
+        print(f"[codebook] {form} -> {path}")

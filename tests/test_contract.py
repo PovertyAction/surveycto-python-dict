@@ -98,7 +98,7 @@ def test_form_entry_unlisted_form_raises():
 
 def test_resolve_datasets_server_dataset_and_form_file(sources_contract):
     entry = form_entry(_form_list(json.dumps(_DATASETS), json.dumps(_FILES)), "shop")
-    assert resolve_datasets(sources_contract, entry) == {
+    assert resolve_datasets(sources_contract, entry, set()) == {
         "prices": DatasetSource(kind="form_file", ref="prices.csv"),
         "roster": DatasetSource(kind="server_dataset", ref="roster"),
     }
@@ -107,7 +107,22 @@ def test_resolve_datasets_server_dataset_and_form_file(sources_contract):
 def test_resolve_datasets_unresolvable_raises_naming_it(sources_contract):
     entry = form_entry(_form_list("", json.dumps(_FILES)), "shop")
     with pytest.raises(UnresolvedDataset, match="roster"):
-        resolve_datasets(sources_contract, entry)
+        resolve_datasets(sources_contract, entry, set())
+
+
+def test_resolve_datasets_matches_server_ids_ignoring_case(sources_contract):
+    datasets = {"datasets": [{**_DATASETS["datasets"][0], "id": "Roster"}]}
+    entry = form_entry(_form_list(json.dumps(datasets), json.dumps(_FILES)), "shop")
+    assert resolve_datasets(sources_contract, entry, {"Roster"})["roster"] == (
+        DatasetSource(kind="server_dataset", ref="Roster")
+    )
+
+
+def test_resolve_datasets_unattached_server_dataset(sources_contract):
+    entry = form_entry(_form_list("", json.dumps(_FILES)), "shop")
+    assert resolve_datasets(sources_contract, entry, {"roster", "other"})["roster"] == (
+        DatasetSource(kind="server_dataset", ref="roster", attached=False)
+    )
 
 
 _XML_NAMED = """<?xml version="1.0"?>
@@ -138,7 +153,7 @@ def test_resolve_datasets_named_by_field_with_suffix_and_case(tmp_path):
     path.write_text(_XML_NAMED, encoding="utf-8")
     files = {"files": [{"filename": "Prices.csv", "timestamp": 1}]}
     entry = form_entry(_form_list(json.dumps(_DATASETS), json.dumps(files)), "shop")
-    assert resolve_datasets(parse_contract(path), entry) == {
+    assert resolve_datasets(parse_contract(path), entry, set()) == {
         "prices": DatasetSource(kind="form_file", ref="Prices.csv"),
         "roster": DatasetSource(kind="server_dataset", ref="roster"),
     }
@@ -165,7 +180,7 @@ def test_resolve_datasets_none_referenced(tmp_path):
         encoding="utf-8",
     )
     entry = form_entry(_form_list("", json.dumps(_FILES)), "shop")
-    assert resolve_datasets(parse_contract(path), entry) == {}
+    assert resolve_datasets(parse_contract(path), entry, set()) == {}
 
 
 def test_questions_carry_the_dataset_join(sources_contract):
