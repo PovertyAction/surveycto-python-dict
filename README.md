@@ -157,8 +157,11 @@ stdio to a local agent. The form tools take the form's id: `lookup_variable(s)`,
 `search_questions`, `get_choice_list`, `get_gate_chain`, `get_survey_info`,
 `get_variable_neighborhood`, `get_repeat_structure`, `get_datasets`. The project tools
 take none: `get_flow` (the chain, or one dataset's columns end to end) and
-`get_structure_db` (the map of `<project>.duckdb`). It reads only the JSON outputs,
-never the parquet, and shows each column's `pii` status.
+`get_structure_db` (a summary of `<project>.duckdb`, or one schema in full: a form's
+tables with the datasets and cross-form joins it uses). `lookup_variable` follows a
+field that reads a dataset back to the field another form publishes it from, with its
+origin. It reads only the JSON outputs, never the parquet, and shows each column's
+`pii` status.
 
 To connect it to Claude Code, copy `.mcp.json.example` to `.mcp.json` (git-ignored) and
 point `--config` at your config. The `survey-expert` skill

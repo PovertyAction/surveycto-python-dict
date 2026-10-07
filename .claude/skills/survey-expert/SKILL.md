@@ -17,7 +17,7 @@ writes: one folder per form, `<out_dir>/<form>/`, and the project's `<out_dir>/f
 | `<form>_variable_graph.json` | Questions linked by calculation, relevance, constraint and repeat |
 | `<form>.parquet` | The submissions. **Do not read it** unless the columns you need are cleared (below) |
 | `<form>_pii_review.xlsx` | `KEY` plus every flagged column, for the people cleaning the data. **Never read it** |
-| `<out_dir>/<project>.duckdb` | `just duckdb`: one database for the project. A schema per form (`<form>.submissions`, `<form>.<repeat>` long with `KEY` and one `<repeat>_index` per enclosing repeat, and the descriptions as tables), `dataset.<id>` for each dataset once, and `main.forms`, `datasets`, `publishes`, `reads`, `joins` for the chain. **Read values only through the `*_safe` views.** `<form>.dataset_links` gives each `pulldata()`/`search()` match; `main.joins` connects a reader's field to the publisher's field across forms. `get_structure_db` maps it all |
+| `<out_dir>/<project>.duckdb` | `just duckdb`: one database for the project. A schema per form (`<form>.submissions`, `<form>.<repeat>` long with `KEY` and one `<repeat>_index` per enclosing repeat, and the descriptions as tables), `dataset.<id>` for each dataset once, and `main.forms`, `datasets`, `publishes`, `reads`, `joins` for the chain. **Read values only through the `*_safe` views.** `<form>.dataset_links` gives each `pulldata()`/`search()` match; `main.joins` connects a reader's field to the publisher's field across forms. `get_structure_db` summarises it; `get_structure_db(<form>)` maps one schema |
 | `<out_dir>/flow.json`, `flow.md` | The project: which form publishes each dataset, which forms read it (fields and columns), each published column's origin, each form's stage; `flow.md` draws it |
 | `<form>_summary_stats.csv` | `just stats`: per column, eligible rows under skip logic, sentinels apart, then stats; flagged PII columns get counts only |
 
@@ -36,15 +36,17 @@ uv run scto-survey --config config.toml --form <form> <command>
 
 | Need | MCP tool | Shell (`<S> <command>`) |
 |---|---|---|
-| What a question or column is | `lookup_variable(name)` / `lookup_variables(names)` | `var <name> [<name> ...]` |
-| Find questions by words | `search_questions(query)` | `search <words>` |
-| A select's choices | `get_choice_list(name)` | `choices <name>` |
-| Why a question is asked | `get_gate_chain(name)` | `gates <name>` |
-| What feeds, gates or sits next to it | `get_variable_neighborhood(name, depth)` | `neighborhood <name> --depth N` |
-| Repeat groups | `get_repeat_structure()` | `repeats` |
-| Form overview | `get_survey_info()` | `info` |
+| What a question or column is, and where a value read from a dataset comes from | `lookup_variable(form, name)` / `lookup_variables(form, names)` | `var <name> [<name> ...]` |
+| Find questions by words | `search_questions(form, query)` | `search <words>` |
+| A select's choices | `get_choice_list(form, name)` | `choices <name>` |
+| Why a question is asked | `get_gate_chain(form, name)` | `gates <name>` |
+| What feeds, gates or sits next to it | `get_variable_neighborhood(form, name, depth)` | `neighborhood <name> --depth N` |
+| Repeat groups | `get_repeat_structure(form)` | `repeats` |
+| Form overview | `get_survey_info(form)` | `info` |
+| The datasets a form reads and their joins | `get_datasets(form)` | `datasets` |
 | How the forms chain: stages, publishers, readers | `get_flow()` | `flow` |
 | Where a dataset's columns come from and who reads them | `get_flow(dataset)` | `flow <dataset>` |
+| The project database: a summary, then one schema | `get_structure_db()` / `get_structure_db(schema)` | `db` / `db <schema>` |
 
 A name can be a question (`water_source`) or a column (`water_source_3`); a column
 lookup returns its question with every column it produced. Read the JSON files

@@ -251,17 +251,32 @@ def test_structure_comes_from_the_finished_database(database):
         "(many to one: the column is unique in the dataset)"
     ]
 
-    out = SurveyStore(cfg.form_dir("farm"), "farm").get_structure_db()
-    assert out.startswith("-- farmproject.duckdb")
+    store = SurveyStore(cfg.form_dir("farm"), "farm")
+    summary = store.get_structure_db()
+    assert summary.startswith("-- farmproject.duckdb: 18 tables and views in 3 schemas")
+    assert "-- table joins: one row per reader field matched" in summary
+    assert "--   farm/prev_round.csv: one row per CSV row" in summary
+    assert (
+        "-- schema farm: submissions (" in summary
+        and "repeat tables: 1, nested up to 1 deep; description tables: 7" in summary
+    )
+    assert "farm.plot_safe" not in summary
+
+    out = store.get_structure_db("farm")
     assert "-- view farm.plot_safe: one row per instance of the repeat plot" in out
     assert (
         "--   join: farm.plot_safe.KEY = farm.submissions_safe.KEY  (many to one)"
         in out
     )
     assert "-- table farm.dictionary: one row per submissions column" in out
-    assert "-- table joins: one row per reader field matched" in out
+    # The datasets the form joins come with it.
+    assert "-- view dataset.farm/prev_round.csv_safe:" in out
+    with pytest.raises(ValueError, match="no schema 'nope'"):
+        store.get_structure_db("nope")
+
+    # The file on disk keeps every object.
     sql = (cfg.out_dir / "farmproject_db.sql").read_text(encoding="utf-8")
-    assert sql == out + "\n"
+    assert "-- view farm.plot_safe:" in sql and "-- table forms:" in sql
 
 
 def test_declared_dataset_key_is_checked_and_named(database):

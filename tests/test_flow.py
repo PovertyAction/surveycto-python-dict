@@ -6,7 +6,7 @@ import pytest
 
 from surveycto_python_dict.contract import form_entry, resolve_datasets
 from surveycto_python_dict.flow import build_flow
-from surveycto_python_dict.survey import render_flow, render_mermaid
+from surveycto_python_dict.survey import render_flow, render_mermaid, upstream_lines
 from surveycto_python_dict.xml_contract import parse_contract
 
 # listing publishes `households`: hhid and village at the top, plot_size from a repeat.
@@ -241,3 +241,14 @@ def test_every_shape_of_forms_and_datasets(tmp_path, xmls, listed, publishers, s
     assert {d["id"]: d["published_by"] for d in flow["datasets"]} == publishers
     assert {f["form_id"]: f["stage"] for f in flow["forms"]} == stages
     assert render_flow(flow).startswith("Stage 1:")
+
+
+def test_a_read_traces_back_to_the_publishing_field(flow):
+    assert upstream_lines(flow, "visit", "where") == [
+        "Comes from: households.village <- listing.village (entered)",
+        "Comes from: households.hhid <- listing.hhid (entered)",
+    ]
+    assert upstream_lines(flow, "visit", "area") == [
+        "Comes from: zones (external: no project form fills it)"
+    ]
+    assert upstream_lines(flow, "listing", "hhid") == []

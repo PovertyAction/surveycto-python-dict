@@ -84,6 +84,106 @@ def render_structure(project: str, objects: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _schema(name: str) -> str:
+    return name.split(".", 1)[0] if "." in name else "main"
+
+
+def render_structure_summary(project: str, objects: list[dict]) -> str:
+    """Summarise ``<project>_db.json``: the project tables in full, a line per dataset
+    and per form schema.
+    """
+    schemas: dict[str, list[dict]] = {}
+    for o in objects:
+        schemas.setdefault(_schema(o["name"]), []).append(o)
+    lines = [
+        f"-- {project}.duckdb: {len(objects)} tables and views in {len(schemas)} "
+        "schemas. get_structure_db(<schema>) maps one schema in full.",
+        "-- Read values only from the *_safe views; the description tables are open.",
+    ]
+    main = render_structure(project, schemas.pop("main"))
+    lines += ["", "-- schema main: the project, from flow.json"]
+    lines += main.splitlines()[2:]
+    datasets = [
+        o for o in schemas.pop("dataset", []) if not o["name"].endswith("_safe")
+    ]
+    lines += ["", f"-- schema dataset: {len(datasets)} datasets, each with <id>_safe"]
+    lines += [f"--   {o['name'].split('.', 1)[1]}: {o['grain']}" for o in datasets]
+    for schema, members in schemas.items():
+        width = next(
+            len(o["columns"]) for o in members if o["name"].endswith(".submissions")
+        )
+        repeats = [
+            o
+            for o in members
+            if o["kind"] == "view"
+            and len(o["key"]) > 1
+            and not o["name"].endswith("_safe")
+        ]
+        tables = [o for o in members if o["kind"] == "table"]
+        deepest = max((len(o["key"]) - 1 for o in repeats), default=0)
+        lines += [
+            "",
+            f"-- schema {schema}: submissions ({width} columns); repeat tables: "
+            f"{len(repeats)}, nested up to {deepest} deep; description tables: "
+            f"{len(tables)}",
+        ]
+    return "\n".join(lines)
+
+
+def render_structure_schema(project: str, objects: list[dict], schema: str) -> str:
+    """Render one schema of ``<project>_db.json`` in full.
+
+    For a form, add the datasets it joins and its rows of the project's ``joins``.
+    """
+    names = {o["name"] for o in objects}
+    if schema not in {_schema(n) for n in names}:
+        raise ValueError(
+            f"no schema {schema!r}; schemas: {sorted({_schema(n) for n in names})}"
+        )
+    picked = [o for o in objects if _schema(o["name"]) == schema]
+    if schema not in ("main", "dataset"):
+        prefix = f"= {schema}."
+        picked += [
+            o
+            for o in objects
+            if _schema(o["name"]) == "dataset" and any(prefix in j for j in o["joins"])
+        ]
+        joins = next(o for o in objects if o["name"] == "joins")
+        mine = [j for j in joins["joins"] if f"{schema}." in j]
+        if mine:
+            picked.append({**joins, "joins": mine})
+    return render_structure(project, picked)
+
+
+def upstream_lines(flow: dict, form: str, name: str) -> list[str]:
+    """Return where the dataset columns that ``form``'s field ``name`` reads come from."""
+    datasets = {d["id"]: d for d in flow["datasets"]}
+    lines = []
+    for read in flow["reads"]:
+        if read["form"] != form:
+            continue
+        d = datasets[read["dataset"]]
+        for f in read["fields"]:
+            if _leaf(f["field"]) != name:
+                continue
+            if not d["published_by"]:
+                what = "an attached file" if d["kind"] == "form_file" else "external"
+                lines.append(
+                    f"Comes from: {d['id']} ({what}: no project form fills it)"
+                )
+                continue
+            for column in f["columns"]:
+                if column not in d["publish_map"]:
+                    continue
+                origin = d["origins"][column]
+                source = f" from {', '.join(origin['from'])}" if origin["from"] else ""
+                lines.append(
+                    f"Comes from: {d['id']}.{column} <- {d['published_by']}."
+                    f"{d['publish_map'][column]} ({origin['kind']}{source})"
+                )
+    return lines
+
+
 def _leaf(path: str) -> str:
     return path.rsplit("/", 1)[-1]
 
@@ -254,6 +354,10 @@ class SurveyStore:
         self.repeat_of = {n["id"]: n["repeat_group"] for n in self.graph["nodes"]}
         self.dataset_columns = load("dataset_codebook")
         self.review_file = f"{form_id}_pii_review.xlsx"
+        self.project = self.form_dir.parent.name
+        self.flow = json.loads(
+            (self.form_dir.parent / "flow.json").read_text(encoding="utf-8")
+        )
 
     # -- lookups -------------------------------------------------------------------
 
@@ -303,6 +407,7 @@ class SurveyStore:
             )
         if q["data_source"]:
             lines.append(f"Data source: {_source_line(q['data_source'])}")
+            lines += upstream_lines(self.flow, self.form_id, q["variable_name"])
         if q["publishable"]:
             lines.append("Publishable: yes")
         columns = self.columns.get(q["variable_name"], [])
@@ -450,13 +555,12 @@ class SurveyStore:
             by_dataset.setdefault(column["dataset"], []).append(column)
         if not by_dataset:
             return "The form reads no datasets."
-        flow = json.loads((self.form_dir.parent / "flow.json").read_text("utf-8"))
         id_of = {
             r["name_in_form"]: r["dataset"]
-            for r in flow["reads"]
+            for r in self.flow["reads"]
             if r["form"] == self.form_id
         }
-        project = self.form_dir.parent.name
+        project = self.project
         blocks = []
         for dataset, columns in by_dataset.items():
             n_rows = columns[0]["rows"]
@@ -506,17 +610,17 @@ class SurveyStore:
             blocks.append("\n".join(lines))
         return "\n\n".join(blocks)
 
-    def get_structure_db(self) -> str:
-        """Map ``<project>.duckdb``: each object, what one row is, its key and joins."""
-        project = self.form_dir.parent.name
-        path = self.form_dir.parent / f"{project}_db.json"
+    def get_structure_db(self, schema: str | None = None) -> str:
+        """Map ``<project>.duckdb``: a summary, or one schema's objects in full."""
+        path = self.form_dir.parent / f"{self.project}_db.json"
         objects = json.loads(path.read_text(encoding="utf-8"))
-        return render_structure(project, objects)
+        if schema is None:
+            return render_structure_summary(self.project, objects)
+        return render_structure_schema(self.project, objects, schema)
 
     def get_flow(self, dataset: str | None = None) -> str:
         """Render the project's ``flow.json``, or one dataset's columns with ``dataset``."""
-        path = self.form_dir.parent / "flow.json"
-        return render_flow(json.loads(path.read_text(encoding="utf-8")), dataset)
+        return render_flow(self.flow, dataset)
 
     def get_survey_info(self) -> str:
         """Summarise the form and its outputs."""
@@ -591,7 +695,10 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
     commands.add_parser("repeats", help="repeat-group structure")
     commands.add_parser("info", help="form summary")
     commands.add_parser("datasets", help="datasets the form reads and their joins")
-    commands.add_parser("db", help="map of <project>.duckdb: tables, keys and joins")
+    db = commands.add_parser("db", help="map of <project>.duckdb: tables, keys, joins")
+    db.add_argument(
+        "schema", nargs="?", help="one schema in full (a form, dataset, main)"
+    )
     flow = commands.add_parser("flow", help="how the project's forms chain")
     flow.add_argument("dataset", nargs="?", help="one dataset's columns, end to end")
     args = parser.parse_args(argv)
@@ -607,7 +714,7 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
         "repeats": store.get_repeat_structure,
         "info": store.get_survey_info,
         "datasets": store.get_datasets,
-        "db": store.get_structure_db,
+        "db": lambda: store.get_structure_db(args.schema),
         "flow": lambda: store.get_flow(args.dataset),
     }[args.command]()
     print(answer)

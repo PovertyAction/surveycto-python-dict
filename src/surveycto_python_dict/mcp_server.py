@@ -89,9 +89,13 @@ def make_server(stores: dict[str, SurveyStore]) -> MCPServer:
         return project.get_flow(dataset)
 
     @server.tool()
-    def get_structure_db() -> str:
-        """Map <project>.duckdb: each schema's tables and views, grain, key and joins."""
-        return project.get_structure_db()
+    def get_structure_db(schema: str | None = None) -> str:
+        """Map <project>.duckdb: a summary of its schemas, or one schema in full.
+
+        ``schema`` is a form's id (its tables, the datasets it joins and its joins to
+        other forms), ``dataset`` or ``main``.
+        """
+        return project.get_structure_db(schema)
 
     return server
 
