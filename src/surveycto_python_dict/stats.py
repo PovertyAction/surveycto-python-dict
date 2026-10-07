@@ -19,6 +19,7 @@ import pyarrow.parquet as pq
 from surveycto_python_dict.xpath import (
     UnsupportedExpression,
     compile_expression,
+    reads_self,
     to_number,
 )
 
@@ -77,6 +78,14 @@ class _Data:
             if q["type"] == "repeat_count"
         }
         self.repeats = set(self.count_questions)
+        self.chains = {
+            name: [g for g in q["group_path"] if g in self.repeats]
+            for name, q in questions.items()
+        }
+        # Results shared by every column a gate or repeat count applies to; see
+        # `_gate` and `_within`.
+        self.gates: dict[tuple, list] = {}
+        self.limits: dict[tuple, list] = {}
         self.columns: dict[tuple, str] = {}
         # (repeat, parent instances) -> {instance: columns}, for repeats without a count
         self.instance_columns: dict[tuple, dict[int, list[str]]] = {}
@@ -109,7 +118,7 @@ class _Data:
         return max(present, default=0)
 
     def repeat_chain(self, question: str) -> list[str]:
-        return [g for g in self.questions[question]["group_path"] if g in self.repeats]
+        return self.chains[question]
 
     def value(self, question: str, iterations: tuple[int, ...], row: int):
         """Return ``question``'s value on ``row`` in the given repeat instance."""
@@ -156,6 +165,45 @@ class _Row:
         return self.iterations[-1]
 
 
+def _gate(data: _Data, gate: str, question: str, iterations: tuple, own: list):
+    """Return row -> whether ``gate`` holds for ``question`` in this repeat instance.
+
+    A gate that does not read ``.`` gives the same answer for every question in the
+    same repeats and instance (a group's relevance, a select_multiple's binaries), so
+    each row is evaluated once and shared.
+    """
+    fn = compile_expression(gate)
+    if reads_self(gate):
+        return lambda r: bool(fn(_Row(data, question, iterations, r, own[r])))
+    key = (gate, tuple(data.repeat_chain(question)), iterations)
+    memo = data.gates.setdefault(key, [None] * len(own))
+
+    def holds(r: int) -> bool:
+        if memo[r] is None:
+            memo[r] = bool(fn(_Row(data, question, iterations, r, None)))
+        return memo[r]
+
+    return holds
+
+
+def _within(data: _Data, repeat: str, parent: tuple, n_rows: int) -> list:
+    """Return the instances of ``repeat`` under ``parent`` on each row."""
+    key = (repeat, parent)
+    if key not in data.limits:
+        count_q = data.count_questions[repeat]
+        if count_q["calculation"] is None:
+            limits = [data.highest_instance(repeat, parent, r) for r in range(n_rows)]
+        else:
+            count = compile_expression(count_q["calculation"])
+            # An empty or invalid count gives no instances, as on the device.
+            limits = [
+                to_number(count(_Row(data, count_q["variable_name"], parent, r, None)))
+                for r in range(n_rows)
+            ]
+        data.limits[key] = limits
+    return data.limits[key]
+
+
 def _eligibility(
     data: _Data, q: dict | None, column: str, iterations: tuple, n_rows: int
 ):
@@ -168,34 +216,15 @@ def _eligibility(
         return [False] * n_rows, rule, True, "disabled"
     own = data.values[column]
     try:
-        compiled = [compile_expression(g) for g in gates]
-        eligible = [
-            all(
-                bool(fn(_Row(data, q["variable_name"], iterations, r, own[r])))
-                for fn in compiled
-            )
-            for r in range(n_rows)
-        ]
+        tests = [_gate(data, g, q["variable_name"], iterations, own) for g in gates]
+        eligible = [all(t(r) for t in tests) for r in range(n_rows)]
         # A repeat instance exists only up to the repeat count, at every level.
         for level, repeat in enumerate(data.repeat_chain(q["variable_name"])):
             instance, parent = iterations[level], iterations[:level]
-            count_q = data.count_questions[repeat]
-            if count_q["calculation"] is None:
-                within = [
-                    instance <= data.highest_instance(repeat, parent, r)
-                    for r in range(n_rows)
-                ]
-            else:
-                count = compile_expression(count_q["calculation"])
-                # An empty or invalid count gives no instances, as on the device.
-                within = [
-                    instance
-                    <= to_number(
-                        count(_Row(data, count_q["variable_name"], parent, r, None))
-                    )
-                    for r in range(n_rows)
-                ]
-            eligible = [e and w for e, w in zip(eligible, within, strict=True)]
+            limits = _within(data, repeat, parent, n_rows)
+            eligible = [
+                e and instance <= c for e, c in zip(eligible, limits, strict=True)
+            ]
     except UnsupportedExpression as e:
         return [True] * n_rows, rule, False, f"{e}; counted over all rows"
     return eligible, rule, True, ""

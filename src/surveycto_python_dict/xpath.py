@@ -7,6 +7,7 @@ so ``${x} = 1`` is false and ``${x} != 1`` true when ``x`` is empty, as on the d
 Anything outside the supported subset raises ``UnsupportedExpression`` at compile time.
 """
 
+import functools
 import math
 import re
 from collections.abc import Callable
@@ -263,6 +264,13 @@ class _Parser:
         return lambda row: fn(*(a(row) for a in args))
 
 
+@functools.cache
 def compile_expression(expr: str) -> Callable[[object], Value]:
     """Parse ``expr`` once; return a function of a row."""
     return _Parser(expr).parse()
+
+
+@functools.cache
+def reads_self(expr: str) -> bool:
+    """Whether ``expr`` reads ``.``, the value of the question it gates."""
+    return any(kind == "dot" for kind, _ in _Parser(expr).tokens)
