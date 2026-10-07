@@ -256,24 +256,49 @@ def screen_search_choices(
         node.choice_items = universe
 
 
-def _scan(
-    column: pa.ChunkedArray,
-    keys: list[str],
-    basis: list[str],
-    config: PiiConfig,
-    analyzer,
-) -> dict:
-    values = [None if v is None else str(v) for v in column.to_pylist()]
-    distinct = sorted({v for v in values if v is not None})
-    if len(distinct) > config.max_distinct:
-        distinct = sorted(
-            random.Random(config.seed).sample(distinct, config.max_distinct)
+class _Scans:
+    """Columns to scan, collected first so Presidio reads every distinct text once.
+
+    Columns share many values ("0", "No", a date), so a form's columns are scanned
+    together: ``add`` registers a column, ``run`` analyzes the union of their
+    sampled distinct values, and ``block`` gives each column its result.
+    """
+
+    def __init__(self, config: PiiConfig):
+        self.config = config
+        self.columns: dict = {}
+        self.found: dict[str, set[str]] = {}
+
+    def add(self, name, column: pa.ChunkedArray, keys: list, basis: list[str]) -> None:
+        values = [None if v is None else str(v) for v in column.to_pylist()]
+        distinct = sorted({v for v in values if v is not None})
+        if len(distinct) > self.config.max_distinct:
+            distinct = sorted(
+                random.Random(self.config.seed).sample(
+                    distinct, self.config.max_distinct
+                )
+            )
+        self.columns[name] = (values, distinct, keys, basis)
+
+    def run(self, analyzer) -> None:
+        texts = sorted(
+            {t for _, distinct, _, _ in self.columns.values() for t in distinct}
+            - set(self.found)
         )
+        if texts:
+            self.found.update(zip(texts, _entities(texts, self.config, analyzer)))
+
+    def block(self, name) -> dict:
+        values, distinct, keys, basis = self.columns[name]
+        return _block(values, distinct, keys, basis, self.found)
+
+
+def _block(
+    values: list, distinct: list[str], keys: list, basis: list[str], entities: dict
+) -> dict:
     found: dict[str, set[str]] = {}
-    for value, types in zip(
-        distinct, _entities(distinct, config, analyzer), strict=True
-    ):
-        for t in types:
+    for value in distinct:
+        for t in entities[value]:
             found.setdefault(t, set()).add(value)
     hits = set().union(*found.values()) if found else set()
     hit_keys = sorted({k for k, v in zip(keys, values, strict=True) if v in hits})
@@ -305,6 +330,7 @@ def classify(
     keys = table.column("KEY").to_pylist()
 
     blocks = {}
+    scans = _Scans(config)
     for column in table.schema.names:
         entry = variables[column]
         question = entry["question"]
@@ -324,17 +350,20 @@ def classify(
         else:
             block = rules.static(question) if question is not None else None
             if block is None:
-                block = _scan(
-                    table.column(column),
-                    keys,
-                    rules.scan_basis(question),
-                    config,
-                    analyzer,
+                scans.add(
+                    column, table.column(column), keys, rules.scan_basis(question)
                 )
+                continue
             if q is not None and q["publishable"]:
                 block = {**block, "basis": [*block["basis"], "publishable"]}
         blocks[column] = block
-    return blocks
+    scans.run(analyzer)
+    for column in scans.columns:
+        block = scans.block(column)
+        if (q := rules.by_name.get(variables[column]["question"])) and q["publishable"]:
+            block = {**block, "basis": [*block["basis"], "publishable"]}
+        blocks[column] = block
+    return {column: blocks[column] for column in table.schema.names}
 
 
 def dataset_codebook(
@@ -353,13 +382,37 @@ def dataset_codebook(
     same dataset scan it once.
     """
     whitelist, blacklist = set(config.whitelist), set(config.blacklist)
-    rows = []
+    tables = {}
     for dataset, csv_path in sorted(datasets.items()):
         with open(csv_path, encoding="utf-8-sig", newline="") as f:
             reader = csv.DictReader(f)
-            records = list(reader)
-        numbers = list(range(1, len(records) + 1))
-        for column in reader.fieldnames:
+            tables[dataset] = (csv_path, reader.fieldnames, list(reader))
+    # Every column not yet scanned for another form, scanned together.
+    scans = _Scans(config)
+    for dataset, (csv_path, header, records) in tables.items():
+        for column in header:
+            name = f"{dataset}.{column}"
+            if (
+                name in blacklist
+                or name in whitelist
+                or config.no_personal_data
+                or (csv_path, column) in scanned
+            ):
+                continue
+            values = [r[column] or None for r in records]
+            scans.add(
+                (csv_path, column),
+                pa.chunked_array([pa.array(values, pa.string())]),
+                list(range(1, len(records) + 1)),
+                ["dataset"],
+            )
+    scans.run(analyzer)
+    for key in scans.columns:
+        scanned[key] = scans.block(key)
+
+    rows = []
+    for dataset, (csv_path, header, records) in tables.items():
+        for column in header:
             name = f"{dataset}.{column}"
             values = [r[column] or None for r in records]
             if name in blacklist:
@@ -369,14 +422,6 @@ def dataset_codebook(
             elif config.no_personal_data:
                 block = {"status": "whitelisted", "basis": ["project"]}
             else:
-                if (csv_path, column) not in scanned:
-                    scanned[csv_path, column] = _scan(
-                        pa.chunked_array([pa.array(values, pa.string())]),
-                        numbers,
-                        ["dataset"],
-                        config,
-                        analyzer,
-                    )
                 block = scanned[csv_path, column]
             read_by = [
                 q["variable_name"]

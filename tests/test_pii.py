@@ -194,16 +194,18 @@ def test_missing_spacy_model_raises():
 
 
 def test_hit_keys_capped_at_five_with_the_full_count(analyzer):
-    from surveycto_python_dict.pii import _scan
+    from surveycto_python_dict.pii import _Scans
 
     phones = [f"31045678{i:02d}" for i in range(8)]
-    block = _scan(
+    scans = _Scans(PiiConfig())
+    scans.add(
+        "phone",
         pa.chunked_array([phones]),
         [f"uuid:{i}" for i in range(8)],
         ["type:text"],
-        PiiConfig(),
-        analyzer,
     )
+    scans.run(analyzer)
+    block = scans.block("phone")
     assert block["presidio"]["hit_rows"] == 8
     assert block["presidio"]["hit_keys"] == [f"uuid:{i}" for i in range(5)]
 
