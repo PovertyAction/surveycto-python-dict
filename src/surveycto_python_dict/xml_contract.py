@@ -171,9 +171,9 @@ class Node:
 def _split_call_args(s: str | None, func_name: str) -> list[str] | None:
     """Top-level argument strings of the first ``func_name(...)`` call in ``s``,
     respecting nested parens and quoted literals. XPath has no backslash escape,
-    so a literal closes on the next matching quote. Returns None if no balanced
-    call is present. Replaces the old bounded regexes, which mis-split a nested
-    call or a quoted `)` in an argument. (#23.4).
+    so a literal closes on the next matching quote. Returns None when ``s`` has no
+    such call and raises ``ValueError`` when the call never closes, since its dataset
+    would otherwise go unread.
     """
     if not s:
         return None
@@ -210,7 +210,7 @@ def _split_call_args(s: str | None, func_name: str) -> list[str] | None:
         else:
             cur.append(ch)
         i += 1
-    return None  # unbalanced
+    raise ValueError(f"{func_name}( never closes in {s!r}")
 
 
 def _unquote(s: str) -> str:
@@ -231,8 +231,10 @@ _STRING_LITERAL = re.compile(r"""^(?:string\(\s*)?(['"])([^'"]*)\1(?:\s*\))?$"""
 def _parse_pulldata(calc: str | None) -> dict | None:
     """``pulldata('ds', 'col', 'key', expr)``: ``match`` is ``expr``, the value of ``key``."""
     args = _split_call_args(calc, "pulldata")
-    if not args or len(args) < 3:
+    if args is None:
         return None
+    if len(args) < 3:
+        raise ValueError(f"pulldata() needs a dataset, a column and a key: {calc!r}")
     return {
         "dataset": _dataset_name(args[0]),
         "value": args[1].strip(),
@@ -657,27 +659,15 @@ def parse_contract(xml_path) -> FormContract:
 
     root = ET.parse(str(xml_path)).getroot()
 
-    # 1) Primary instance. SurveyCTO compiles select_from_file / pulldata / search
-    #    datasets into SECONDARY <instance id="..."> blocks; the PRIMARY model
-    #    instance is the <instance> with no `id` attribute, and its first child
-    #    element is the form root (whose id/tag is the form_id). Prefer that so a
-    #    secondary instance can't hijack detection; fall back to the old "first
-    #    element whose id == its own tag" scan for unconventional shapes.
-    primary = None
-    model = next((e for e in root.iter() if _ln(e.tag) == "model"), None)
-    if model is not None:
-        instances = [e for e in model if _ln(e.tag) == "instance"]
-        prim_inst = next((i for i in instances if not i.get("id")), None)
-        if prim_inst is not None:
-            primary = next((c for c in prim_inst if isinstance(c.tag, str)), None)
-    if primary is None:
-        for el in root.iter():
-            if el.get("id") and _ln(el.tag) == el.get("id"):
-                primary = el
-                break
-    if primary is None:
-        raise RuntimeError(f"Could not find primary instance in {xml_path}")
-    itext = _default_itext(model) if model is not None else {}
+    # 1) Primary instance: the model's <instance> without an `id`, whose first
+    #    element is the form root. SurveyCTO compiles datasets and choice lists
+    #    into secondary <instance id="..."> blocks.
+    (model,) = [e for e in root.iter() if _ln(e.tag) == "model"]
+    (primary_instance,) = [
+        e for e in model if _ln(e.tag) == "instance" and not e.get("id")
+    ]
+    primary = next(c for c in primary_instance if isinstance(c.tag, str))
+    itext = _default_itext(model)
     # Static secondary instances (choice lists behind an itemset), item by item.
     instances = {
         inst.get("id"): [
@@ -685,7 +675,7 @@ def parse_contract(xml_path) -> FormContract:
             for item in inst.iter()
             if _ln(item.tag) == "item"
         ]
-        for inst in (model if model is not None else [])
+        for inst in model
         if _ln(inst.tag) == "instance" and inst.get("id")
     }
 

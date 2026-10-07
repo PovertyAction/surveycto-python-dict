@@ -204,6 +204,16 @@ class TestBalancedArgParsing:
         r = _parse_search("search('choices', 'matches', 'col', node_ref)")
         assert r["filter"] == {"col": None}
 
+    def test_a_call_that_never_closes_raises(self):
+        with pytest.raises(ValueError, match="never closes"):
+            _parse_search("search('choices', 'matches', 'list', 'crops'")
+        with pytest.raises(ValueError, match="never closes"):
+            _parse_pulldata("pulldata('roster', 'name', 'hhid', ${x}")
+
+    def test_pulldata_without_a_key_raises(self):
+        with pytest.raises(ValueError, match="needs a dataset, a column and a key"):
+            _parse_pulldata("pulldata('roster', 'name')")
+
 
 _NESTED_XML = """<?xml version="1.0"?>
 <h:html xmlns="http://www.w3.org/2002/xforms"
