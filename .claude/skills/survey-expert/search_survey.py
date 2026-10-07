@@ -523,6 +523,11 @@ class SurveyStore:
                 "Choices: "
                 + "; ".join(f"{c['value']} = {c['label']}" for c in q["choices"])
             )
+        if q["choices_per_submission"] and q["type"] == "select_multiple":
+            lines.append(
+                "Binaries: only for the codes someone picked; the form filters the "
+                "list per submission, so an unoffered choice has no column."
+            )
         if q["data_source"]:
             lines.append(f"Data source: {_source_line(q['data_source'])}")
             lines += upstream_lines(self.flow, self.form_id, q["variable_name"])

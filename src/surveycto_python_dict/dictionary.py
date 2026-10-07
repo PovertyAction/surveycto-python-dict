@@ -27,6 +27,7 @@ _SURVEY_KEYS = (
     "choice_list",
     "choices",
     "choices_withheld",
+    "choices_per_submission",
     "relevance",
     "group_relevances",
     "constraint",

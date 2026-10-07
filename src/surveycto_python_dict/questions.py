@@ -193,6 +193,7 @@ def build_questions(contract: FormContract) -> list[dict]:
                     "type": "repeat_count",
                     "choice_list": None,
                     "choices": None,
+                    "choices_per_submission": False,
                     "variable_name": f"{node.name}_count",
                     "question_text": f"Number of iterations in '{label(node) or node.name}' repeat group",
                     "disabled": parent_disabled or relevance == "0",
@@ -235,6 +236,10 @@ def build_questions(contract: FormContract) -> list[dict]:
                     if is_select
                     else None
                 ),
+                # The form filters the list per submission (an itemset that reads
+                # the form, a search() filtered by a field): a select_multiple has
+                # binaries only for the codes someone picked.
+                "choices_per_submission": node.choices_per_submission,
                 "variable_name": node.name,
                 "question_text": label(node)
                 or (calculation if qtype == "calculate" else ""),

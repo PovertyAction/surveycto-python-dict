@@ -90,6 +90,7 @@ _KEYS = [
     "type",
     "choice_list",
     "choices",
+    "choices_per_submission",
     "variable_name",
     "question_text",
     "disabled",

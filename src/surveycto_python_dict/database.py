@@ -316,6 +316,7 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                     "required": q["required"],
                     "publishable": q["publishable"],
                     "choices_withheld": q["choices_withheld"],
+                    "choices_per_submission": q["choices_per_submission"],
                 }
                 for q in questions
             ]

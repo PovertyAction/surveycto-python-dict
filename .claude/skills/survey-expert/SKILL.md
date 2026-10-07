@@ -133,7 +133,9 @@ Each `variables.<column>` entry has:
 - **select_multiple** comes as one binary per choice, `<name>_<code>` (negative codes
   as `<name>__99`). A binary is `1` when chosen, `0` when another choice of the same
   question was chosen in that row (and repeat instance), and null when none was: the
-  question was skipped. Every choice has a column, even one nobody picked.
+  question was skipped. Every choice has a column, even one nobody picked, unless
+  `choices_per_submission` is true (the form filters the list per submission): then
+  only the codes someone picked do, in the wide parquet and the long views alike.
 - **Choices** are inline per question; a select's `choice_list` is its own name.
 - **Repeats**: fields inside a repeat get `_<n>` per instance (`_<n>_<m>` when nested).
   Each repeat has a synthetic `<repeat>_count` question whose `calculation` is the
