@@ -388,6 +388,16 @@ def test_joins_connect_a_reader_field_to_the_publisher_field():
                 }
             ],
             "repeat_of": {},
+            # hhid repeats in the dataset: a match can return another household.
+            "codebook": [
+                {
+                    "dataset": "HH",
+                    "column": "hhid",
+                    "distinct": 1,
+                    "non_null": 2,
+                    "rows": 2,
+                }
+            ],
         },
     }
     con = duckdb.connect()
@@ -403,10 +413,14 @@ def test_joins_connect_a_reader_field_to_the_publisher_field():
             "listing",
             "submissions",
             "hhid",
+            False,
+            1,
+            2,
         )
     ]
     assert structure["joins"]["joins"] == [
-        "visit.submissions.visit_hh = listing.submissions.hhid  (through dataset.hh.hhid)"
+        "visit.submissions.visit_hh = listing.submissions.hhid  (through dataset.hh.hhid; "
+        "not unique: 1 distinct values in 2 rows, so a match can return another row)"
     ]
 
 

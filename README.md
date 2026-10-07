@@ -170,9 +170,11 @@ are copies of the JSON outputs. A CSV attached to a form sits in `dataset` as
 identify a dataset's rows, checked unique.
 
 `joins` connects the forms: a reader's field, the dataset column it matches, and the
-publisher's field behind that column. Each form's `dataset_links` gives the same
-matches within the form, so a query can follow a value from one form to the next as
-the forms do. Select in SQL, clean in pandas:
+publisher's field behind that column, and `unique`: whether that column identifies one
+dataset row. When it does not (a label shared by several studies), the form's match can
+return another row, and so can a query that follows it. Each form's `dataset_links`
+gives the same matches within the form, so a query can follow a value from one form to
+the next as the forms do. Select in SQL, clean in pandas:
 
 ```python
 import duckdb

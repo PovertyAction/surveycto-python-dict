@@ -179,7 +179,8 @@ _PROJECT = {
         "joins": ["reads.dataset = datasets.dataset", "reads.form = forms.form"],
     },
     "joins": {
-        "grain": "one row per reader field matched to the publisher field it comes from",
+        "grain": "one row per reader field matched to the publisher field it comes "
+        "from; unique: the dataset column identifies one row",
         "key": ["reader_form", "reader_field", "dataset", "dataset_column"],
         "joins": [
             "<reader_form>.<reader_table>.<reader_field> = "
@@ -509,6 +510,11 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
         if publisher is None or publisher == r["form"]:
             continue
         reader = forms[r["form"]]
+        stats = {
+            c["column"]: c
+            for c in reader["codebook"]
+            if c["dataset"] == r["name_in_form"]
+        }
         for q in reader["questions"]:
             source = q["data_source"]
             if not source or source["dataset"] != r["name_in_form"]:
@@ -519,6 +525,7 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
                 if path is None or not (value.startswith("${") and value.endswith("}")):
                     continue
                 field, published = value[2:-1], path.rsplit("/", 1)[-1]
+                column = stats[m["column"]]
                 row = {
                     "reader_form": r["form"],
                     "reader_table": reader["repeat_of"].get(field) or "submissions",
@@ -529,6 +536,13 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
                     "publisher_table": forms[publisher]["repeat_of"].get(published)
                     or "submissions",
                     "publisher_field": published,
+                    # Unique: each value matches one dataset row. Otherwise the
+                    # reader's pulldata()/search() can return another row's value.
+                    "unique": column["distinct"]
+                    == column["non_null"]
+                    == column["rows"],
+                    "distinct_values": column["distinct"],
+                    "dataset_rows": column["rows"],
                 }
                 if row not in joins:
                     joins.append(row)
@@ -603,6 +617,9 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
                 "publisher_form",
                 "publisher_table",
                 "publisher_field",
+                "unique",
+                "distinct_values",
+                "dataset_rows",
             ],
         ),
     }
@@ -614,7 +631,13 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
         "joins": [
             f"{j['reader_form']}.{j['reader_table']}.{j['reader_field']} = "
             f"{j['publisher_form']}.{j['publisher_table']}.{j['publisher_field']}  "
-            f"(through dataset.{j['dataset']}.{j['dataset_column']})"
+            f"(through dataset.{j['dataset']}.{j['dataset_column']}"
+            + (
+                ")"
+                if j["unique"]
+                else f"; not unique: {j['distinct_values']} distinct values in "
+                f"{j['dataset_rows']} rows, so a match can return another row)"
+            )
             for j in joins
         ],
     }
