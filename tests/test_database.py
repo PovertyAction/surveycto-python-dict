@@ -272,14 +272,15 @@ def test_structure_comes_from_the_finished_database(database):
     assert "farm.plot_safe" not in summary
 
     out = store.get_structure_db("farm")
-    assert "-- view farm.plot_safe: one row per instance of the repeat plot" in out
-    assert (
-        "--   join: farm.plot_safe.KEY = farm.submissions_safe.KEY  (many to one)"
-        in out
-    )
+    assert "-- view farm.plot: one row per instance of the repeat plot" in out
+    assert "--   farm.plot_safe: the same with its " in out
+    assert "--   join: farm.plot.KEY = farm.submissions.KEY  (many to one)" in out
+    assert "-- view farm.plot_safe" not in out
+    assert "plot_size" in store.get_structure_db("farm", "plot")
     assert "-- table farm.dictionary: one row per parquet column; table names" in out
     # The datasets the form joins come with it.
-    assert "-- view dataset.farm/prev_round.csv_safe:" in out
+    assert "-- view dataset.farm/prev_round.csv:" in out
+    assert "--   dataset.farm/prev_round.csv_safe: the same with its " in out
     with pytest.raises(ValueError, match="no schema 'nope'"):
         store.get_structure_db("nope")
 

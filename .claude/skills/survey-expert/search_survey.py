@@ -99,11 +99,12 @@ def _source_line(source: dict) -> str:
 
 
 def render_structure(
-    project: str, objects: list[dict], all_columns: bool = False
+    project: str, objects: list[dict], all_columns: bool = False, listed: int = _LISTED
 ) -> str:
     """Render ``<project>_db.json`` as commented SQL: grain, key, joins and columns.
 
-    An object with more than 20 columns lists the first ones unless ``all_columns``.
+    An object with more than ``listed`` columns lists that many unless
+    ``all_columns``.
     """
     lines = [
         f"-- {project}.duckdb: every table and view, what one row is, its key and joins.",
@@ -114,11 +115,16 @@ def render_structure(
         lines.append(f"--   key: {', '.join(o['key'])}")
         lines += [f"--   join: {j}" for j in o["joins"]]
         columns = o["columns"]
-        if len(columns) > _LISTED and not all_columns:
+        if "safe_columns" in o:
+            lines.append(
+                f"--   {o['name']}_safe: the same with its {o['safe_columns']} cleared "
+                "columns"
+            )
+        if len(columns) > listed and not all_columns:
             lines.append(
                 f"--   columns ({len(columns)}): "
-                + ", ".join(f"{c['name']} {c['type']}" for c in columns[:_LISTED])
-                + f", ... get_structure_db('{_schema(o['name'])}', "
+                + "".join(f"{c['name']} {c['type']}, " for c in columns[:listed])
+                + f"... get_structure_db('{_schema(o['name'])}', "
                 f"'{o['name'].split('.', 1)[-1]}') lists all"
             )
         else:
@@ -187,17 +193,39 @@ def render_structure_schema(project: str, objects: list[dict], schema: str) -> s
         )
     picked = [o for o in objects if _schema(o["name"]) == schema]
     if schema not in ("main", "dataset"):
+        # The datasets the form joins, with this form's joins only.
         prefix = f"= {schema}."
-        picked += [
-            o
-            for o in objects
-            if _schema(o["name"]) == "dataset" and any(prefix in j for j in o["joins"])
-        ]
+        for o in objects:
+            mine = [j for j in o["joins"] if prefix in j]
+            if _schema(o["name"]) != "dataset" or not mine:
+                continue
+            others = len(o["joins"]) - len(mine)
+            if others:
+                table = o["name"].split(".", 1)[1]
+                mine.append(
+                    f"... {others} more of other forms: "
+                    f"get_structure_db('dataset', '{table}')"
+                )
+            picked.append({**o, "joins": mine})
         joins = next(o for o in objects if o["name"] == "joins")
         mine = [j for j in joins["joins"] if f"{schema}." in j]
         if mine:
             picked.append({**joins, "joins": mine})
-    return render_structure(project, picked)
+    # A schema can hold dozens of tables: each *_safe view is one line under its full
+    # view, and a table's columns are counted, listed by get_structure_db(schema, table).
+    names = {o["name"] for o in picked}
+    safe = {
+        o["name"].removesuffix("_safe"): len(o["columns"])
+        for o in picked
+        if o["name"].endswith("_safe") and o["name"].removesuffix("_safe") in names
+    }
+    folded = [
+        {**o, "safe_columns": safe[o["name"]]} if o["name"] in safe else o
+        for o in picked
+        if o["name"].removesuffix("_safe") not in safe
+        or not o["name"].endswith("_safe")
+    ]
+    return render_structure(project, folded, listed=0)
 
 
 def _places(item: dict) -> str:
