@@ -74,12 +74,9 @@ those columns go through the type rules and Presidio like any other. Set
 `no_personal_data = true` for a project that holds none (study metadata, say): every
 column, dataset column and `search()` list that is not blacklisted or device metadata
 (`username`, `deviceid`, ...) is `whitelisted` with basis `project`, and Presidio
-never runs. Start a project of study metadata with it: under the defaults Presidio
-flags most free text in such data (names of authors, places, institutions), and the
-`*_safe` views hold little. The setting also changes the parquet's columns: a `search()`
-list Presidio withholds is not written out, so its select_multiple has binaries only
-for the codes picked. Rebuild after changing it, and write cleaning code against that
-build.
+never runs. The `[pii]` settings also change the parquet's columns: a `search()` list
+Presidio withholds is not written out, so its select_multiple has binaries only for the
+codes picked. Rebuild after changing them, and write cleaning code against that build.
 
 A `search()` select's choices come from its dataset, never from the XML. A list of up to
 50 choices is written into the outputs; a longer one stays in its dataset, and the

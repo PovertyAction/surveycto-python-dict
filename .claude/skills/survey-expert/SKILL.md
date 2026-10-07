@@ -25,9 +25,7 @@ writes: one folder per form, `<out_dir>/<form>/`, and the project's `<out_dir>/f
 
 Call `get_project` (`<S> project`) first. When it says the project is not described
 or has no entities, set them up with the user before answering questions that depend
-on them. If the project holds no personal data (study metadata, say) and almost every
-column is `no_hits` or `may_contain_pii`, suggest `[pii] no_personal_data = true` to
-the user and a rebuild:
+on them:
 
 1. Ask for what describes the study: a pre-analysis plan, a replication paper, a
    protocol, a codebook. Remind them to share only documents they are allowed to share
