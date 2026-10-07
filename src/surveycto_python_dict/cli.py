@@ -67,6 +67,11 @@ class Config:
     dataset_keys: dict[str, list[str]]
 
     @property
+    def project(self) -> str:
+        """Return the project's name: its ``out_dir`` folder."""
+        return self.out_dir.resolve().name
+
+    @property
     def raw_dir(self) -> Path:
         """Return where the project-wide pulls go: form list and server datasets."""
         return self.out_dir / "raw"
@@ -154,6 +159,18 @@ def form_datasets(cfg: Config, form: str) -> dict[str, Path]:
         )
         for name, s in _sources(cfg, form, contract).items()
     }
+
+
+def dataset_csvs(cfg: Config, flow: dict) -> dict[str, Path]:
+    """Return the CSV of each ``flow.json`` dataset: a server dataset or a form's file."""
+    csvs = {}
+    for d in flow["datasets"]:
+        if d["kind"] == "server_dataset":
+            csvs[d["id"]] = cfg.raw_dir / "datasets" / f"{d['id']}.csv"
+        else:
+            form, filename = d["id"].split("/", 1)
+            csvs[d["id"]] = cfg.form_raw(form) / "files" / filename
+    return csvs
 
 
 def pull(cfg: Config, client: Client) -> Path:

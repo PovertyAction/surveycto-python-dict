@@ -17,8 +17,8 @@ writes: one folder per form, `<out_dir>/<form>/`, and the project's `<out_dir>/f
 | `<form>_variable_graph.json` | Questions linked by calculation, relevance, constraint and repeat |
 | `<form>.parquet` | The submissions. **Do not read it** unless the columns you need are cleared (below) |
 | `<form>_pii_review.xlsx` | `KEY` plus every flagged column, for the people cleaning the data. **Never read it** |
-| `<form>.duckdb` | `just duckdb`: views over the parquet and the descriptions as tables. **Read values only through the `*_safe` views**: `submissions_safe`, and `<repeat>_safe` for each repeat group long (`KEY`, one `<repeat>_index` per enclosing repeat, one column per field), and `dataset.<name>_safe` for each dataset the form reads. `dataset_links` gives each `pulldata()`/`search()` join; `dataset_codebook` gives each dataset column's readers and `pii` |
-| `flow.json` | The project: which form publishes each dataset, which forms read it (fields and columns), and each form's stage |
+| `<out_dir>/<project>.duckdb` | `just duckdb`: one database for the project. A schema per form (`<form>.submissions`, `<form>.<repeat>` long with `KEY` and one `<repeat>_index` per enclosing repeat, and the descriptions as tables), `dataset.<id>` for each dataset once, and `main.forms`, `datasets`, `publishes`, `reads`, `joins` for the chain. **Read values only through the `*_safe` views.** `<form>.dataset_links` gives each `pulldata()`/`search()` match; `main.joins` connects a reader's field to the publisher's field across forms. `get_structure_db` maps it all |
+| `<out_dir>/flow.json`, `flow.md` | The project: which form publishes each dataset, which forms read it (fields and columns), each published column's origin, each form's stage; `flow.md` draws it |
 | `<form>_summary_stats.csv` | `just stats`: per column, eligible rows under skip logic, sentinels apart, then stats; flagged PII columns get counts only |
 
 ## How to look things up
@@ -29,7 +29,8 @@ to the outputs, with no package or MCP needed (`<S>` below):
 
 ```sh
 python .claude/skills/survey-expert/search_survey.py --dir <out_dir>/<form> <command>
-# inside the surveycto-python-dict repo, equivalently (--form when the config has several):
+# inside the surveycto-python-dict repo, equivalently (--form when the config has several;
+# the MCP form tools take the form's id instead):
 uv run scto-survey --config config.toml --form <form> <command>
 ```
 

@@ -14,7 +14,8 @@ just pull                            # every form's XML + submissions, every ser
 just build                           # per form: dictionaries, parquet, graph, PII review; flow.json; rerun any time
 just stats                           # <form>_summary_stats.csv over the rows where each question was asked
 just codebook                        # <form>_codebook.xlsx for PIs: Variables + Summary stats sheets
-just mcp                             # survey-expert MCP server over stdio
+just duckdb                          # <project>.duckdb: a schema per form, datasets once, the project tables
+just mcp                             # survey-expert MCP server over stdio, one per project
 ```
 
 Each recipe takes another config as an argument (`just build path/to/config.toml`);
@@ -26,8 +27,11 @@ Copy `.env.example` to `.env` and fill it in: `SCTO_SERVER` (the subdomain),
 which `just build` and `just stats` require. Never commit `.env`, the `.pem` key,
 `config.toml` or `data/`.
 
-A project is one or more forms on one server, with any number of server datasets
-(none included). Its encrypted forms share the one key in `SCTO_KEY_PATH`.
+A project is one connected study: one or more forms on one server that chain through
+the server datasets they publish and read (any number of datasets, none included). It
+gets one `out_dir`, one `flow.json` and one database. Surveys that are not connected
+are separate projects, each with its own config and `out_dir`. A project's encrypted
+forms share the one key in `SCTO_KEY_PATH`.
 
 `<out_dir>` is the project's folder. `raw/` holds the form list, the server's dataset
 list and every server dataset pulled (`raw/datasets/<id>.csv`): the ones in
@@ -46,7 +50,11 @@ list and every server dataset pulled (`raw/datasets/<id>.csv`): the ones in
 | `<form>_summary_stats.csv` | `just stats`: per column, counts over the rows where it was asked (skip logic evaluated per row), sentinels apart, then mean/quartiles, frequencies or shares; flagged PII columns get counts only |
 | `<form>_codebook.xlsx` | `just codebook`: for PIs. Variables (label, type, group, relevance, value labels, missing, sentinels, PII status) and Summary stats; no values of flagged PII columns |
 | `<form>_dataset_codebook.json` | One row per column of each dataset the form reads: counts, the questions that read it, and a `pii` block (Presidio, or `dataset.column` on the whitelist/blacklist) |
-| `<form>.duckdb` | `just duckdb` (runs `just stats` first): views over the parquet (`submissions`, `submissions_safe`, and each repeat group long as `<repeat>` / `<repeat>_safe` from `long/<repeat>.parquet`: one row per instance with any value, keyed by `KEY` and one `<repeat>_index` per enclosing repeat), each dataset in the `dataset` schema (`dataset.<name>`, `dataset.<name>_safe`), and the descriptions as tables (`dictionary`, `questions`, `choices`, `edges`, `dataset_links`, `dataset_codebook`, `stats`) |
+| `long/<repeat>.parquet` | `just duckdb`: each repeat group long, one row per instance with any value, keyed by `KEY` and one `<repeat>_index` per enclosing repeat |
+
+And for the project, in `<out_dir>`: `flow.json` and `flow.md` (below), and
+`<project>.duckdb` with its map `<project>_db.json` / `<project>_db.sql`, where
+`<project>` is the `out_dir` folder's name.
 
 The `pii` block is a signal for the people cleaning the data, not enforcement:
 `cleared_by_form` (publishable), `whitelisted`, `contains_pii`, `may_contain_pii`
@@ -96,38 +104,67 @@ dataset's publisher, origins and readers, and the reads without an attachment;
 `flow <dataset>` traces each column from the field that publishes it, with its origin,
 to the fields that read it.
 
-## Querying with DuckDB
+## Querying with DuckDB: one database per project
 
-`<form>.duckdb` holds views, not copies: they read `<form>.parquet` and the long
-reshapes `just duckdb` writes to `long/<repeat>.parquet`, and `just duckdb` rebuilds
-them all. Select in SQL, clean in pandas:
+`just duckdb` (after `just stats`) writes `<project>.duckdb`, one database for the whole
+project. A database holds schemas and a schema holds tables and views:
+
+```
+<project>.duckdb
+├── <form>          one schema per form
+│   ├── submissions, submissions_safe           views over <form>.parquet
+│   ├── <repeat>, <repeat>_safe                 views over long/<repeat>.parquet
+│   └── dictionary, questions, choices, edges, dataset_links, dataset_codebook, stats
+├── dataset         each dataset once, under its flow.json id
+│   └── <id>, <id>_safe                         views over raw/datasets/<id>.csv
+└── main            the project, from flow.json
+    └── forms, datasets, publishes, reads, joins
+```
+
+Data stays in its files: the views read `<form>.parquet`, `long/<repeat>.parquet` and
+the dataset CSVs, so the database works next to its `out_dir` and `just duckdb` rebuilds
+it in seconds. The description and project tables are copies of the JSON outputs. A
+CSV attached to a form sits in `dataset` as `"<form>/<file>.csv"`. `[datasets.<id>] key`
+in the config names the columns that identify a dataset's rows, checked unique.
+
+`joins` connects the forms: a reader's field, the dataset column it matches, and the
+publisher's field behind that column. Each form's `dataset_links` gives the same
+matches within the form, so a query can follow a value from one form to the next as
+the forms do. Select in SQL, clean in pandas:
 
 ```python
 import duckdb
 
-con = duckdb.connect("data/out/<form>/<form>.duckdb", read_only=True)
-long = con.sql("SELECT * FROM <repeat>_safe").df()
+con = duckdb.connect("data/out/<project>/<project>.duckdb", read_only=True)
+long = con.sql("SELECT * FROM <form>.<repeat>_safe").df()
+chained = con.sql("""
+    SELECT s2.KEY, s1.KEY AS stage1_key
+    FROM stage2.submissions_safe s2
+    JOIN dataset.households_safe d ON d.hhid = s2.hhid
+    JOIN stage1.submissions_safe s1 ON s1.hhid = d.hhid
+""").df()
 ```
 
-The `*_safe` views hold only `cleared_by_form` and `whitelisted` columns; agents read
-values through them. Adding a column to `[pii] whitelist` (a dataset column as
-`dataset.column`) and rebuilding lets it in. `dataset_links` says how each
-`pulldata()` / `search()` matches dataset rows to the submission, so a script can join
-the survey to its dataset as the form does.
+The `*_safe` views hold only `cleared_by_form` and `whitelisted` columns (for a
+dataset, the columns every reading form clears); agents read values through them.
+Adding a column to `[pii] whitelist` (a dataset column as `dataset.column`) and
+rebuilding lets it in.
 
 ## Survey-expert MCP server and skill
 
-`just mcp` (`uv run scto-mcp --config config.toml`) serves one form's outputs over stdio to a local
-agent: `lookup_variable(s)`, `search_questions`, `get_choice_list`, `get_gate_chain`,
-`get_survey_info`, `get_variable_neighborhood`, `get_repeat_structure`, and the
-project's `get_flow`. It reads only the JSON outputs, never the parquet, and shows each
-column's `pii` status. A config with several forms needs `--form <form>`: one server
-per form.
+`just mcp` (`uv run scto-mcp --config config.toml`) serves a project's outputs over
+stdio to a local agent. The form tools take the form's id: `lookup_variable(s)`,
+`search_questions`, `get_choice_list`, `get_gate_chain`, `get_survey_info`,
+`get_variable_neighborhood`, `get_repeat_structure`, `get_datasets`. The project tools
+take none: `get_flow` (the chain, or one dataset's columns end to end) and
+`get_structure_db` (the map of `<project>.duckdb`). It reads only the JSON outputs,
+never the parquet, and shows each column's `pii` status.
 
 To connect it to Claude Code, copy `.mcp.json.example` to `.mcp.json` (git-ignored) and
 point `--config` at your config. The `survey-expert` skill
 (`.claude/skills/survey-expert/SKILL.md`) teaches an agent to read the outputs and to
 check `pii.status` first; without MCP it uses the same answers from
-`uv run scto-survey <var|search|choices|gates|neighborhood|repeats|info>`.
+`uv run scto-survey --config config.toml --form <form>
+<var|search|choices|gates|neighborhood|repeats|info|datasets|flow|db>`.
 
 Design: `surveycto-api-extractor-PROMPT.md`; API notes: `docs/`.

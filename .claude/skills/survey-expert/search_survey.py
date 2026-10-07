@@ -61,10 +61,10 @@ def _source_line(source: dict) -> str:
     )
 
 
-def render_structure(form_id: str, objects: list[dict]) -> str:
-    """Render ``<form>_db.json`` as commented SQL: grain, key, joins and columns."""
+def render_structure(project: str, objects: list[dict]) -> str:
+    """Render ``<project>_db.json`` as commented SQL: grain, key, joins and columns."""
     lines = [
-        f"-- {form_id}.duckdb: every table and view, what one row is, its key and joins.",
+        f"-- {project}.duckdb: every table and view, what one row is, its key and joins.",
         "-- Read values only from the *_safe views; the description tables are open.",
     ]
     for o in objects:
@@ -450,14 +450,22 @@ class SurveyStore:
             by_dataset.setdefault(column["dataset"], []).append(column)
         if not by_dataset:
             return "The form reads no datasets."
+        flow = json.loads((self.form_dir.parent / "flow.json").read_text("utf-8"))
+        id_of = {
+            r["name_in_form"]: r["dataset"]
+            for r in flow["reads"]
+            if r["form"] == self.form_id
+        }
+        project = self.form_dir.parent.name
         blocks = []
         for dataset, columns in by_dataset.items():
             n_rows = columns[0]["rows"]
             statuses = dict(Counter(c["pii"]["status"] for c in columns))
+            view = f"dataset.{id_of[dataset]}"
             lines = [
                 f"{dataset}: {n_rows} rows, {len(columns)} columns, pii {statuses}",
-                f"  In <form>.duckdb: dataset.{dataset} (every column, plus row) and "
-                f"dataset.{dataset}_safe (row plus whitelisted columns).",
+                f"  In {project}.duckdb: {view} (every column, plus row) and "
+                f"{view}_safe (row plus cleared columns).",
                 "  Joins to the form (dataset column = form value):",
             ]
             joins: dict[tuple, list[str]] = {}
@@ -499,10 +507,11 @@ class SurveyStore:
         return "\n\n".join(blocks)
 
     def get_structure_db(self) -> str:
-        """Map ``<form>.duckdb``: each object, what one row is, its key, joins and columns."""
-        path = self.form_dir / f"{self.form_id}_db.json"
+        """Map ``<project>.duckdb``: each object, what one row is, its key and joins."""
+        project = self.form_dir.parent.name
+        path = self.form_dir.parent / f"{project}_db.json"
         objects = json.loads(path.read_text(encoding="utf-8"))
-        return render_structure(self.form_id, objects)
+        return render_structure(project, objects)
 
     def get_flow(self, dataset: str | None = None) -> str:
         """Render the project's ``flow.json``, or one dataset's columns with ``dataset``."""
@@ -582,7 +591,7 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
     commands.add_parser("repeats", help="repeat-group structure")
     commands.add_parser("info", help="form summary")
     commands.add_parser("datasets", help="datasets the form reads and their joins")
-    commands.add_parser("db", help="map of <form>.duckdb: tables, keys and joins")
+    commands.add_parser("db", help="map of <project>.duckdb: tables, keys and joins")
     flow = commands.add_parser("flow", help="how the project's forms chain")
     flow.add_argument("dataset", nargs="?", help="one dataset's columns, end to end")
     args = parser.parse_args(argv)

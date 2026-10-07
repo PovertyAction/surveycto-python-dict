@@ -35,13 +35,13 @@ stats cfg=config:
 codebook cfg=config:
     uv run scto-codebook --config {{ cfg }}
 
-[doc("Write <form>.duckdb (submissions, repeats long, datasets, each with *_safe; descriptions as tables) and its map <form>_db.json / .sql")]
+[doc("Write <project>.duckdb (a schema per form with submissions, repeats long and descriptions; datasets once; project tables) and its map <project>_db.json / .sql")]
 duckdb cfg=config: (stats cfg)
     uv run scto-duckdb --config {{ cfg }}
 
-[doc("Serve a form's built outputs to a local agent over stdio (survey-expert MCP); `just mcp <cfg> --form <form>` when the config has several")]
-mcp cfg=config *args:
-    uv run scto-mcp --config {{ cfg }} {{ args }}
+[doc("Serve the project's built outputs to a local agent over stdio (survey-expert MCP)")]
+mcp cfg=config:
+    uv run scto-mcp --config {{ cfg }}
 
 [doc("Ask about the form from the shell, e.g. `just survey var age`, `just survey db`; another form: `just config=data/x.toml survey info`")]
 survey *args:

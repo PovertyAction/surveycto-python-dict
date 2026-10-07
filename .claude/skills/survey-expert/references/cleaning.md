@@ -259,21 +259,23 @@ harder to find.
    repeat has a `<repeat>_count` question. Instance `n` is the n-th entry, **not** a
    choice code: map positions to codes through the routing variable after reshaping.
 2. **Suggested: work each repeat at its own level, from its long view.** `just duckdb`
-   writes `<repeat>` / `<repeat>_safe`: one row per instance with any value, keyed by
+   writes `<form>.<repeat>` / `<form>.<repeat>_safe` in the project database: one row
+   per instance with any value, keyed by
    `KEY` and one `<repeat>_index` per repeat from the outermost down, each field
    under its name without the instance suffix. A household roster becomes one row per
    member. Clean and aggregate at that level, then merge the results back to the
    submission table on `KEY`.
    ```python
-   con = duckdb.connect("data/out/<form>/<form>.duckdb", read_only=True)
+   con = duckdb.connect("data/out/<project>/<project>.duckdb", read_only=True)
    roster = con.sql(
-       "SELECT KEY, roster_index AS member, member_name, member_age FROM roster_safe"
+       "SELECT KEY, roster_index AS member, member_name, member_age "
+       "FROM baseline.roster_safe"
    ).df()
    assert not roster.duplicated(["KEY", "member"]).any()
 
    # The view keeps every instance with a value, so compare with the declared count:
    # an instance past it was filled and then dropped from the count.
-   counts = con.sql("SELECT KEY, roster_count FROM submissions_safe").df()
+   counts = con.sql("SELECT KEY, roster_count FROM baseline.submissions_safe").df()
    ```
 3. **Merge back with the identifiers and a declared cardinality:**
    ```python

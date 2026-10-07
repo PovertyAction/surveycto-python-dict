@@ -20,6 +20,6 @@ blacklist = []
 # seed = 0
 # id_patterns = { NATIONAL_ID = '\b\d{8,10}\b' }
 
-# The columns that identify a row of a dataset the form reads (checked unique).
+# The columns that identify a dataset's rows (checked unique), by its flow.json id.
 # [datasets.my_dataset]
 # key = ["hhid", "round"]

@@ -98,7 +98,7 @@ def test_survey_info(store):
 def test_server_registers_the_tools(store):
     from surveycto_python_dict.mcp_server import make_server
 
-    server = make_server(store)
+    server = make_server({"farm": store})
     names = {t.name for t in asyncio.run(server.list_tools())}
     assert names == {
         "lookup_variable",
@@ -255,7 +255,7 @@ def test_lookup_shows_where_a_value_comes_from(store):
 def test_datasets_describe_the_join_to_the_form(store):
     out = store.get_datasets()
     assert out.startswith("prev_round: 2 rows, 2 columns")
-    assert "prev_round_safe" in out
+    assert "In out.duckdb: dataset.farm/prev_round.csv (every column, plus row)" in out
     assert (
         "prev_round.phone = ${phone} (in submissions); "
         "unique in the dataset: one dataset row per match"
