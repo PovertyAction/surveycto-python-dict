@@ -9,9 +9,14 @@ config := "config.toml"
 default:
     @just --list
 
-[doc("Install the environment, including the spaCy models")]
+[doc("Install the environment, including the spaCy models, and the pre-commit hooks")]
 setup:
     uv sync
+    uv run pre-commit install
+
+[doc("Run the pre-commit hooks (ruff, codespell, markdownlint, ...) on every file")]
+lint:
+    uv run pre-commit run --all-files
 
 [doc("Download every form's XML and submissions (wide JSON) and every server dataset into <out_dir>")]
 pull cfg=config:

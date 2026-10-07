@@ -303,8 +303,8 @@ harder to find.
    for an all-null row; `min_count=1` is missing only when all are. Comment which rule
    each aggregate uses.
 2. **Sparse components:** when components are mostly skipped by design, zero-fill the
-   structural missings from the gates first, then use the sources' `_dk` columns; a plain
-   `isna().any(axis=1)` would make almost everyone missing.
+   structural missing values from the gates first, then use the sources' `_dk`
+   columns; a plain `isna().any(axis=1)` would make almost everyone missing.
 3. **Group sums hide missing:** `groupby().sum()` skips nulls and gives 0 for an
    all-null group. Count the missing values per group alongside the sum and decide what
    the total means when some are missing.

@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD029 -->
 # Build prompt: `surveycto-api-extractor` (working name)
 
 Paste everything below the line into a fresh Claude Code session started in the new,
@@ -38,7 +39,7 @@ data as JSON and its compiled XForm XML, and from those produces the same knowle
 surface `surveycto-extractor` produces from an `.xlsx` + `.dta`, plus a PII
 classification per variable:
 
-```
+```text
 SurveyCTO API ──> form XML ──> contract (xml_contract) ──> questions.json + sections
              └──> wide JSON ─┐                                    │
              └──> datasets the XML references (pulldata/search) ──┤
@@ -50,8 +51,8 @@ SurveyCTO API ──> form XML ──> contract (xml_contract) ──> questions
              all of the above ──> survey-expert MCP server (upstream, unchanged schema)
 ```
 
-No Stata outputs, no `.dta`, no media/attachment downloads. Everything is pandas/pyarrow
-+ parquet.
+No Stata outputs, no `.dta`, no media/attachment downloads. Everything is
+pandas/pyarrow and parquet.
 
 ## 2. Projects to start from (read these first)
 
@@ -138,6 +139,7 @@ Not code-first; produces the facts and fixtures every later test depends on.
 `pull_dataset(dataset_id)`, `pull_form_files(form_id)`.
 
 Tests (HTTP mocked from stage-0 recordings, no network):
+
 - each function hits the URL recorded in `docs/api-endpoints.md`;
 - `key_path` sends the key as multipart `private_key` and the bytes never appear in
   logs, exceptions or reprs;
@@ -268,6 +270,7 @@ Block per variable:
 ### Stage 7 -- MCP (upstream PR)
 
 In `surveycto_extractor_takeout`, `mcp_server/survey_server.py`:
+
 - render the `pii` block in `lookup_variable`, `lookup_variables`,
   `get_variable_neighborhood`;
 - render `parquet{arrow_type}` where it renders `stata{type}`;

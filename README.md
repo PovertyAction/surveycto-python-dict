@@ -8,7 +8,7 @@ the forms chain through the datasets they publish and read.
 ## Use
 
 ```sh
-just setup                           # uv sync, including the spaCy models
+just setup                           # uv sync, including the spaCy models; pre-commit hooks
 cp config.example.toml config.toml   # set forms (and server_datasets)
 just pull                            # every form's XML + submissions, every server dataset -> <out_dir>
 just build                           # per form: dictionaries, parquet, graph, PII review; flow.json; rerun any time
@@ -20,6 +20,9 @@ just mcp                             # survey-expert MCP server over stdio, one 
 
 Each recipe takes another config as an argument (`just build path/to/config.toml`);
 `just` lists them all.
+
+The repo follows IPA's `ipa-python-template`: `just lint` runs the pre-commit hooks
+(ruff, codespell, markdownlint) that CI runs on every pull request to `main`.
 
 Copy `.env.example` to `.env` and fill it in: `SCTO_SERVER` (the subdomain),
 `SCTO_USER`, `SCTO_PASSWORD`, `SCTO_KEY_PATH` for encrypted forms, and
@@ -142,7 +145,7 @@ the description, the entities with where each lives, and the keys not yet named.
 `just duckdb` (after `just stats`) writes `<project>.duckdb`, one database for the whole
 project. A database holds schemas and a schema holds tables and views:
 
-```
+```text
 <project>.duckdb
 ├── <form>          one schema per form
 │   ├── submissions, submissions_safe           views over <form>.parquet
