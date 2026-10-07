@@ -90,10 +90,18 @@ def test_submissions_reads_the_parquet(database):
     columns = con.sql("SELECT * FROM farm.submissions LIMIT 0").columns
     assert (
         columns
-        == con.sql('SELECT "column" FROM farm.dictionary ORDER BY variable_order')
+        == con.sql(
+            """SELECT "column" FROM farm.dictionary WHERE "table" = 'submissions'
+            ORDER BY variable_order"""
+        )
         .df()["column"]
         .tolist()
     )
+    # The repeat's columns are read from its long view.
+    assert "plot_size_1" not in columns
+    assert con.sql(
+        """SELECT DISTINCT "table" FROM farm.dictionary WHERE question = 'plot_size'"""
+    ).fetchall() == [("plot",)]
 
 
 def test_safe_view_has_only_cleared_columns(database):
@@ -102,7 +110,8 @@ def test_safe_view_has_only_cleared_columns(database):
     cleared = (
         con.sql(
             """SELECT "column" FROM farm.dictionary
-           WHERE pii_status IN ('cleared_by_form', 'whitelisted') ORDER BY variable_order"""
+           WHERE pii_status IN ('cleared_by_form', 'whitelisted')
+             AND "table" = 'submissions' ORDER BY variable_order"""
         )
         .df()["column"]
         .tolist()
@@ -268,7 +277,7 @@ def test_structure_comes_from_the_finished_database(database):
         "--   join: farm.plot_safe.KEY = farm.submissions_safe.KEY  (many to one)"
         in out
     )
-    assert "-- table farm.dictionary: one row per submissions column" in out
+    assert "-- table farm.dictionary: one row per parquet column; table names" in out
     # The datasets the form joins come with it.
     assert "-- view dataset.farm/prev_round.csv_safe:" in out
     with pytest.raises(ValueError, match="no schema 'nope'"):

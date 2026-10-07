@@ -148,7 +148,7 @@ project. A database holds schemas and a schema holds tables and views:
 ```text
 <project>.duckdb
 ├── <form>          one schema per form
-│   ├── submissions, submissions_safe           views over <form>.parquet
+│   ├── submissions, submissions_safe           views over <form>.parquet, columns outside repeats
 │   ├── <repeat>, <repeat>_safe                 views over long/<repeat>.parquet
 │   └── dictionary, questions, choices, edges, dataset_links, dataset_codebook, stats
 ├── dataset         each dataset once, under its flow.json id
@@ -159,9 +159,11 @@ project. A database holds schemas and a schema holds tables and views:
 
 Data stays in its files: the views read `<form>.parquet`, `long/<repeat>.parquet` and
 the dataset CSVs, so the database works next to its `out_dir` and `just duckdb` rebuilds
-it in seconds. The description and project tables are copies of the JSON outputs. A
-CSV attached to a form sits in `dataset` as `"<form>/<file>.csv"`. `[datasets.<id>] key`
-in the config names the columns that identify a dataset's rows, checked unique.
+it in seconds. A repeat's columns are read from its long view, and
+`<form>.dictionary.table` names each column's view. The description and project tables
+are copies of the JSON outputs. A CSV attached to a form sits in `dataset` as
+`"<form>/<file>.csv"`. `[datasets.<id>] key` in the config names the columns that
+identify a dataset's rows, checked unique.
 
 `joins` connects the forms: a reader's field, the dataset column it matches, and the
 publisher's field behind that column. Each form's `dataset_links` gives the same
