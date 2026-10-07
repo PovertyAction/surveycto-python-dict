@@ -29,6 +29,22 @@ def plain_label(text: str) -> str:
     return " ".join(_TAG_RE.sub(" ", text).split())
 
 
+def choice_labels(choices: list[dict]) -> dict[str, str]:
+    """Return each choice value's label; a value that several lists of a ``search()``
+    select label differently gets their labels joined with `` | ``.
+    """
+    labels: dict[str, list[str]] = {}
+    for c in choices:
+        found = labels.setdefault(c["value"], [])
+        if c["label"] not in found:
+            found.append(c["label"])
+    return {value: " | ".join(found) for value, found in labels.items()}
+
+
+def _when(choice: dict) -> str:
+    return ", ".join(f"{k} = {v}" for k, v in choice.get("when", {}).items())
+
+
 def gates(q: dict) -> list[str]:
     """Return what must hold for ``q`` to be asked: its groups' relevances, then its own."""
     return [*q["group_relevances"], *([q["relevance"]] if q["relevance"] else [])]
@@ -467,6 +483,13 @@ class SurveyStore:
                 lines.append(f"Group relevance ({gate['group']}): {gate['relevance']}")
         if q["choices_withheld"]:
             lines.append(_withheld(q))
+        elif q["choices"] and any("when" in c for c in q["choices"]):
+            lists = dict.fromkeys(_when(c) for c in q["choices"])
+            lines.append(
+                f"Choices: {len(q['choices'])} in {len(lists)} lists, by the dataset "
+                f"rows the submissions reach ({'; '.join(lists)}); get_choice_list "
+                "shows them"
+            )
         elif q["choices"]:
             lines.append(
                 "Choices: "
@@ -541,9 +564,17 @@ class SurveyStore:
             return f"{name} ({q['type']}): {_withheld(q)}"
         if not q["choices"]:
             return f"{name} ({q['type']}) is not a select question."
-        return f"{name} ({q['type']}):\n" + "\n".join(
-            f"  {c['value']} = {c['label']}" for c in q["choices"]
-        )
+        lists: dict[str, list[dict]] = {}
+        for c in q["choices"]:
+            lists.setdefault(_when(c), []).append(c)
+        lines = [f"{name} ({q['type']}):"]
+        for when, choices in lists.items():
+            pad = "  "
+            if when:
+                lines.append(f"  where {when}:")
+                pad = "    "
+            lines += [f"{pad}{c['value']} = {c['label']}" for c in choices]
+        return "\n".join(lines)
 
     def get_gate_chain(self, name: str, depth: int = 3) -> str:
         """Show the conditions that must hold for ``name`` to be asked, and their gates."""

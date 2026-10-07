@@ -17,6 +17,7 @@ from collections import Counter
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from surveycto_python_dict.survey import choice_labels
 from surveycto_python_dict.xml_contract import FormContract
 
 _REF_RE = re.compile(r"\$\{([^}]+)\}")
@@ -121,17 +122,16 @@ def build_dictionary(
             if "choice_value" in meta:
                 # A select_multiple binary stands for one choice: 1 chosen, 0 not.
                 entry["choice_value"] = meta["choice_value"]
-                label = next(
-                    c["label"]
-                    for c in question["choices"]
-                    if c["value"] == meta["choice_value"]
-                )
+                label = choice_labels(question["choices"])[meta["choice_value"]]
                 entry["value_labels"] = [
                     {"value": "1", "label": label},
                     {"value": "0", "label": "not chosen"},
                 ]
             elif question["type"] == "select_one" and not question["choices_withheld"]:
-                entry["value_labels"] = question["choices"]
+                entry["value_labels"] = [
+                    {"value": value, "label": label}
+                    for value, label in choice_labels(question["choices"]).items()
+                ]
             entry["survey"] = {k: question[k] for k in _SURVEY_KEYS}
             entry["survey"]["original_variable_name"] = question["variable_name"]
             entry["survey"]["group_path"] = "/".join(question["group_path"])

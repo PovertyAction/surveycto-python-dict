@@ -229,6 +229,7 @@ def build_questions(contract: FormContract) -> list[dict]:
                 "choices": (
                     [
                         {"value": c["value"], "label": refs(c["label"])}
+                        | ({"when": c["when"]} if "when" in c else {})
                         for c in node.choice_items
                     ]
                     if is_select

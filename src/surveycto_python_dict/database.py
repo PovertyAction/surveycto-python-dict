@@ -125,8 +125,8 @@ _DESCRIPTIONS = {
     },
     "questions": {"grain": "one row per question", "key": ["question"], "joins": []},
     "choices": {
-        "grain": "one row per choice of a select",
-        "key": ["question", "value"],
+        "grain": "one row per choice of a select; when: the search() filter values of its list",
+        "key": ["question", "when", "value"],
         "joins": ["{s}.choices.question = {s}.questions.question"],
     },
     "edges": {
@@ -321,12 +321,13 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                     "question": q["variable_name"],
                     "value": c["value"],
                     "label": c["label"],
+                    "when": json.dumps(c["when"]) if "when" in c else None,
                 }
                 for q in questions
                 if q["choices"] and not q["choices_withheld"]
                 for c in q["choices"]
             ],
-            columns=["question", "value", "label"],
+            columns=["question", "value", "label", "when"],
         ),
         "edges": pd.DataFrame(graph["edges"], columns=["source", "target", "type"]),
         "dataset_codebook": pd.DataFrame(

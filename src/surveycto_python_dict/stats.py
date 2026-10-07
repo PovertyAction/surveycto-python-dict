@@ -17,7 +17,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 
 from surveycto_python_dict.pii import FLAGGED
-from surveycto_python_dict.survey import gates, rule
+from surveycto_python_dict.survey import choice_labels, gates, rule
 from surveycto_python_dict.xpath import (
     UnsupportedExpression,
     compile_expression,
@@ -336,7 +336,7 @@ def _describe(valid: list, entry: dict, q: dict | None, is_binary: bool) -> dict
         return {"selected": selected, "selected_share": _fmt(selected / len(valid))}
     # A select_one gets frequencies whether its codes are stored as text or integers.
     if q is not None and q["type"] == "select_one":
-        labels = {c["value"]: c["label"] for c in q["choices"]}
+        labels = choice_labels(q["choices"])
         counts = {code: 0 for code in labels}
         for v in valid:
             counts[str(v)] = counts.get(str(v), 0) + 1
