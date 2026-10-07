@@ -26,6 +26,7 @@ import json
 import os
 import tomllib
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, fields
 from pathlib import Path
 
@@ -278,16 +279,19 @@ def build_form(
         "pii_review": out / f"{form}_pii_review.xlsx",
         "dataset_codebook": out / f"{form}_dataset_codebook.json",
     }
-    write_json(questions, paths["questions"])
-    write_sections(questions, paths["sections"])
-    pq.write_table(table, paths["parquet"])
-    # The two largest outputs, read by programs: compact is a third smaller and
-    # several times faster to write.
-    write_json(vardict, paths["dictionary"], indent=None)
-    write_json(build_graph(questions, vardict), paths["graph"], indent=None)
-    write_pii_review(table, vardict, paths["pii_review"])
-    codebook = dataset_codebook(datasets, questions, cfg.pii, analyzer, scanned)
-    write_json(codebook, paths["dataset_codebook"])
+    # pyarrow writes the parquet outside the GIL while the JSON is written here.
+    with ThreadPoolExecutor(1) as background:
+        parquet = background.submit(pq.write_table, table, paths["parquet"])
+        write_json(questions, paths["questions"])
+        write_sections(questions, paths["sections"])
+        # The two largest outputs, read by programs: compact is a third smaller and
+        # several times faster to write.
+        write_json(vardict, paths["dictionary"], indent=None)
+        write_json(build_graph(questions, vardict), paths["graph"], indent=None)
+        write_pii_review(table, vardict, paths["pii_review"])
+        codebook = dataset_codebook(datasets, questions, cfg.pii, analyzer, scanned)
+        write_json(codebook, paths["dataset_codebook"])
+        parquet.result()
 
     fallbacks = vardict["summary"]["n_cast_fallback"]
     print(
