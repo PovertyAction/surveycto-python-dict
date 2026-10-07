@@ -81,8 +81,8 @@ def _short(text: str, limit: int = 100) -> str:
 def _withheld(q: dict) -> str:
     columns = q["choices"][0]
     return (
-        f"choices withheld ({', '.join(q['choices_withheld'])}); read from the dataset "
-        f"in `{q['appearance']}`, value column `{columns['value']}`, "
+        f"choices not listed ({', '.join(q['choices_withheld'])}); they are in the "
+        f"dataset of `{q['appearance']}`, value column `{columns['value']}`, "
         f"label column `{columns['label']}`"
     )
 
@@ -525,8 +525,8 @@ class SurveyStore:
             )
         if q["choices_per_submission"] and q["type"] == "select_multiple":
             lines.append(
-                "Binaries: only for the codes someone picked; the form filters the "
-                "list per submission, so an unoffered choice has no column."
+                "Binaries: only for the codes someone picked (the form filters the "
+                "list per submission, or the list stays in its dataset)."
             )
         if q["data_source"]:
             lines.append(f"Data source: {_source_line(q['data_source'])}")

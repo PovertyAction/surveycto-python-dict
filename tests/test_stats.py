@@ -171,6 +171,7 @@ def test_integer_select_one_gets_frequencies_not_a_mean():
     q = {
         "type": "select_one",
         "choices": [{"value": "0", "label": "No"}, {"value": "1", "label": "Yes"}],
+        "choices_withheld": None,
     }
     out = _describe([1, 1, 0], entry, q, is_binary=False)
     assert out == {"frequencies": "0 No: 1 (33.3%); 1 Yes: 2 (66.7%)"}

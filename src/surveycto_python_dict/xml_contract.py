@@ -160,9 +160,19 @@ class Node:
     choice_items: list[dict] = field(default_factory=list)
     # Why a `search()` select's dataset choices were left out, e.g. ["presidio:PERSON"].
     choices_withheld: list[str] | None = None
-    # The list is filtered per submission (an itemset filter or a search() filter on a
-    # field): each submission sees part of choice_items.
+    # A `search()` select's choices as read from its dataset, also when they are left
+    # out of the outputs: they decode column names and type the data. Never exported.
+    choice_universe: list[dict] | None = None
+    # Binaries only for the codes someone picked: the list is filtered per submission
+    # (an itemset filter or a search() filter on a field), or kept in its dataset.
     choices_per_submission: bool = False
+
+    @property
+    def all_choices(self) -> list[dict]:
+        """Every choice the select can take, listed in the outputs or not."""
+        return (
+            self.choice_items if self.choice_universe is None else self.choice_universe
+        )
 
 
 # search('dataset','mode','col','val'[,'col2','val2'...]) on a select's appearance.
@@ -404,14 +414,14 @@ class FormContract:
     def _universe(self, node: Node) -> dict:
         """Return ``node``'s choices by the token SurveyCTO writes into a column name.
 
-        Read from ``node.choice_items`` when first asked for that list, so a
+        Read from ``node.all_choices`` when first asked for that list, so a
         ``search()`` select's choices count once they are read from its dataset. Two
         values that sanitise to one token map to ``None``: ambiguous.
         """
-        key = (node.path, id(node.choice_items))
+        key = (node.path, id(node.all_choices))
         if key not in self._universes:
             universe: dict = {}
-            for item in node.choice_items:
+            for item in node.all_choices:
                 value = str(item["value"])
                 token = sanitize_choice_value(value)
                 if token in universe and (universe[token] or (value,))[0] != value:

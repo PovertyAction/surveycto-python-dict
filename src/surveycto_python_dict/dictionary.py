@@ -140,7 +140,12 @@ def build_dictionary(
             if "choice_value" in meta:
                 # A select_multiple binary stands for one choice: 1 chosen, 0 not.
                 entry["choice_value"] = meta["choice_value"]
-                label = choice_labels(question["choices"])[meta["choice_value"]]
+                # A list kept in its dataset is not in the outputs, nor its labels.
+                label = (
+                    "(label in the dataset)"
+                    if question["choices_withheld"]
+                    else choice_labels(question["choices"])[meta["choice_value"]]
+                )
                 entry["value_labels"] = [
                     {"value": "1", "label": label},
                     {"value": "0", "label": "not chosen"},

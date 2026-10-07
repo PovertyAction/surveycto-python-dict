@@ -341,13 +341,15 @@ def _describe(valid: list, entry: dict, q: dict | None, is_binary: bool) -> dict
         return {"selected": selected, "selected_share": _fmt(selected / len(valid))}
     # A select_one gets frequencies whether its codes are stored as text or integers.
     if q is not None and q["type"] == "select_one":
-        labels = choice_labels(q["choices"])
+        # A list kept in its dataset has no labels here, only the codes found.
+        labels = {} if q["choices_withheld"] else choice_labels(q["choices"])
         counts = {code: 0 for code in labels}
         for v in valid:
             counts[str(v)] = counts.get(str(v), 0) + 1
         return {
             "frequencies": "; ".join(
-                f"{code} {labels.get(code, '(not a choice)')}: {n} ({n / len(valid):.1%})"
+                f"{code} {labels.get(code, '(in the dataset)' if q['choices_withheld'] else '(not a choice)')}: "
+                f"{n} ({n / len(valid):.1%})"
                 for code, n in counts.items()
             )
         }

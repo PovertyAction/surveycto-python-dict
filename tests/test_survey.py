@@ -240,7 +240,7 @@ def test_withheld_choices_name_the_dataset_columns_not_choices(store):
         choices_withheld=["presidio:PERSON"],
     )
     out = store.get_choice_list("crop")
-    assert "choices withheld (presidio:PERSON)" in out
+    assert "choices not listed (presidio:PERSON)" in out
     assert "value column `crop_id`, label column `crop_name`" in out
     assert "crop_id = crop_name" not in out
 

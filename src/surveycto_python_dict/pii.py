@@ -68,7 +68,8 @@ FLAGGED = {"contains_pii", "may_contain_pii"}
 _MAX_HIT_KEYS = 5
 # A search() list longer than this stays in its dataset: a filter on a field can leave
 # every row of a large dataset as a possible choice, copied into each column.
-MAX_INLINE_CHOICES = 1000
+# A longer search() list stays in its dataset: the outputs name its columns.
+MAX_INLINE_CHOICES = 50
 
 
 class MissingSpacyModel(RuntimeError):
@@ -264,8 +265,10 @@ def screen_search_choices(
         if dataset not in tables:
             tables[dataset] = DatasetTable(datasets[dataset])
         universe = search_universe(node, tables[dataset], fields)
+        node.choice_universe = universe
         if len(universe) > MAX_INLINE_CHOICES:
             node.choices_withheld = [f"{len(universe)} choices"]
+            node.choices_per_submission = True
             continue
         if node.name not in config.whitelist and not config.no_personal_data:
             texts = sorted({t for c in universe for t in (c["value"], c["label"]) if t})
