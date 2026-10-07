@@ -60,11 +60,6 @@ survey *args:
 test:
     uv run pytest -q
 
-[doc("Lint and check formatting")]
-lint:
-    uv run ruff check src tests scripts
-    uv run ruff format --check src tests scripts
-
 [doc("Copy survey.py into the survey-expert skill as its standalone search_survey.py")]
 sync-skill:
     uv run python -c "import shutil; shutil.copyfile('src/surveycto_python_dict/survey.py', '.claude/skills/survey-expert/search_survey.py')"
