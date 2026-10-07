@@ -53,6 +53,10 @@ class Spy:
         self.inner = inner
         self.texts: list[str] = []
 
+    @property
+    def nlp_engine(self):
+        return self.inner.nlp_engine
+
     def analyze(self, text, language, **kwargs):
         self.texts.append(text)
         return self.inner.analyze(text=text, language=language, **kwargs)
@@ -107,6 +111,11 @@ def test_universe_keeps_literal_extras_and_applies_literal_filters(form):
 
 class NoHits:
     """An analyzer that finds nothing, for the clean path."""
+
+    class nlp_engine:  # noqa: N801
+        @staticmethod
+        def process_batch(texts, language, batch_size):
+            return ((t, None) for t in texts)
 
     def analyze(self, text, language, **kwargs):
         return []

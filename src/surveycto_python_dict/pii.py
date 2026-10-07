@@ -198,17 +198,28 @@ class _Rules:
         return [f"type:{q['type']}"] + (["pulldata"] if self._pulldata(q) else [])
 
 
-def _entities(value: str, config: PiiConfig, analyzer) -> set[str]:
-    return {
-        r.entity_type
-        for lang in config.languages
-        for r in analyzer.analyze(
-            text=value,
-            language=lang,
-            entities=[*config.entities, *config.id_patterns],
-            score_threshold=config.score_threshold,
-        )
-    }
+def _entities(texts: list[str], config: PiiConfig, analyzer) -> list[set[str]]:
+    """Return the entity types Presidio finds in each text.
+
+    spaCy reads the texts in batches, several times faster than one call per text,
+    and Presidio's recognizers then run on each text's parse.
+    """
+    wanted = [*config.entities, *config.id_patterns]
+    found: list[set[str]] = [set() for _ in texts]
+    for lang in config.languages:
+        parsed = analyzer.nlp_engine.process_batch(texts, lang, batch_size=256)
+        for hits, (text, artifacts) in zip(found, parsed, strict=True):
+            hits.update(
+                r.entity_type
+                for r in analyzer.analyze(
+                    text=text,
+                    language=lang,
+                    entities=wanted,
+                    score_threshold=config.score_threshold,
+                    nlp_artifacts=artifacts,
+                )
+            )
+    return found
 
 
 def screen_search_choices(
@@ -238,7 +249,7 @@ def screen_search_choices(
             continue
         if node.name not in config.whitelist and not config.no_personal_data:
             texts = sorted({t for c in universe for t in (c["value"], c["label"]) if t})
-            found = sorted({e for t in texts for e in _entities(t, config, analyzer)})
+            found = sorted(set().union(*_entities(texts, config, analyzer)))
             if found:
                 node.choices_withheld = [f"presidio:{e}" for e in found]
                 continue
@@ -259,8 +270,10 @@ def _scan(
             random.Random(config.seed).sample(distinct, config.max_distinct)
         )
     found: dict[str, set[str]] = {}
-    for value in distinct:
-        for t in _entities(value, config, analyzer):
+    for value, types in zip(
+        distinct, _entities(distinct, config, analyzer), strict=True
+    ):
+        for t in types:
             found.setdefault(t, set()).add(value)
     hits = set().union(*found.values()) if found else set()
     hit_keys = sorted({k for k, v in zip(keys, values, strict=True) if v in hits})

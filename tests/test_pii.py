@@ -34,6 +34,10 @@ class Spy:
         self.inner = inner
         self.texts: list[str] = []
 
+    @property
+    def nlp_engine(self):
+        return self.inner.nlp_engine
+
     def analyze(self, text, language, **kwargs):
         self.texts.append(text)
         return self.inner.analyze(text=text, language=language, **kwargs)
