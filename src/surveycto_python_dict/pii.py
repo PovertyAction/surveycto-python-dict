@@ -27,14 +27,15 @@ import warnings
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pyarrow as pa
-import spacy
-from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
-from presidio_analyzer.nlp_engine import NlpEngineProvider
 
 from surveycto_python_dict.contract import DatasetTable, search_universe
 from surveycto_python_dict.xml_contract import FormContract
+
+if TYPE_CHECKING:
+    from presidio_analyzer import AnalyzerEngine
 
 _DEVICE_COLUMNS = {
     "deviceid",
@@ -102,8 +103,14 @@ class PiiConfig:
             )
 
 
-def build_analyzer(config: PiiConfig) -> AnalyzerEngine:
+def build_analyzer(config: PiiConfig) -> "AnalyzerEngine":
     """Return a Presidio analyzer for the configured languages and ID patterns."""
+    # Imported here: spaCy and Presidio take a second to load, and only the build
+    # scans with them.
+    import spacy
+    from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
+    from presidio_analyzer.nlp_engine import NlpEngineProvider
+
     for lang, model in config.languages.items():
         if not spacy.util.is_package(model):
             raise MissingSpacyModel(

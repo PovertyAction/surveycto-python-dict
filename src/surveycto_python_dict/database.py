@@ -679,13 +679,9 @@ def write_database(
 
 def main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-duckdb``."""
-    import argparse
+    from surveycto_python_dict.cli import config_arg, dataset_csvs
 
-    from surveycto_python_dict.cli import dataset_csvs, load_config
-
-    parser = argparse.ArgumentParser(prog="scto-duckdb")
-    parser.add_argument("--config", type=Path, default=Path("config.toml"))
-    cfg = load_config(parser.parse_args(argv).config)
+    cfg = config_arg(argv)
     flow = _load(cfg.out_dir / "flow.json")
     path = write_database(
         cfg.out_dir,

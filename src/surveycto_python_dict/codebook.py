@@ -167,15 +167,11 @@ def write_codebook(form_dir: Path, form_id: str, sentinels: dict[int, str]) -> P
 
 def main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-codebook``."""
-    import argparse
-
     from dotenv import load_dotenv
 
-    from surveycto_python_dict.cli import env_sentinels, load_config
+    from surveycto_python_dict.cli import config_arg, env_sentinels
 
-    parser = argparse.ArgumentParser(prog="scto-codebook")
-    parser.add_argument("--config", type=Path, default=Path("config.toml"))
-    cfg = load_config(parser.parse_args(argv).config)
+    cfg = config_arg(argv)
     load_dotenv()
     sentinels = env_sentinels()
     for form in cfg.forms:

@@ -353,7 +353,8 @@ def build(
     return paths
 
 
-def _config_arg(argv: list[str] | None) -> Config:
+def config_arg(argv: list[str] | None) -> Config:
+    """Return the config named by ``--config`` (default ``config.toml``)."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=Path("config.toml"))
     return load_config(parser.parse_args(argv).config)
@@ -362,24 +363,24 @@ def _config_arg(argv: list[str] | None) -> Config:
 def pull_main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-pull``."""
     load_dotenv()
-    pull(_config_arg(argv), Client.from_env())
+    pull(config_arg(argv), Client.from_env())
 
 
 def build_main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-build``."""
     load_dotenv()
-    build(_config_arg(argv), env_sentinels())
+    build(config_arg(argv), env_sentinels())
 
 
 def flow_main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-flow``: rewrite ``flow.json`` and ``flow.md`` alone."""
-    write_flow(_config_arg(argv))
+    write_flow(config_arg(argv))
 
 
 def run_main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-run``: pull, then build."""
     load_dotenv()
-    cfg = _config_arg(argv)
+    cfg = config_arg(argv)
     sentinels = env_sentinels()
     pull(cfg, Client.from_env())
     build(cfg, sentinels)

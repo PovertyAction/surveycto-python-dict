@@ -366,15 +366,11 @@ def write_csv(rows: list[dict], path: Path) -> Path:
 
 def main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-stats``: write ``<form>_summary_stats.csv`` from built outputs."""
-    import argparse
-
     from dotenv import load_dotenv
 
-    from surveycto_python_dict.cli import env_sentinels, load_config
+    from surveycto_python_dict.cli import config_arg, env_sentinels
 
-    parser = argparse.ArgumentParser(prog="scto-stats")
-    parser.add_argument("--config", type=Path, default=Path("config.toml"))
-    cfg = load_config(parser.parse_args(argv).config)
+    cfg = config_arg(argv)
     load_dotenv()
     sentinels = env_sentinels()
     for form in cfg.forms:
