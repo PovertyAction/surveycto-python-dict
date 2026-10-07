@@ -2,6 +2,7 @@
 
 import pytest
 
+from surveycto_python_dict import pii
 from surveycto_python_dict.contract import search_universe
 from surveycto_python_dict.pii import PiiConfig, screen_search_choices
 from surveycto_python_dict.questions import build_questions
@@ -137,6 +138,23 @@ def test_blacklisted_list_is_withheld_and_never_read(form, analyzer):
     questions, spy = _screen(form, analyzer, PiiConfig(blacklist=("size",)))
     assert questions["size"]["choices_withheld"] == ["reviewed"]
     assert "small" not in spy.texts
+
+
+def test_no_item_naming_a_column_leaves_the_literals(form):
+    xml, datasets = form
+    node = parse_contract(xml).nodes["size"]
+    node.choice_items = [i for i in node.choice_items if i["value"] != "size_id"]
+    assert search_universe(node, datasets / "sizes.csv") == [
+        {"value": "-66", "label": "Other"}
+    ]
+
+
+def test_list_over_the_cap_stays_in_its_dataset(form, analyzer, monkeypatch):
+    monkeypatch.setattr(pii, "MAX_INLINE_CHOICES", 2)
+    questions, spy = _screen(form, analyzer)
+    assert questions["size"]["choices_withheld"] == ["3 choices"]
+    assert "small" not in spy.texts
+    assert [c["value"] for c in questions["town"]["choices"]] == ["21", "22"]
 
 
 def test_name_on_both_lists_raises():

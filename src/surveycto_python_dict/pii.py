@@ -60,6 +60,9 @@ _SAFE = {"cleared_by_form", "whitelisted"}
 _FLAGGED = {"contains_pii", "may_contain_pii"}
 # Enough KEYs to find examples; the review parquet has every flagged row.
 _MAX_HIT_KEYS = 5
+# A search() list longer than this stays in its dataset: a filter on a field can leave
+# every row of a large dataset as a possible choice, copied into each column.
+MAX_INLINE_CHOICES = 1000
 
 
 class MissingSpacyModel(RuntimeError):
@@ -205,10 +208,10 @@ def screen_search_choices(
 ) -> None:
     """Give each ``search()`` select its dataset choices when they hold no PII.
 
-    All or nothing: a blacklisted question, or any Presidio hit among the choices'
-    values and labels, withholds the whole list (``node.choices_withheld`` says why) and
-    the select keeps the items naming the dataset's columns. A whitelisted question
-    gets its list unscanned.
+    All or nothing: a blacklisted question, a list over ``MAX_INLINE_CHOICES``, or any
+    Presidio hit among the choices' values and labels withholds the whole list
+    (``node.choices_withheld`` says why) and the select keeps the items naming the
+    dataset's columns. A whitelisted question gets its list unscanned.
     """
     for node in contract.nodes.values():
         source = node.data_source
@@ -218,6 +221,9 @@ def screen_search_choices(
             node.choices_withheld = ["reviewed"]
             continue
         universe = search_universe(node, datasets[source["dataset"]])
+        if len(universe) > MAX_INLINE_CHOICES:
+            node.choices_withheld = [f"{len(universe)} choices"]
+            continue
         if node.name not in config.whitelist and not config.no_personal_data:
             texts = sorted({t for c in universe for t in (c["value"], c["label"]) if t})
             found = sorted({e for t in texts for e in _entities(t, config, analyzer)})

@@ -71,7 +71,8 @@ def search_universe(node: Node, csv_path: Path) -> list[dict]:
     """Return a ``search()`` select's choices from its dataset, one per value.
 
     The select's one ``<item>`` whose value is a dataset column names the value and
-    label columns; any other item is a literal choice, kept after the dataset's. The
+    label columns; any other item is a literal choice, kept after the dataset's. With
+    no such item the dataset adds nothing and the literals are the choices. The
     first column/text pair is searched with the mode (``matches``: equal,
     ``contains``: a substring); a second pair keeps the rows whose column equals its
     value, whatever the mode. A pair whose value is a field keeps every row, since it
@@ -80,8 +81,13 @@ def search_universe(node: Node, csv_path: Path) -> list[dict]:
     with open(csv_path, encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         rows = list(reader)
-    (columns,) = [i for i in node.choice_items if i["value"] in reader.fieldnames]
-    literals = [i for i in node.choice_items if i is not columns]
+    named = [i for i in node.choice_items if i["value"] in reader.fieldnames]
+    if len(named) > 1:
+        raise ValueError(f"{node.path}: several items name columns of {csv_path.name}")
+    literals = [i for i in node.choice_items if i not in named]
+    if not named:
+        return literals
+    (columns,) = named
     source = node.data_source
     tests = {"matches": str.__eq__, "contains": str.__contains__}
     if source["filter"] and source["mode"] not in tests:
