@@ -61,18 +61,18 @@ uv run scto-survey --config config.toml --form <form> <command>
 
 | Need | MCP tool | Shell (`<S> <command>`) |
 |---|---|---|
-| What a question or column is, and where a value read from a dataset comes from | `lookup_variable(form, name)` / `lookup_variables(form, names)` | `var <name> [<name> ...]` |
+| What a question or column is, and where a value read from a dataset comes from (more than 20 columns are summarised; `columns=True` lists each) | `lookup_variable(form, name)` / `lookup_variables(form, names)` | `var <name> [<name> ...] [--columns]` |
 | Find questions by words | `search_questions(form, query)` | `search <words>` |
 | A select's choices | `get_choice_list(form, name)` | `choices <name>` |
 | Why a question is asked | `get_gate_chain(form, name)` | `gates <name>` |
-| What feeds, gates or sits next to it | `get_variable_neighborhood(form, name, depth)` | `neighborhood <name> --depth N` |
-| Repeat groups | `get_repeat_structure(form)` | `repeats` |
+| What feeds, gates or constrains it, and the repeat it is in | `get_variable_neighborhood(form, name, depth)` | `neighborhood <name> --depth N` |
+| Repeat groups, then one repeat's members | `get_repeat_structure(form)` / `get_repeat_structure(form, repeat)` | `repeats [<repeat>]` |
 | Form overview | `get_survey_info(form)` | `info` |
 | The datasets a form reads and their joins | `get_datasets(form)` | `datasets` |
 | What the project is about: description, entities, candidate keys | `get_project()` | `project` |
 | How the forms chain: stages, publishers, readers | `get_flow()` | `flow` |
 | Where a dataset's columns come from and who reads them | `get_flow(dataset)` | `flow <dataset>` |
-| The project database: a summary, then one schema | `get_structure_db()` / `get_structure_db(schema)` | `db` / `db <schema>` |
+| The project database: a summary, one schema, one table's columns | `get_structure_db()` / `get_structure_db(schema)` / `get_structure_db(schema, table)` | `db` / `db <schema>` / `db <schema> <table>` |
 
 A name can be a question (`water_source`) or a column (`water_source_3`); a column
 lookup returns its question with every column it produced. Read the JSON files

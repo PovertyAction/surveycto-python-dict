@@ -36,14 +36,18 @@ def make_server(stores: dict[str, SurveyStore]) -> MCPServer:
     project = next(iter(stores.values()))
 
     @server.tool()
-    def lookup_variable(form: str, name: str) -> str:
-        """Describe a question or column: text, logic, choices, column stats and pii."""
-        return store(form).lookup_variable(name)
+    def lookup_variable(form: str, name: str, columns: bool = False) -> str:
+        """Describe a question or column: text, logic, choices, column stats and pii.
+
+        More than 20 columns (a repeat, a long choice list) are summarised; ``columns``
+        lists each.
+        """
+        return store(form).lookup_variable(name, columns)
 
     @server.tool()
-    def lookup_variables(form: str, names: list[str]) -> str:
+    def lookup_variables(form: str, names: list[str], columns: bool = False) -> str:
         """Describe several questions or columns of a form at once."""
-        return store(form).lookup_variables(names)
+        return store(form).lookup_variables(names, columns)
 
     @server.tool()
     def search_questions(form: str, query: str, max_results: int = 20) -> str:
@@ -67,13 +71,17 @@ def make_server(stores: dict[str, SurveyStore]) -> MCPServer:
 
     @server.tool()
     def get_variable_neighborhood(form: str, name: str, depth: int = 1) -> str:
-        """List calculation, gating, constraint and repeat links around a question."""
+        """List calculation, gating and constraint links around a question, and the
+        repeat it is in.
+        """
         return store(form).get_variable_neighborhood(name, depth)
 
     @server.tool()
-    def get_repeat_structure(form: str) -> str:
-        """Show a form's repeat groups, their nesting, counts and members."""
-        return store(form).get_repeat_structure()
+    def get_repeat_structure(form: str, repeat: str | None = None) -> str:
+        """Show a form's repeat groups, their nesting, counts and first members; with
+        ``repeat``, that repeat's members in full.
+        """
+        return store(form).get_repeat_structure(repeat)
 
     @server.tool()
     def get_datasets(form: str) -> str:
@@ -97,13 +105,13 @@ def make_server(stores: dict[str, SurveyStore]) -> MCPServer:
         return project.get_flow(dataset)
 
     @server.tool()
-    def get_structure_db(schema: str | None = None) -> str:
-        """Map <project>.duckdb: a summary of its schemas, or one schema in full.
+    def get_structure_db(schema: str | None = None, table: str | None = None) -> str:
+        """Map <project>.duckdb: a summary of its schemas, one schema, or one table.
 
         ``schema`` is a form's id (its tables, the datasets it joins and its joins to
-        other forms), ``dataset`` or ``main``.
+        other forms), ``dataset`` or ``main``; ``table`` lists one table's columns.
         """
-        return project.get_structure_db(schema)
+        return project.get_structure_db(schema, table)
 
     return server
 

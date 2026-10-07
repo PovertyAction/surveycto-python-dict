@@ -228,14 +228,6 @@ def build_graph(questions: list[dict], vardict: dict) -> dict:
                 {"source": r, "target": name, "type": kind} for r in refs if r in names
             ]
 
-    for group in members.values():
-        for left in group:
-            edges += [
-                {"source": left, "target": right, "type": "repeat_sibling"}
-                for right in group
-                if right != left
-            ]
-
     repeat_groups = {}
     for name, count_row in repeats.items():
         parents = repeat_chain(count_row["group_path"])

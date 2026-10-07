@@ -160,10 +160,8 @@ def test_graph_edges(graph):
     assert ("plots", "area") in _edges(graph, "gated_by")
     assert ("plots", "plot_crop") in _edges(graph, "group_gated_by")
     assert ("plots", "plot_count") in _edges(graph, "calculates_from")
-    assert _edges(graph, "repeat_sibling") == {
-        ("plot_crop", "plot_size"),
-        ("plot_size", "plot_crop"),
-    }
+    # A repeat's members are in repeat_groups, not linked pairwise.
+    assert _edges(graph, "repeat_sibling") == set()
 
 
 def test_graph_repeat_groups(graph):

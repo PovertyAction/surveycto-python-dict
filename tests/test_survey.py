@@ -264,3 +264,29 @@ def test_datasets_describe_the_join_to_the_form(store):
     assert "prev reads owner" in out
     assert "owner  non-null 2/2, distinct 1" in out
     assert "Fictional Owner" not in out
+
+
+def test_many_columns_are_summarised_and_listed_on_request(store, monkeypatch):
+    from surveycto_python_dict import survey
+
+    monkeypatch.setattr(survey, "_LISTED", 1)
+    out = store.lookup_variable("plot_crop")
+    assert "Columns: 4, plot_crop_1_1 ... " in out
+    assert "lookup_variable('plot_crop', columns=True)" in out
+    assert "plot_crop_2_2  " not in out
+    assert "plot_crop_2_2" in store.lookup_variable("plot_crop", columns=True)
+
+
+def test_neighborhood_names_the_repeat_instead_of_its_members(store):
+    out = store.get_variable_neighborhood("plot_size")
+    assert out.startswith("plot_size is in repeat plot with 2 questions")
+    assert "repeat_sibling" not in out
+
+
+def test_repeat_structure_lists_members_and_drills_into_one(store, monkeypatch):
+    from surveycto_python_dict import survey
+
+    monkeypatch.setattr(survey, "_LISTED", 1)
+    out = store.get_repeat_structure()
+    assert "members (2): plot_crop, ... 1 more; get_repeat_structure('plot')" in out
+    assert "plot_size" in store.get_repeat_structure("plot")
