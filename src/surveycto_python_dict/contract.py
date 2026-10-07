@@ -67,7 +67,29 @@ def form_entry(form_list_xml: bytes, form_id: str) -> FormEntry:
     raise KeyError(f"form {form_id!r} is not in the form list")
 
 
-def search_universe(node: Node, csv_path: Path) -> list[dict]:
+class DatasetTable:
+    """A dataset CSV read once, with its rows indexed by column value on demand."""
+
+    def __init__(self, csv_path: Path):
+        """Read ``csv_path`` (UTF-8, with or without BOM)."""
+        self.name = Path(csv_path).name
+        with open(csv_path, encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            self.rows = list(reader)
+        self.header = reader.fieldnames
+        self._index: dict[str, dict[str, list[dict]]] = {}
+
+    def where(self, column: str, value: str) -> list[dict]:
+        """Return the rows whose ``column`` equals ``value``, in file order."""
+        if column not in self._index:
+            index: dict[str, list[dict]] = {}
+            for row in self.rows:
+                index.setdefault(row[column], []).append(row)
+            self._index[column] = index
+        return self._index[column].get(value, [])
+
+
+def search_universe(node: Node, table: DatasetTable) -> list[dict]:
     """Return a ``search()`` select's choices from its dataset, one per value.
 
     The select's one ``<item>`` whose value is a dataset column names the value and
@@ -78,12 +100,9 @@ def search_universe(node: Node, csv_path: Path) -> list[dict]:
     value, whatever the mode. A pair whose value is a field keeps every row, since it
     is decided per submission.
     """
-    with open(csv_path, encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-    named = [i for i in node.choice_items if i["value"] in reader.fieldnames]
+    named = [i for i in node.choice_items if i["value"] in table.header]
     if len(named) > 1:
-        raise ValueError(f"{node.path}: several items name columns of {csv_path.name}")
+        raise ValueError(f"{node.path}: several items name columns of {table.name}")
     literals = [i for i in node.choice_items if i not in named]
     if not named:
         return literals
@@ -97,6 +116,9 @@ def search_universe(node: Node, csv_path: Path) -> list[dict]:
         for i, (column, value) in enumerate(source["filter"].items())
         if value is not None
     ]
+    # An equality pair narrows the scan to the rows it can keep.
+    exact = next(((c, v) for c, v, test in pairs if test is str.__eq__), None)
+    rows = table.where(*exact) if exact else table.rows
     choices: dict[str, str] = {}
     for row in rows:
         if all(test(row[column], value) for column, value, test in pairs):

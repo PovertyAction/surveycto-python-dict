@@ -33,7 +33,7 @@ import spacy
 from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 
-from surveycto_python_dict.contract import search_universe
+from surveycto_python_dict.contract import DatasetTable, search_universe
 from surveycto_python_dict.xml_contract import FormContract
 
 _DEVICE_COLUMNS = {
@@ -213,6 +213,7 @@ def screen_search_choices(
     (``node.choices_withheld`` says why) and the select keeps the items naming the
     dataset's columns. A whitelisted question gets its list unscanned.
     """
+    tables: dict[str, DatasetTable] = {}
     for node in contract.nodes.values():
         source = node.data_source
         if not source or source["kind"] != "search":
@@ -220,7 +221,10 @@ def screen_search_choices(
         if node.name in config.blacklist:
             node.choices_withheld = ["reviewed"]
             continue
-        universe = search_universe(node, datasets[source["dataset"]])
+        dataset = source["dataset"]
+        if dataset not in tables:
+            tables[dataset] = DatasetTable(datasets[dataset])
+        universe = search_universe(node, tables[dataset])
         if len(universe) > MAX_INLINE_CHOICES:
             node.choices_withheld = [f"{len(universe)} choices"]
             continue
