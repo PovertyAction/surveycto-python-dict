@@ -812,16 +812,21 @@ class SurveyStore:
         )
 
 
-def _open(config: Path | None, directory: Path, form: str | None) -> SurveyStore:
+def _open(
+    config: Path | None, directory: Path, form: str | None, project: bool = False
+) -> SurveyStore:
     """Open a form's outputs named by a config file, or the one form in ``directory``.
 
-    A config with several forms needs ``form``.
+    A config with several forms needs ``form``, except for a ``project`` command,
+    which reads the project's files through any form.
     """
     if config is not None:
         import tomllib
 
         data = tomllib.loads(config.read_text(encoding="utf-8"))
         forms = data["forms"]
+        if form is None and project:
+            form = forms[0]
         if form is None:
             if len(forms) > 1:
                 raise ValueError(f"the config has several forms; pass --form: {forms}")
@@ -880,7 +885,9 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
     args = parser.parse_args(argv)
 
     if store is None:
-        store = _open(args.config, args.dir, args.form)
+        store = _open(
+            args.config, args.dir, args.form, args.command in ("project", "flow", "db")
+        )
     answer = {
         "var": lambda: store.lookup_variables(args.names, args.columns),
         "search": lambda: store.search_questions(" ".join(args.query), args.max),

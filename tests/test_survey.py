@@ -290,3 +290,12 @@ def test_repeat_structure_lists_members_and_drills_into_one(store, monkeypatch):
     out = store.get_repeat_structure()
     assert "members (2): plot_crop, ... 1 more; get_repeat_structure('plot')" in out
     assert "plot_size" in store.get_repeat_structure("plot")
+
+
+def test_project_commands_need_no_form(store, capsys):
+    from surveycto_python_dict.survey import main
+
+    config = store.form_dir.parent.parent / "two.toml"
+    config.write_text('forms = ["farm", "visit"]\nout_dir = "out"\n', encoding="utf-8")
+    main(["--config", str(config), "flow"])
+    assert "Stage 1:\n  farm" in capsys.readouterr().out
