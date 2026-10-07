@@ -408,3 +408,20 @@ def test_joins_connect_a_reader_field_to_the_publisher_field():
     assert structure["joins"]["joins"] == [
         "visit.submissions.visit_hh = listing.submissions.hhid  (through dataset.hh.hhid)"
     ]
+
+
+def test_outputs_writes_stats_codebook_and_database(tmp_path, analyzer, monkeypatch):
+    from surveycto_python_dict.cli import outputs_main
+
+    config = tmp_path / "config.toml"
+    config.write_text('forms = ["farm"]\nout_dir = "farmproject"\n', encoding="utf-8")
+    cfg = load_config(config)
+    write_pull(cfg, "phone,owner\n3000000000,Fictional Owner\n")
+    build(cfg, SENTINELS, analyzer)
+    monkeypatch.setenv("SCTO_SENTINELS", "-99=Don't know;-88=Refused")
+    outputs_main(["--config", str(config)])
+    form_dir = cfg.form_dir("farm")
+    assert (form_dir / "farm_summary_stats.csv").exists()
+    assert (form_dir / "farm_codebook.xlsx").exists()
+    con = duckdb.connect(str(cfg.out_dir / "farmproject.duckdb"), read_only=True)
+    assert con.sql("SELECT count(*) FROM farm.stats").fetchone() == (29,)

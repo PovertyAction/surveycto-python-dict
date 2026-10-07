@@ -26,7 +26,7 @@ import json
 import os
 import tomllib
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass, fields
 from pathlib import Path
 
@@ -381,6 +381,28 @@ def build_main(argv: list[str] | None = None) -> None:
 def flow_main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-flow``: rewrite ``flow.json`` and ``flow.md`` alone."""
     write_flow(config_arg(argv))
+
+
+def outputs_main(argv: list[str] | None = None) -> None:
+    """Entry point for ``scto-outputs``: the stats, then the codebooks and the database
+    at once, since each reads the stats and writes only its own files.
+    """
+    import sys
+
+    from surveycto_python_dict import codebook, database
+    from surveycto_python_dict.stats import write_form_stats
+
+    argv = sys.argv[1:] if argv is None else argv
+    load_dotenv()
+    cfg = config_arg(argv)
+    sentinels = env_sentinels()
+    stats = {f: write_form_stats(cfg.form_dir(f), f, sentinels) for f in cfg.forms}
+    with ProcessPoolExecutor(1) as other:
+        db = other.submit(database.main, argv)
+        for form in cfg.forms:
+            path = codebook.write_codebook(cfg.form_dir(form), form, stats[form])
+            print(f"[codebook] {form} -> {path}")
+        db.result()
 
 
 def run_main(argv: list[str] | None = None) -> None:

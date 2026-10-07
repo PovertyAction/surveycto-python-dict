@@ -30,8 +30,9 @@ flow cfg=config:
 build cfg=config:
     uv run scto-build --config {{ cfg }}
 
-[doc("Every output from the raw pull: build, codebook (with the stats), duckdb. Rerun after editing [pii] lists")]
-outputs cfg=config: (build cfg) (codebook cfg) (duckdb cfg)
+[doc("Every output from the raw pull: build, the stats, then codebook and duckdb at once. Rerun after editing [pii] lists")]
+outputs cfg=config: (build cfg)
+    uv run scto-outputs --config {{ cfg }}
 
 [doc("Pull, then every output")]
 run cfg=config: (pull cfg) (outputs cfg)

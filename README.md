@@ -15,6 +15,7 @@ just build                           # per form: dictionaries, parquet, graph, P
 just stats                           # <form>_summary_stats.csv over the rows where each question was asked
 just codebook                        # <form>_codebook.xlsx for PIs (Variables + Summary stats) and the stats CSV
 just duckdb                          # <project>.duckdb: a schema per form, datasets once, the project tables
+just outputs                         # build, the stats, then codebook and duckdb at once
 just mcp                             # survey-expert MCP server over stdio, one per project
 ```
 
