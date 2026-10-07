@@ -138,10 +138,10 @@ import duckdb
 con = duckdb.connect("data/out/<project>/<project>.duckdb", read_only=True)
 long = con.sql("SELECT * FROM <form>.<repeat>_safe").df()
 chained = con.sql("""
-    SELECT s2.KEY, s1.KEY AS stage1_key
-    FROM stage2.submissions_safe s2
-    JOIN dataset.households_safe d ON d.hhid = s2.hhid
-    JOIN stage1.submissions_safe s1 ON s1.hhid = d.hhid
+    SELECT v.KEY, l.KEY AS listing_key
+    FROM visit.submissions_safe v
+    JOIN dataset.households_safe d ON d.hhid = v.hhid
+    JOIN listing.submissions_safe l ON l.hhid = d.hhid
 """).df()
 ```
 
