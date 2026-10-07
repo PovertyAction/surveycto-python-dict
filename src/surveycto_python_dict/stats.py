@@ -364,6 +364,21 @@ def write_csv(rows: list[dict], path: Path) -> Path:
     return path
 
 
+def write_form_stats(
+    form_dir: Path, form_id: str, sentinels: dict[int, str]
+) -> list[dict]:
+    """Write ``<form>_summary_stats.csv`` and report it; return the rows."""
+    rows = summary_stats(form_dir, form_id, sentinels)
+    path = write_csv(rows, Path(form_dir) / f"{form_id}_summary_stats.csv")
+    unevaluated = sum(1 for r in rows if not r["eligibility_evaluated"])
+    flagged = sum(1 for r in rows if r["answered_when_skipped"])
+    print(
+        f"[stats] {form_id}: {len(rows)} columns, {unevaluated} with relevance not "
+        f"evaluated, {flagged} answered where skip logic says skipped -> {path}"
+    )
+    return rows
+
+
 def main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-stats``: write ``<form>_summary_stats.csv`` from built outputs."""
     from dotenv import load_dotenv
@@ -374,11 +389,4 @@ def main(argv: list[str] | None = None) -> None:
     load_dotenv()
     sentinels = env_sentinels()
     for form in cfg.forms:
-        rows = summary_stats(cfg.form_dir(form), form, sentinels)
-        path = write_csv(rows, cfg.form_dir(form) / f"{form}_summary_stats.csv")
-        unevaluated = sum(1 for r in rows if not r["eligibility_evaluated"])
-        flagged = sum(1 for r in rows if r["answered_when_skipped"])
-        print(
-            f"[stats] {form}: {len(rows)} columns, {unevaluated} with relevance not "
-            f"evaluated, {flagged} answered where skip logic says skipped -> {path}"
-        )
+        write_form_stats(cfg.form_dir(form), form, sentinels)

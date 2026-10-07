@@ -6,6 +6,7 @@ from farm_form import SENTINELS, write_pull
 
 from surveycto_python_dict.cli import build, load_config
 from surveycto_python_dict.codebook import plain_label, write_codebook
+from surveycto_python_dict.stats import summary_stats
 
 
 @pytest.fixture
@@ -15,7 +16,8 @@ def workbook(tmp_path, analyzer):
     cfg = load_config(config)
     write_pull(cfg)
     build(cfg, SENTINELS, analyzer)
-    path = write_codebook(cfg.form_dir("farm"), "farm", SENTINELS)
+    stats = summary_stats(cfg.form_dir("farm"), "farm", SENTINELS)
+    path = write_codebook(cfg.form_dir("farm"), "farm", stats)
     assert path == cfg.form_dir("farm") / "farm_codebook.xlsx"
     return openpyxl.load_workbook(path)
 

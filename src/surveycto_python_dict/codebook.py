@@ -2,7 +2,8 @@
 
 ``<form>_codebook.xlsx`` has a Variables and a Summary stats sheet, built from the
 outputs ``scto-build`` writes; it adds no submission values beyond the summary stats,
-which give flagged PII columns counts only. ``<form>_pii_review.xlsx`` is the opposite:
+which give flagged PII columns counts only. ``scto-codebook`` writes
+``<form>_summary_stats.csv`` too, from the same stats. ``<form>_pii_review.xlsx`` is the opposite:
 the flagged columns' values, for the people cleaning the data.
 """
 
@@ -13,11 +14,12 @@ from pathlib import Path
 
 import pyarrow as pa
 from openpyxl import Workbook
+from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from surveycto_python_dict.stats import COLUMNS as STATS_COLUMNS
-from surveycto_python_dict.stats import summary_stats
+from surveycto_python_dict.stats import write_form_stats
 
 VARIABLE_COLUMNS = [
     "variable",
@@ -37,6 +39,10 @@ VARIABLE_COLUMNS = [
 _WRAPPED = {"label", "relevance", "value_labels", "frequencies", "sentinel_detail"}
 _PERCENT = {"missing_rate", "selected_share"}
 _TAG_RE = re.compile(r"<[^>]+>")
+# One style object each: openpyxl hashes every cell's style into the workbook.
+_HEADER_FONT = Font(bold=True)
+_HEADER_FILL = PatternFill("solid", fgColor="DDE5F0")
+_WRAP = Alignment(wrap_text=True, vertical="top")
 
 
 def plain_label(text: str) -> str:
@@ -81,24 +87,41 @@ def _variable_rows(variables: dict) -> list[list]:
 
 
 def _sheet(workbook: Workbook, title: str, header: list[str], rows: list[list]) -> None:
+    """Add a sheet to a write-only workbook: bold frozen header with a filter, each
+    column as wide as its longest value (up to 60), long text wrapped, shares as %.
+    """
+    rows = [[None if value == "" else value for value in row] for row in rows]
     ws = workbook.create_sheet(title)
-    ws.append(header)
-    for row in rows:
-        ws.append([None if value == "" else value for value in row])
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
-        cell.fill = PatternFill("solid", fgColor="DDE5F0")
+    for index, name in enumerate(header):
+        longest = max(
+            [len(name), *(len(str(r[index])) for r in rows if r[index] is not None)]
+        )
+        ws.column_dimensions[get_column_letter(index + 1)].width = min(longest + 2, 60)
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = ws.dimensions
-    for index, name in enumerate(header, start=1):
-        letter = get_column_letter(index)
-        longest = max(len(str(c.value)) for c in ws[letter] if c.value is not None)
-        ws.column_dimensions[letter].width = min(max(longest, len(name)) + 2, 60)
-        for cell in ws[letter][1:]:
-            if name in _WRAPPED:
-                cell.alignment = Alignment(wrap_text=True, vertical="top")
-            if name in _PERCENT and isinstance(cell.value, (int, float)):
-                cell.number_format = "0.0%"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(header))}{len(rows) + 1}"
+    cells = []
+    for name in header:
+        cell = WriteOnlyCell(ws, name)
+        cell.font, cell.fill = _HEADER_FONT, _HEADER_FILL
+        cells.append(cell)
+    ws.append(cells)
+    styled = [name in _WRAPPED or name in _PERCENT for name in header]
+    for row in rows:
+        ws.append(
+            [
+                _cell(ws, name, value) if style else value
+                for name, value, style in zip(header, row, styled, strict=True)
+            ]
+        )
+
+
+def _cell(ws, name: str, value) -> WriteOnlyCell:
+    cell = WriteOnlyCell(ws, value)
+    if name in _WRAPPED:
+        cell.alignment = _WRAP
+    if name in _PERCENT and isinstance(value, (int, float)):
+        cell.number_format = "0.0%"
+    return cell
 
 
 REVIEW_COLUMNS = ["column", "label", "status", "basis", "hit_rows", "non_null"]
@@ -134,23 +157,20 @@ def write_pii_review(table: pa.Table, vardict: dict, path: Path) -> Path:
         ]
         for row in table.select(["KEY", *flagged]).to_pylist()
     ]
-    workbook = Workbook()
-    workbook.remove(workbook.active)
+    workbook = Workbook(write_only=True)
     _sheet(workbook, "Columns", REVIEW_COLUMNS, columns)
     _sheet(workbook, "Values", ["KEY", *flagged], values)
     workbook.save(path)
     return path
 
 
-def write_codebook(form_dir: Path, form_id: str, sentinels: dict[int, str]) -> Path:
-    """Write ``<form>_codebook.xlsx`` next to the outputs; return its path."""
+def write_codebook(form_dir: Path, form_id: str, stats: list[dict]) -> Path:
+    """Write ``<form>_codebook.xlsx`` next to the outputs from the form's stats rows."""
     form_dir = Path(form_dir)
     dictionary = json.loads(
         (form_dir / f"{form_id}_variable_dictionary.json").read_text(encoding="utf-8")
     )
-    stats = summary_stats(form_dir, form_id, sentinels)
-    workbook = Workbook()
-    workbook.remove(workbook.active)
+    workbook = Workbook(write_only=True)
     _sheet(
         workbook, "Variables", VARIABLE_COLUMNS, _variable_rows(dictionary["variables"])
     )
@@ -175,5 +195,6 @@ def main(argv: list[str] | None = None) -> None:
     load_dotenv()
     sentinels = env_sentinels()
     for form in cfg.forms:
-        path = write_codebook(cfg.form_dir(form), form, sentinels)
+        stats = write_form_stats(cfg.form_dir(form), form, sentinels)
+        path = write_codebook(cfg.form_dir(form), form, stats)
         print(f"[codebook] {form} -> {path}")

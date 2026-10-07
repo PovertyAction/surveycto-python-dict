@@ -13,7 +13,7 @@ cp config.example.toml config.toml   # set forms (and server_datasets)
 just pull                            # every form's XML + submissions, every server dataset -> <out_dir>
 just build                           # per form: dictionaries, parquet, graph, PII review; flow.json; rerun any time
 just stats                           # <form>_summary_stats.csv over the rows where each question was asked
-just codebook                        # <form>_codebook.xlsx for PIs: Variables + Summary stats sheets
+just codebook                        # <form>_codebook.xlsx for PIs (Variables + Summary stats) and the stats CSV
 just duckdb                          # <project>.duckdb: a schema per form, datasets once, the project tables
 just mcp                             # survey-expert MCP server over stdio, one per project
 ```
@@ -51,7 +51,7 @@ list and every server dataset pulled (`raw/datasets/<id>.csv`): the ones in
 | `<form>_variable_graph.json` | Questions linked by calculation, relevance, constraint, repeat |
 | `<form>_pii_review.xlsx` | For the people cleaning the data: a Columns sheet (each flagged column's label, status, basis and Presidio hit rows) and a Values sheet (`KEY` plus every column flagged `contains_pii` / `may_contain_pii`) |
 | `<form>_summary_stats.csv` | `just stats`: per column, counts over the rows where it was asked (skip logic evaluated per row), sentinels apart, then mean/quartiles, frequencies or shares; flagged PII columns get counts only |
-| `<form>_codebook.xlsx` | `just codebook`: for PIs. Variables (label, type, group, relevance, value labels, missing, sentinels, PII status) and Summary stats; no values of flagged PII columns |
+| `<form>_codebook.xlsx` | `just codebook` (which writes `<form>_summary_stats.csv` too): for PIs. Variables (label, type, group, relevance, value labels, missing, sentinels, PII status) and Summary stats; no values of flagged PII columns |
 | `<form>_dataset_codebook.json` | One row per column of each dataset the form reads: counts, the questions that read it, and a `pii` block (Presidio, or `dataset.column` on the whitelist/blacklist) |
 | `long/<repeat>.parquet` | `just duckdb`: each repeat group long, one row per instance with any value, keyed by `KEY` and one `<repeat>_index` per enclosing repeat |
 
@@ -142,7 +142,7 @@ the description, the entities with where each lives, and the keys not yet named.
 
 ## Querying with DuckDB: one database per project
 
-`just duckdb` (after `just stats`) writes `<project>.duckdb`, one database for the whole
+`just duckdb` (after `just stats` or `just codebook`) writes `<project>.duckdb`, one database for the whole
 project. A database holds schemas and a schema holds tables and views:
 
 ```text

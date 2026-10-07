@@ -26,7 +26,7 @@ Tables copy the descriptions. Per form: ``dictionary`` (one row per column),
 ``questions``, ``choices``, ``edges`` (the variable graph), ``dataset_links`` (how each
 ``pulldata()``/``search()`` matches dataset rows to the submission),
 ``dataset_codebook`` (one row per dataset column: counts, readers, pii) and ``stats``
-(``<form>_summary_stats.csv``, so ``scto-stats`` runs first). In ``main``, from
+(``<form>_summary_stats.csv``, from ``scto-stats`` or ``scto-codebook``). In ``main``, from
 ``flow.json``: ``forms``, ``datasets``, ``publishes``, ``reads`` and ``joins`` (a
 reader's field to the publisher's field through the dataset column between them).
 
