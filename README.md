@@ -26,6 +26,9 @@ Copy `.env.example` to `.env` and fill it in: `SCTO_SERVER` (the subdomain),
 which `just build` and `just stats` require. Never commit `.env`, the `.pem` key,
 `config.toml` or `data/`.
 
+A project is one or more forms on one server, with any number of server datasets
+(none included). Its encrypted forms share the one key in `SCTO_KEY_PATH`.
+
 `<out_dir>` is the project's folder. `raw/` holds the form list, the server's dataset
 list and every server dataset pulled (`raw/datasets/<id>.csv`): the ones in
 `server_datasets` and every one a form reads, each once. Each form has

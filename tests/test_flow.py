@@ -152,3 +152,64 @@ def test_render_flow_shows_stages_and_column_lineage(flow):
         "  village  <- listing.village  -> visit.hh (search), visit.where (pulldata)"
         in (lineage)
     )
+
+
+# The same two forms with fewer reads: listing without its zones lookup, visit reading
+# households only, or nothing.
+_LISTING_PLAIN = _LISTING.replace(" appearance=\"search('zones')\"", "")
+_VISIT_HOUSEHOLDS = _VISIT.replace(
+    "pulldata('zones', 'zone_name', 'zone_id', '1')", "concat('zone', '1')"
+)
+_VISIT_PLAIN = _VISIT_HOUSEHOLDS.replace(
+    "pulldata('Households', 'village', 'hhid',  /visit/hh )", "concat('a', 'b')"
+).replace(" appearance=\"search('Households')\"", "")
+
+
+@pytest.mark.parametrize(
+    ("xmls", "listed", "publishers", "stages"),
+    [
+        pytest.param(
+            {"listing": _LISTING_PLAIN}, (), {}, {"listing": 1}, id="1-form-0-datasets"
+        ),
+        pytest.param(
+            {"listing": _LISTING},
+            (),
+            {"zones": None},
+            {"listing": 1},
+            id="1-form-1-dataset",
+        ),
+        pytest.param(
+            {"listing": _LISTING},
+            ("households",),
+            {"households": "listing", "zones": None},
+            {"listing": 1},
+            id="1-form-2-datasets",
+        ),
+        pytest.param(
+            {"listing": _LISTING_PLAIN, "visit": _VISIT_PLAIN},
+            (),
+            {},
+            {"listing": 1, "visit": 1},
+            id="2-forms-0-datasets",
+        ),
+        pytest.param(
+            {"listing": _LISTING_PLAIN, "visit": _VISIT_HOUSEHOLDS},
+            (),
+            {"households": "listing"},
+            {"listing": 1, "visit": 2},
+            id="2-forms-1-dataset",
+        ),
+        pytest.param(
+            {"listing": _LISTING, "visit": _VISIT},
+            (),
+            {"households": "listing", "zones": None},
+            {"listing": 1, "visit": 2},
+            id="2-forms-2-datasets",
+        ),
+    ],
+)
+def test_every_shape_of_forms_and_datasets(tmp_path, xmls, listed, publishers, stages):
+    flow = _flow(tmp_path, xmls, listed)
+    assert {d["id"]: d["published_by"] for d in flow["datasets"]} == publishers
+    assert {f["form_id"]: f["stage"] for f in flow["forms"]} == stages
+    assert render_flow(flow).startswith("Stage 1:")
