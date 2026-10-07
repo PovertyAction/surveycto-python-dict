@@ -145,7 +145,7 @@ def env_sentinels() -> dict[int | dt.date, str]:
     The study's non-response codes, as ``code=meaning`` pairs separated by ``;``:
     ``SCTO_SENTINELS="-99=Don't know;-88=Refused;-77=Not applicable"``. Dates the
     team types into a date question to code the same answers go, optionally, in
-    ``SCTO_DATE_SENTINELS="1877-01-21=Not reported"``.
+    ``SCTO_DATE_SENTINELS="1900-01-01=Don't know"``.
     """
     raw = os.environ.get("SCTO_SENTINELS", "").strip().strip(";")
     if not raw:

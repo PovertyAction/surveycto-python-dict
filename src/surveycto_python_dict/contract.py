@@ -134,7 +134,7 @@ def search_universe(
     A pair whose value is a field is decided per submission: ``fields`` gives, per
     such column, the values the field takes in the submissions. Its rows are the ones
     that match one of them, and each choice says which in ``when``
-    (``{"list_name": "outType"}``), so one value can be a choice of several lists.
+    (``{"list_name": "fruits"}``), so one value can be a choice of several lists.
     """
     named = [i for i in node.choice_items if i["value"] in table.header]
     if len(named) > 1:

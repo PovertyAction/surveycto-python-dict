@@ -31,7 +31,7 @@ Copy `.env.example` to `.env` and fill it in: `SCTO_SERVER` (the subdomain),
 which `just build` and `just stats` require. A question that declares one of these
 codes as a choice keeps its own label for it. Dates the team types into a date question
 to code the same answers go in the optional `SCTO_DATE_SENTINELS`
-(`"1877-01-21=Not reported"`): date columns count them apart, as numbers count the
+(`"1900-01-01=Don't know"`): date columns count them apart, as numbers count the
 codes. Never commit `.env`, the `.pem` key, `config.toml` or `data/`.
 
 A project is one connected study: one or more forms on one server that chain through

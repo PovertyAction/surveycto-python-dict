@@ -253,5 +253,5 @@ def test_env_date_sentinels(monkeypatch):
     import datetime as dt
 
     monkeypatch.setenv("SCTO_SENTINELS", "-99=Don't know")
-    monkeypatch.setenv("SCTO_DATE_SENTINELS", "1877-01-21=Not reported;")
-    assert env_sentinels() == {-99: "Don't know", dt.date(1877, 1, 21): "Not reported"}
+    monkeypatch.setenv("SCTO_DATE_SENTINELS", "1900-01-01=Don't know;")
+    assert env_sentinels() == {-99: "Don't know", dt.date(1900, 1, 1): "Don't know"}

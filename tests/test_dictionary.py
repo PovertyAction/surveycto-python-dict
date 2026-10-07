@@ -210,14 +210,14 @@ def test_sentinels_take_the_question_label_and_dates_count():
 
     from surveycto_python_dict.dictionary import _sentinel_counts
 
-    sentinels = {-88: "Refused", dt.date(1877, 1, 21): "Not reported"}
+    sentinels = {-88: "Refused", dt.date(1900, 1, 1): "Don't know"}
     codes = pa.chunked_array([["-88", "1", "-88"]])
     assert _sentinel_counts(codes, sentinels, {"-88": "Other (specify)"}) == {
         "-88": {"label": "Other (specify)", "count": 2}
     }
-    days = pa.chunked_array([[dt.date(1877, 1, 21), dt.date(2020, 5, 1), None]])
+    days = pa.chunked_array([[dt.date(1900, 1, 1), dt.date(2020, 5, 1), None]])
     assert _sentinel_counts(days, sentinels, {}) == {
-        "1877-01-21": {"label": "Not reported", "count": 1}
+        "1900-01-01": {"label": "Don't know", "count": 1}
     }
 
 
