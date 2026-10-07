@@ -281,8 +281,10 @@ def build_form(
     write_json(questions, paths["questions"])
     write_sections(questions, paths["sections"])
     pq.write_table(table, paths["parquet"])
-    write_json(vardict, paths["dictionary"])
-    write_json(build_graph(questions, vardict), paths["graph"])
+    # The two largest outputs, read by programs: compact is a third smaller and
+    # several times faster to write.
+    write_json(vardict, paths["dictionary"], indent=None)
+    write_json(build_graph(questions, vardict), paths["graph"], indent=None)
     write_pii_review(table, vardict, paths["pii_review"])
     codebook = dataset_codebook(datasets, questions, cfg.pii, analyzer, scanned)
     write_json(codebook, paths["dataset_codebook"])
