@@ -117,6 +117,7 @@ def _columns(names: list[str], contract: FormContract) -> list[_Column]:
     columns: dict[str, _Column] = {}
     multi_instances: dict[str, set[tuple[int, ...]]] = {}
     picked: dict[tuple[str, tuple[int, ...]], set[str]] = {}
+    codes_of: dict[str, set[str]] = {}
     for position, name in enumerate(names):
         if is_system_column(name):
             arrow_type = (
@@ -142,13 +143,15 @@ def _columns(names: list[str], contract: FormContract) -> list[_Column]:
         if node.is_select_multiple and m["choice_code"] is not None:
             multi_instances.setdefault(node.path, set()).add(iterations)
             picked.setdefault((node.path, iterations), set()).add(str(m["choice_code"]))
-            codes = [str(c["value"]) for c in node.choice_items]
+            if node.path not in codes_of:
+                codes_of[node.path] = {str(c["value"]) for c in node.choice_items}
+            codes = codes_of[node.path]
             if str(m["choice_code"]) not in codes:
                 columns[name] = _text(
                     name,
                     f"choice code {m['choice_code']!r} is not among the form's choices",
                     _node_metadata(node),
-                    (*key[:3], len(codes)),
+                    (*key[:3], len(node.choice_items)),
                     binary_group=(node.path, iterations),
                 )
             continue
@@ -199,12 +202,11 @@ def _cast(
 ) -> tuple[pa.Array, _Column]:
     """Return the typed array, or the text array and its fallback column."""
     parse = _PARSERS[column.arrow_type]
+    binary = column.arrow_type == pa.int8()
     values, failed = [], 0
     for value, was_answered in zip(raw, answered, strict=True):
         if value == "":
-            values.append(
-                0 if was_answered and column.arrow_type == pa.int8() else None
-            )
+            values.append(0 if was_answered and binary else None)
             continue
         try:
             values.append(parse(value))
@@ -226,11 +228,16 @@ def cast_wide(rows: list[dict], contract: FormContract) -> pa.Table:
         if c.binary_group is not None:
             groups.setdefault(c.binary_group, []).append(c.name)
 
+    # Per binary group: whether each row answered the select_multiple.
+    answered_by_group = {
+        group: [any(row.get(s, "") != "" for s in siblings) for row in rows]
+        for group, siblings in groups.items()
+    }
+    unanswered = [False] * len(rows)
     arrays, fields = [], []
     for c in columns:
         raw = [row.get(c.name, "") for row in rows]
-        siblings = groups.get(c.binary_group, [])
-        answered = [any(row.get(s, "") != "" for s in siblings) for row in rows]
+        answered = answered_by_group.get(c.binary_group, unanswered)
         array, c = _cast(c, raw, answered)
         arrays.append(array)
         fields.append(pa.field(c.name, c.arrow_type, metadata=c.metadata))

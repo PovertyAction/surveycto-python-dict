@@ -30,8 +30,9 @@ flow cfg=config:
 build cfg=config:
     uv run scto-build --config {{ cfg }}
 
-[doc("Every output from the raw pull: build, stats, codebook, duckdb. Rerun after editing [pii] lists")]
-outputs cfg=config: (build cfg) (stats cfg) (codebook cfg) (duckdb cfg)
+[doc("Every output from the raw pull: build, the stats, then codebook and duckdb at once. Rerun after editing [pii] lists")]
+outputs cfg=config: (build cfg)
+    uv run scto-outputs --config {{ cfg }}
 
 [doc("Pull, then every output")]
 run cfg=config: (pull cfg) (outputs cfg)
@@ -40,12 +41,12 @@ run cfg=config: (pull cfg) (outputs cfg)
 stats cfg=config:
     uv run scto-stats --config {{ cfg }}
 
-[doc("Write <form>_codebook.xlsx for PIs: a Variables sheet and a Summary stats sheet")]
+[doc("Write <form>_codebook.xlsx for PIs (Variables and Summary stats sheets) and <form>_summary_stats.csv from the same stats")]
 codebook cfg=config:
     uv run scto-codebook --config {{ cfg }}
 
 [doc("Write <project>.duckdb (a schema per form with submissions, repeats long and descriptions; datasets once; project tables) and its map <project>_db.json / .sql")]
-duckdb cfg=config: (stats cfg)
+duckdb cfg=config:
     uv run scto-duckdb --config {{ cfg }}
 
 [doc("Serve the project's built outputs to a local agent over stdio (survey-expert MCP)")]
@@ -59,11 +60,6 @@ survey *args:
 [doc("Run the offline test suite")]
 test:
     uv run pytest -q
-
-[doc("Lint and check formatting")]
-lint:
-    uv run ruff check src tests scripts
-    uv run ruff format --check src tests scripts
 
 [doc("Copy survey.py into the survey-expert skill as its standalone search_survey.py")]
 sync-skill:

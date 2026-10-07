@@ -3,7 +3,7 @@
 import pytest
 
 from surveycto_python_dict import pii
-from surveycto_python_dict.contract import search_universe
+from surveycto_python_dict.contract import DatasetTable, search_universe
 from surveycto_python_dict.pii import PiiConfig, screen_search_choices
 from surveycto_python_dict.questions import build_questions
 from surveycto_python_dict.xml_contract import parse_contract
@@ -53,6 +53,10 @@ class Spy:
         self.inner = inner
         self.texts: list[str] = []
 
+    @property
+    def nlp_engine(self):
+        return self.inner.nlp_engine
+
     def analyze(self, text, language, **kwargs):
         self.texts.append(text)
         return self.inner.analyze(text=text, language=language, **kwargs)
@@ -80,29 +84,38 @@ def _screen(form, analyzer, config=PiiConfig()):
 def test_universe_keeps_literal_extras_and_applies_literal_filters(form):
     xml, datasets = form
     nodes = parse_contract(xml).nodes
-    assert search_universe(nodes["size"], datasets / "sizes.csv") == [
+    assert search_universe(nodes["size"], DatasetTable(datasets / "sizes.csv")) == [
         {"value": "1", "label": "small"},
         {"value": "2", "label": "large"},
         {"value": "-66", "label": "Other"},
     ]
     assert [
-        c["value"] for c in search_universe(nodes["zone"], datasets / "towns.csv")
+        c["value"]
+        for c in search_universe(nodes["zone"], DatasetTable(datasets / "towns.csv"))
     ] == ["1", "2"]
     assert [
-        c["value"] for c in search_universe(nodes["town"], datasets / "towns.csv")
+        c["value"]
+        for c in search_universe(nodes["town"], DatasetTable(datasets / "towns.csv"))
     ] == ["21", "22"]
     # contains searches the first pair as a substring; the second pair is exact.
     assert [
-        c["value"] for c in search_universe(nodes["north"], datasets / "towns.csv")
+        c["value"]
+        for c in search_universe(nodes["north"], DatasetTable(datasets / "towns.csv"))
     ] == ["21"]
     # A filter on a field is decided per submission: every row is a possible choice.
     assert [
-        c["value"] for c in search_universe(nodes["buyer"], datasets / "buyers.csv")
+        c["value"]
+        for c in search_universe(nodes["buyer"], DatasetTable(datasets / "buyers.csv"))
     ] == ["7", "8"]
 
 
 class NoHits:
     """An analyzer that finds nothing, for the clean path."""
+
+    class nlp_engine:  # noqa: N801
+        @staticmethod
+        def process_batch(texts, language, batch_size):
+            return ((t, None) for t in texts)
 
     def analyze(self, text, language, **kwargs):
         return []
@@ -144,7 +157,7 @@ def test_no_item_naming_a_column_leaves_the_literals(form):
     xml, datasets = form
     node = parse_contract(xml).nodes["size"]
     node.choice_items = [i for i in node.choice_items if i["value"] != "size_id"]
-    assert search_universe(node, datasets / "sizes.csv") == [
+    assert search_universe(node, DatasetTable(datasets / "sizes.csv")) == [
         {"value": "-66", "label": "Other"}
     ]
 

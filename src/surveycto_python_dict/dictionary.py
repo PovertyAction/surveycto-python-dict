@@ -232,6 +232,8 @@ def build_graph(questions: list[dict], vardict: dict) -> dict:
     }
 
 
-def write_json(data: dict, path) -> None:
-    """Write ``data`` as indented UTF-8 JSON."""
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+def write_json(data: dict, path, indent: int | None = 2) -> None:
+    """Write ``data`` as UTF-8 JSON, indented unless ``indent`` is None."""
+    path.write_text(
+        json.dumps(data, indent=indent, ensure_ascii=False), encoding="utf-8"
+    )

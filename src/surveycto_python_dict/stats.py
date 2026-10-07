@@ -16,13 +16,14 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
+from surveycto_python_dict.pii import FLAGGED
+from surveycto_python_dict.survey import gates, rule
 from surveycto_python_dict.xpath import (
     UnsupportedExpression,
     compile_expression,
+    reads_self,
     to_number,
 )
-
-_FLAGGED = {"contains_pii", "may_contain_pii"}
 
 COLUMNS = [
     "variable",
@@ -77,6 +78,14 @@ class _Data:
             if q["type"] == "repeat_count"
         }
         self.repeats = set(self.count_questions)
+        self.chains = {
+            name: [g for g in q["group_path"] if g in self.repeats]
+            for name, q in questions.items()
+        }
+        # Results shared by every column a gate or repeat count applies to; see
+        # `_gate` and `_within`.
+        self.gates: dict[tuple, list] = {}
+        self.limits: dict[tuple, list] = {}
         self.columns: dict[tuple, str] = {}
         # (repeat, parent instances) -> {instance: columns}, for repeats without a count
         self.instance_columns: dict[tuple, dict[int, list[str]]] = {}
@@ -109,7 +118,7 @@ class _Data:
         return max(present, default=0)
 
     def repeat_chain(self, question: str) -> list[str]:
-        return [g for g in self.questions[question]["group_path"] if g in self.repeats]
+        return self.chains[question]
 
     def value(self, question: str, iterations: tuple[int, ...], row: int):
         """Return ``question``'s value on ``row`` in the given repeat instance."""
@@ -156,49 +165,71 @@ class _Row:
         return self.iterations[-1]
 
 
+def _gate(data: _Data, gate: str, question: str, iterations: tuple, own: list):
+    """Return row -> whether ``gate`` holds for ``question`` in this repeat instance.
+
+    A gate that does not read ``.`` gives the same answer for every question in the
+    same repeats and instance (a group's relevance, a select_multiple's binaries), so
+    each row is evaluated once and shared.
+    """
+    fn = compile_expression(gate)
+    if reads_self(gate):
+        return lambda r: bool(fn(_Row(data, question, iterations, r, own[r])))
+    key = (gate, tuple(data.repeat_chain(question)), iterations)
+    memo = data.gates.setdefault(key, [None] * len(own))
+
+    def holds(r: int) -> bool:
+        if memo[r] is None:
+            memo[r] = bool(fn(_Row(data, question, iterations, r, None)))
+        return memo[r]
+
+    return holds
+
+
+def _within(data: _Data, repeat: str, parent: tuple, n_rows: int) -> list:
+    """Return the instances of ``repeat`` under ``parent`` on each row."""
+    key = (repeat, parent)
+    if key not in data.limits:
+        count_q = data.count_questions[repeat]
+        if count_q["calculation"] is None:
+            limits = [data.highest_instance(repeat, parent, r) for r in range(n_rows)]
+        else:
+            count = compile_expression(count_q["calculation"])
+            # An empty or invalid count gives no instances, as on the device.
+            limits = [
+                to_number(count(_Row(data, count_q["variable_name"], parent, r, None)))
+                for r in range(n_rows)
+            ]
+        data.limits[key] = limits
+    return data.limits[key]
+
+
 def _eligibility(
     data: _Data, q: dict | None, column: str, iterations: tuple, n_rows: int
 ):
     """Return (per-row eligibility, composed rule, evaluated, note)."""
     if q is None:
         return [True] * n_rows, "", True, ""
-    gates = [*q["group_relevances"], *([q["relevance"]] if q["relevance"] else [])]
-    rule = " and ".join(f"({g})" for g in gates)
+    conditions = gates(q)
+    composed = rule(conditions)
     if q["disabled"]:
-        return [False] * n_rows, rule, True, "disabled"
+        return [False] * n_rows, composed, True, "disabled"
     own = data.values[column]
     try:
-        compiled = [compile_expression(g) for g in gates]
-        eligible = [
-            all(
-                bool(fn(_Row(data, q["variable_name"], iterations, r, own[r])))
-                for fn in compiled
-            )
-            for r in range(n_rows)
+        tests = [
+            _gate(data, g, q["variable_name"], iterations, own) for g in conditions
         ]
+        eligible = [all(t(r) for t in tests) for r in range(n_rows)]
         # A repeat instance exists only up to the repeat count, at every level.
         for level, repeat in enumerate(data.repeat_chain(q["variable_name"])):
             instance, parent = iterations[level], iterations[:level]
-            count_q = data.count_questions[repeat]
-            if count_q["calculation"] is None:
-                within = [
-                    instance <= data.highest_instance(repeat, parent, r)
-                    for r in range(n_rows)
-                ]
-            else:
-                count = compile_expression(count_q["calculation"])
-                # An empty or invalid count gives no instances, as on the device.
-                within = [
-                    instance
-                    <= to_number(
-                        count(_Row(data, count_q["variable_name"], parent, r, None))
-                    )
-                    for r in range(n_rows)
-                ]
-            eligible = [e and w for e, w in zip(eligible, within, strict=True)]
+            limits = _within(data, repeat, parent, n_rows)
+            eligible = [
+                e and instance <= c for e, c in zip(eligible, limits, strict=True)
+            ]
     except UnsupportedExpression as e:
-        return [True] * n_rows, rule, False, f"{e}; counted over all rows"
-    return eligible, rule, True, ""
+        return [True] * n_rows, composed, False, f"{e}; counted over all rows"
+    return eligible, composed, True, ""
 
 
 def _fmt(x: float) -> float:
@@ -276,7 +307,7 @@ def summary_stats(
             answered_when_skipped=outside,
             n_valid=len(valid),
         )
-        if pii not in _FLAGGED and valid:
+        if pii not in FLAGGED and valid:
             out.update(_describe(valid, entry, q, is_binary))
         rows.append(out)
     return rows
@@ -335,25 +366,29 @@ def write_csv(rows: list[dict], path: Path) -> Path:
     return path
 
 
+def write_form_stats(
+    form_dir: Path, form_id: str, sentinels: dict[int, str]
+) -> list[dict]:
+    """Write ``<form>_summary_stats.csv`` and report it; return the rows."""
+    rows = summary_stats(form_dir, form_id, sentinels)
+    path = write_csv(rows, Path(form_dir) / f"{form_id}_summary_stats.csv")
+    unevaluated = sum(1 for r in rows if not r["eligibility_evaluated"])
+    flagged = sum(1 for r in rows if r["answered_when_skipped"])
+    print(
+        f"[stats] {form_id}: {len(rows)} columns, {unevaluated} with relevance not "
+        f"evaluated, {flagged} answered where skip logic says skipped -> {path}"
+    )
+    return rows
+
+
 def main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-stats``: write ``<form>_summary_stats.csv`` from built outputs."""
-    import argparse
-
     from dotenv import load_dotenv
 
-    from surveycto_python_dict.cli import env_sentinels, load_config
+    from surveycto_python_dict.cli import config_arg, env_sentinels
 
-    parser = argparse.ArgumentParser(prog="scto-stats")
-    parser.add_argument("--config", type=Path, default=Path("config.toml"))
-    cfg = load_config(parser.parse_args(argv).config)
+    cfg = config_arg(argv)
     load_dotenv()
     sentinels = env_sentinels()
     for form in cfg.forms:
-        rows = summary_stats(cfg.form_dir(form), form, sentinels)
-        path = write_csv(rows, cfg.form_dir(form) / f"{form}_summary_stats.csv")
-        unevaluated = sum(1 for r in rows if not r["eligibility_evaluated"])
-        flagged = sum(1 for r in rows if r["answered_when_skipped"])
-        print(
-            f"[stats] {form}: {len(rows)} columns, {unevaluated} with relevance not "
-            f"evaluated, {flagged} answered where skip logic says skipped -> {path}"
-        )
+        write_form_stats(cfg.form_dir(form), form, sentinels)

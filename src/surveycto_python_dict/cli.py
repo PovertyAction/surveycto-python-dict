@@ -26,6 +26,7 @@ import json
 import os
 import tomllib
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass, fields
 from pathlib import Path
 
@@ -278,14 +279,19 @@ def build_form(
         "pii_review": out / f"{form}_pii_review.xlsx",
         "dataset_codebook": out / f"{form}_dataset_codebook.json",
     }
-    write_json(questions, paths["questions"])
-    write_sections(questions, paths["sections"])
-    pq.write_table(table, paths["parquet"])
-    write_json(vardict, paths["dictionary"])
-    write_json(build_graph(questions, vardict), paths["graph"])
-    write_pii_review(table, vardict, paths["pii_review"])
-    codebook = dataset_codebook(datasets, questions, cfg.pii, analyzer, scanned)
-    write_json(codebook, paths["dataset_codebook"])
+    # pyarrow writes the parquet outside the GIL while the JSON is written here.
+    with ThreadPoolExecutor(1) as background:
+        parquet = background.submit(pq.write_table, table, paths["parquet"])
+        write_json(questions, paths["questions"])
+        write_sections(questions, paths["sections"])
+        # The two largest outputs, read by programs: compact is a third smaller and
+        # several times faster to write.
+        write_json(vardict, paths["dictionary"], indent=None)
+        write_json(build_graph(questions, vardict), paths["graph"], indent=None)
+        write_pii_review(table, vardict, paths["pii_review"])
+        codebook = dataset_codebook(datasets, questions, cfg.pii, analyzer, scanned)
+        write_json(codebook, paths["dataset_codebook"])
+        parquet.result()
 
     fallbacks = vardict["summary"]["n_cast_fallback"]
     print(
@@ -353,7 +359,8 @@ def build(
     return paths
 
 
-def _config_arg(argv: list[str] | None) -> Config:
+def config_arg(argv: list[str] | None) -> Config:
+    """Return the config named by ``--config`` (default ``config.toml``)."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=Path("config.toml"))
     return load_config(parser.parse_args(argv).config)
@@ -362,24 +369,46 @@ def _config_arg(argv: list[str] | None) -> Config:
 def pull_main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-pull``."""
     load_dotenv()
-    pull(_config_arg(argv), Client.from_env())
+    pull(config_arg(argv), Client.from_env())
 
 
 def build_main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-build``."""
     load_dotenv()
-    build(_config_arg(argv), env_sentinels())
+    build(config_arg(argv), env_sentinels())
 
 
 def flow_main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-flow``: rewrite ``flow.json`` and ``flow.md`` alone."""
-    write_flow(_config_arg(argv))
+    write_flow(config_arg(argv))
+
+
+def outputs_main(argv: list[str] | None = None) -> None:
+    """Entry point for ``scto-outputs``: the stats, then the codebooks and the database
+    at once, since each reads the stats and writes only its own files.
+    """
+    import sys
+
+    from surveycto_python_dict import codebook, database
+    from surveycto_python_dict.stats import write_form_stats
+
+    argv = sys.argv[1:] if argv is None else argv
+    load_dotenv()
+    cfg = config_arg(argv)
+    sentinels = env_sentinels()
+    stats = {f: write_form_stats(cfg.form_dir(f), f, sentinels) for f in cfg.forms}
+    with ProcessPoolExecutor(1) as other:
+        db = other.submit(database.main, argv)
+        for form in cfg.forms:
+            path = codebook.write_codebook(cfg.form_dir(form), form, stats[form])
+            print(f"[codebook] {form} -> {path}")
+        db.result()
 
 
 def run_main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-run``: pull, then build."""
     load_dotenv()
-    cfg = _config_arg(argv)
+    cfg = config_arg(argv)
     sentinels = env_sentinels()
     pull(cfg, Client.from_env())
     build(cfg, sentinels)

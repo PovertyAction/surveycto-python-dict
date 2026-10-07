@@ -4,7 +4,8 @@ The project is its forms and the datasets that chain them (``flow.json``). The d
 holds one schema per form, a ``dataset`` schema and the project tables in ``main``.
 Views read the files on disk; nothing is copied into the database:
 
-- ``<form>.submissions``: every column, wide, from ``<form>.parquet``.
+- ``<form>.submissions``: one row per submission, from ``<form>.parquet``: every
+  column outside the repeat groups, which are in their long views.
 - ``<form>.submissions_safe``: only the ``cleared_by_form`` and ``whitelisted`` columns.
 - ``<form>.<repeat>``: each repeat group long, from ``long/<repeat>.parquet``, which this
   step reshapes from the wide parquet: one row per instance that has any value, keyed
@@ -12,7 +13,8 @@ Views read the files on disk; nothing is copied into the database:
   (``KEY, hh_index, member_index``). A column keeps its wide name without the instance
   suffix: ``score_3`` -> ``score``. Columns written under another form version, with
   more or fewer instance numbers than the field's nesting (``ragged`` in the
-  dictionary), stay in ``submissions`` only.
+  dictionary), stay wide in ``submissions``. The ``dictionary`` table's ``table``
+  names each column's view.
 - ``<form>.<repeat>_safe``: the same, limited to cleared columns.
 - ``dataset.<id>``: each dataset once, under its ``flow.json`` id (the server id, or
   ``<form>/<file>.csv`` for a CSV attached to a form), every column as text, with
@@ -26,7 +28,7 @@ Tables copy the descriptions. Per form: ``dictionary`` (one row per column),
 ``questions``, ``choices``, ``edges`` (the variable graph), ``dataset_links`` (how each
 ``pulldata()``/``search()`` matches dataset rows to the submission),
 ``dataset_codebook`` (one row per dataset column: counts, readers, pii) and ``stats``
-(``<form>_summary_stats.csv``, so ``scto-stats`` runs first). In ``main``, from
+(``<form>_summary_stats.csv``, from ``scto-stats`` or ``scto-codebook``). In ``main``, from
 ``flow.json``: ``forms``, ``datasets``, ``publishes``, ``reads`` and ``joins`` (a
 reader's field to the publisher's field through the dataset column between them).
 
@@ -45,9 +47,8 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
+from surveycto_python_dict.pii import SAFE
 from surveycto_python_dict.survey import render_structure
-
-_SAFE = {"cleared_by_form", "whitelisted"}
 
 
 def _ident(name: str) -> str:
@@ -118,7 +119,7 @@ def _table(con, schema: str, name: str, frame: pd.DataFrame) -> None:
 # `{s}` is the form's schema.
 _DESCRIPTIONS = {
     "dictionary": {
-        "grain": "one row per submissions column",
+        "grain": "one row per parquet column; table names the view it is in",
         "key": ["column"],
         "joins": ["{s}.dictionary.question = {s}.questions.question"],
     },
@@ -150,7 +151,7 @@ _DESCRIPTIONS = {
         "joins": [],
     },
     "stats": {
-        "grain": "one row per submissions column",
+        "grain": "one row per parquet column",
         "key": ["variable"],
         "joins": ["{s}.stats.variable = {s}.dictionary.column"],
     },
@@ -196,22 +197,32 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
     codebook = _load(form_dir / f"{form}_dataset_codebook.json")
     variables = dictionary["variables"]
     repeat_of = {node["id"]: node["repeat_group"] for node in graph["nodes"]}
-    safe = [c for c, v in variables.items() if v["pii"]["status"] in _SAFE]
-    cleared = set(safe)
+    cleared = {c for c, v in variables.items() if v["pii"]["status"] in SAFE}
     assert "KEY" in cleared
+    # The view each column is read from: its repeat's long view, or submissions.
+    table_of = {
+        c: repeat_of[v["question"]]
+        if v["question"] is not None
+        and repeat_of[v["question"]]
+        and not v.get("ragged")
+        else "submissions"
+        for c, v in variables.items()
+    }
+    wide = [c for c in variables if table_of[c] == "submissions"]
 
     con.execute(f"CREATE SCHEMA {_ident(form)}")
     parquet = (form_dir / f"{form}.parquet").resolve().as_posix()
-    con.execute(
-        f"CREATE VIEW {_q(form, 'submissions')} AS "
-        f"SELECT * FROM read_parquet({_literal(parquet)})"
-    )
-    # Straight from the file: binding through `submissions` re-reads every column.
-    con.execute(
-        f"CREATE VIEW {_q(form, 'submissions_safe')} AS SELECT "
-        + ", ".join(_ident(c) for c in safe)
-        + f" FROM read_parquet({_literal(parquet)})"
-    )
+    # Both straight from the file, each binding only its columns: DuckDB takes
+    # seconds per ten thousand columns to bind a view.
+    for name, columns in (
+        ("submissions", wide),
+        ("submissions_safe", [c for c in wide if c in cleared]),
+    ):
+        con.execute(
+            f"CREATE VIEW {_q(form, name)} AS SELECT "
+            + ", ".join(_ident(c) for c in columns)
+            + f" FROM read_parquet({_literal(parquet)})"
+        )
     for name in ("submissions", "submissions_safe"):
         structure[f"{form}.{name}"] = {
             "grain": "one row per submission",
@@ -230,9 +241,7 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
         columns = {
             c: v["repeat_iteration"]
             for c, v in variables.items()
-            if v["question"] is not None
-            and repeat_of[v["question"]] == repeat
-            and not v.get("ragged")
+            if table_of[c] == repeat
         }
         long_path = long_dir / f"{repeat}.parquet"
         pq.write_table(_long_table(table, columns, keys), long_path)
@@ -267,6 +276,7 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
             [
                 {
                     "column": c,
+                    "table": table_of[c],
                     "variable_order": v["variable_order"],
                     "question": v["question"],
                     "repeat_group": repeat_of.get(v["question"]),
@@ -415,7 +425,7 @@ def _write_datasets(
         for c in entries:
             statuses.setdefault(c["column"], []).append(c["pii"]["status"])
         cleared = [
-            c for c in d["columns"] if statuses.get(c) and set(statuses[c]) <= _SAFE
+            c for c in d["columns"] if statuses.get(c) and set(statuses[c]) <= SAFE
         ]
         con.execute(
             f"CREATE VIEW {_q('dataset', did + '_safe')} AS SELECT "
@@ -666,8 +676,8 @@ def write_database(
             }
         )
     con.close()
-    order = list(structure)
-    objects.sort(key=lambda o: order.index(o["name"]))
+    order = {name: i for i, name in enumerate(structure)}
+    objects.sort(key=lambda o: order[o["name"]])
     (out_dir / f"{project}_db.json").write_text(
         json.dumps(objects, indent=2, ensure_ascii=False), encoding="utf-8"
     )
@@ -679,13 +689,9 @@ def write_database(
 
 def main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-duckdb``."""
-    import argparse
+    from surveycto_python_dict.cli import config_arg, dataset_csvs
 
-    from surveycto_python_dict.cli import dataset_csvs, load_config
-
-    parser = argparse.ArgumentParser(prog="scto-duckdb")
-    parser.add_argument("--config", type=Path, default=Path("config.toml"))
-    cfg = load_config(parser.parse_args(argv).config)
+    cfg = config_arg(argv)
     flow = _load(cfg.out_dir / "flow.json")
     path = write_database(
         cfg.out_dir,

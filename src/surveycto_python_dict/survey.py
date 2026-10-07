@@ -17,24 +17,37 @@ import re
 from collections import Counter
 from pathlib import Path
 
+# As pii.FLAGGED: this module imports only the standard library (the skill ships it).
 _FLAGGED = {"contains_pii", "may_contain_pii"}
 _TOKEN_RE = re.compile(r"\w+")
 _TAG_RE = re.compile(r"<[^>]+>")
 _REF_RE = re.compile(r"\$\{([^}]+)\}")
 
 
-def _plain(text: str) -> str:
+def plain_label(text: str) -> str:
     """Return ``text`` without HTML tags, whitespace collapsed."""
     return " ".join(_TAG_RE.sub(" ", text).split())
 
 
+def gates(q: dict) -> list[str]:
+    """Return what must hold for ``q`` to be asked: its groups' relevances, then its own."""
+    return [*q["group_relevances"], *([q["relevance"]] if q["relevance"] else [])]
+
+
+def rule(conditions: list[str]) -> str:
+    """Join conditions with ``and``, each in parentheses when there are several."""
+    if len(conditions) == 1:
+        return conditions[0]
+    return " and ".join(f"({c})" for c in conditions)
+
+
 def _tokens(text: str) -> list[str]:
     """Return the words of ``text`` (any script, accents kept), lowercased."""
-    return _TOKEN_RE.findall(_plain(text).lower())
+    return _TOKEN_RE.findall(plain_label(text).lower())
 
 
 def _short(text: str, limit: int = 100) -> str:
-    text = _plain(text)
+    text = plain_label(text)
     return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
@@ -45,9 +58,6 @@ def _withheld(q: dict) -> str:
         f"in `{q['appearance']}`, value column `{columns['value']}`, "
         f"label column `{columns['label']}`"
     )
-
-
-_REF_ONLY = re.compile(r"\$\{([^}]+)\}")
 
 
 def _source_line(source: dict) -> str:
@@ -535,17 +545,12 @@ class SurveyStore:
         def walk(var: str, level: int) -> None:
             q = self.questions[var]
             pad = "  " * level
-            gates = [
-                *q["group_relevances"],
-                *([q["relevance"]] if q["relevance"] else []),
-            ]
-            lines.append(
-                f"{pad}{var}: {' and '.join(f'({g})' for g in gates) or 'always asked'}"
-            )
+            conditions = gates(q)
+            lines.append(f"{pad}{var}: {rule(conditions) or 'always asked'}")
             seen.add(var)
             if level >= depth:
                 return
-            for ref in dict.fromkeys(r for g in gates for r in _REF_RE.findall(g)):
+            for ref in dict.fromkeys(r for g in conditions for r in _REF_RE.findall(g)):
                 if ref in self.questions and ref not in seen:
                     walk(ref, level + 1)
 
@@ -590,7 +595,7 @@ class SurveyStore:
 
     def _table_of(self, value: str | None) -> str:
         """Return the table a ``${field}`` lives in: submissions or its repeat view."""
-        match = _REF_ONLY.fullmatch(value or "")
+        match = _REF_RE.fullmatch(value or "")
         if match is None:
             return "a literal or expression"
         return self.repeat_of.get(match.group(1)) or "submissions"

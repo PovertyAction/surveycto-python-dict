@@ -7,6 +7,7 @@ so ``${x} = 1`` is false and ``${x} != 1`` true when ``x`` is empty, as on the d
 Anything outside the supported subset raises ``UnsupportedExpression`` at compile time.
 """
 
+import functools
 import math
 import re
 from collections.abc import Callable
@@ -29,6 +30,8 @@ _TOKEN_RE = re.compile(
     )""",
     re.VERBOSE,
 )
+
+_TRAILING_SPACE = re.compile(r"\s*\Z")
 
 _BINARY = {
     "or": 1,
@@ -151,7 +154,7 @@ class _Parser:
     def _tokenize(self, expr: str) -> list[tuple[str, str]]:
         tokens, i = [], 0
         while i < len(expr):
-            if expr[i:].strip() == "":
+            if _TRAILING_SPACE.match(expr, i):
                 break
             m = _TOKEN_RE.match(expr, i)
             if m is None or m.end() == i:
@@ -263,6 +266,13 @@ class _Parser:
         return lambda row: fn(*(a(row) for a in args))
 
 
+@functools.cache
 def compile_expression(expr: str) -> Callable[[object], Value]:
     """Parse ``expr`` once; return a function of a row."""
     return _Parser(expr).parse()
+
+
+@functools.cache
+def reads_self(expr: str) -> bool:
+    """Whether ``expr`` reads ``.``, the value of the question it gates."""
+    return any(kind == "dot" for kind, _ in _Parser(expr).tokens)
