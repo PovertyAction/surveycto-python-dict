@@ -96,6 +96,7 @@ _KEYS = [
     "constraint",
     "relevance",
     "group_relevances",
+    "gates",
     "required",
     "calculation",
     "appearance",

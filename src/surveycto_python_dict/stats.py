@@ -153,6 +153,10 @@ class _Row:
         if name not in self.data.questions:
             raise UnsupportedExpression(f"${{{name}}} is not a question in the data")
         chain = self.data.repeat_chain(name)
+        if len(chain) > len(self.iterations):
+            raise UnsupportedExpression(
+                f"${{{name}}} sits in a repeat inside the group whose condition reads it"
+            )
         if chain != self.data.repeat_chain(self.question)[: len(chain)]:
             raise UnsupportedExpression(
                 f"${{{name}}} sits in a repeat that does not enclose {self.question}"
@@ -175,7 +179,7 @@ def _gate(data: _Data, gate: str, question: str, iterations: tuple, own: list):
     fn = compile_expression(gate)
     if reads_self(gate):
         return lambda r: bool(fn(_Row(data, question, iterations, r, own[r])))
-    key = (gate, tuple(data.repeat_chain(question)), iterations)
+    key = (gate, tuple(data.repeat_chain(question)[: len(iterations)]), iterations)
     memo = data.gates.setdefault(key, [None] * len(own))
 
     def holds(r: int) -> bool:
@@ -216,8 +220,17 @@ def _eligibility(
         return [False] * n_rows, composed, True, "disabled"
     own = data.values[column]
     try:
+        # Each gate at its own repeat level: index() in a group's condition is the
+        # index of that group's repeat, not the question's innermost one.
         tests = [
-            _gate(data, g, q["variable_name"], iterations, own) for g in conditions
+            _gate(
+                data,
+                g["relevance"],
+                q["variable_name"],
+                iterations[: g["repeat_depth"]],
+                own,
+            )
+            for g in q["gates"]
         ]
         eligible = [all(t(r) for t in tests) for r in range(n_rows)]
         # A repeat instance exists only up to the repeat count, at every level.
@@ -303,7 +316,9 @@ def summary_stats(
                 f"{c} {sentinel_codes[c]}: {n}"
                 for c, n in sorted(sentinel_hits.items(), key=str)
             ),
-            missing_when_eligible=missing,
+            # A column with no question (a note, a group, a field from another form
+            # version) has no rule saying when it should hold a value.
+            missing_when_eligible=missing if q or entry.get("system") else "",
             answered_when_skipped=outside,
             n_valid=len(valid),
         )

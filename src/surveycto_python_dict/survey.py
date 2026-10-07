@@ -34,6 +34,15 @@ def gates(q: dict) -> list[str]:
     return [*q["group_relevances"], *([q["relevance"]] if q["relevance"] else [])]
 
 
+def gates_by_group(q: dict) -> str:
+    """Return ``q``'s conditions joined with ``and``, each group's tagged with it."""
+    parts = [
+        g["relevance"] + (f"  [group {g['group']}]" if g["group"] else "")
+        for g in q["gates"]
+    ]
+    return rule(parts) if len(parts) != 1 else parts[0]
+
+
 def rule(conditions: list[str]) -> str:
     """Join conditions with ``and``, each in parentheses when there are several."""
     if len(conditions) == 1:
@@ -453,8 +462,9 @@ class SurveyStore:
         ):
             if q[key]:
                 lines.append(f"{label}: {q[key]}")
-        for gate in q["group_relevances"]:
-            lines.append(f"Group relevance: {gate}")
+        for gate in q["gates"]:
+            if gate["group"]:
+                lines.append(f"Group relevance ({gate['group']}): {gate['relevance']}")
         if q["choices_withheld"]:
             lines.append(_withheld(q))
         elif q["choices"]:
@@ -546,7 +556,7 @@ class SurveyStore:
             q = self.questions[var]
             pad = "  " * level
             conditions = gates(q)
-            lines.append(f"{pad}{var}: {rule(conditions) or 'always asked'}")
+            lines.append(f"{pad}{var}: {gates_by_group(q) or 'always asked'}")
             seen.add(var)
             if level >= depth:
                 return
