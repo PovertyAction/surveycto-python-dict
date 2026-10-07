@@ -572,8 +572,10 @@ class SurveyStore:
         """Describe several variables."""
         return "\n\n".join(self.lookup_variable(n, columns) for n in names)
 
-    def search_questions(self, query: str, max_results: int = 20) -> str:
-        """Rank questions by the IDF of the query words their name or text contains."""
+    def search_scored(self, query: str) -> list[tuple[float, str]]:
+        """Score questions by the IDF of the query words their name or text contains;
+        a question named exactly ``query`` comes first.
+        """
         docs = {
             n: _tokens(f"{n.replace('_', ' ')} {q['question_text']}")
             for n, q in self.questions.items()
@@ -589,15 +591,42 @@ class SurveyStore:
             n: sum(idf.get(t, 0) for t in set(terms) if t in set(toks))
             for n, toks in docs.items()
         }
-        ranked = sorted(
+        if query.strip() in scores:
+            scores[query.strip()] = math.inf
+        return sorted(
             ((s, n) for n, s in scores.items() if s > 0), key=lambda x: (-x[0], x[1])
-        )[:max_results]
-        if not ranked:
-            return f"No question matches {query!r}."
-        return "\n".join(
-            f"{n} ({self.questions[n]['type']}): {_short(self.questions[n]['question_text'])}"
-            for _, n in ranked
         )
+
+    def search_line(self, name: str) -> str:
+        """Return a search hit: the question's name, type and short text."""
+        q = self.questions[name]
+        return f"{name} ({q['type']}): {_short(q['question_text'])}"
+
+    def search_questions(self, query: str, max_results: int = 20) -> str:
+        """Rank the form's questions by the words of ``query`` in their name or text."""
+        ranked = self.search_scored(query)[:max_results]
+        if not ranked:
+            return f"No question of {self.form_id} matches {query!r}."
+        return "\n".join(self.search_line(n) for _, n in ranked)
+
+    def get_group(self, group: str) -> str:
+        """List a group's questions in form order, with their type and condition."""
+        members = [q for q in self.questions.values() if group in q["group_path"]]
+        if not members:
+            groups = sorted(
+                {g for q in self.questions.values() for g in q["group_path"]}
+            )
+            close = difflib.get_close_matches(group, groups, n=5)
+            return f"No group named {group!r}." + (
+                f" Close: {', '.join(close)}" if close else ""
+            )
+        lines = [f"{group}: {len(members)} questions"]
+        for q in members:
+            inner = q["group_path"][q["group_path"].index(group) + 1 :]
+            where = f" [{'/'.join(inner)}]" if inner else ""
+            when = f"  if {q['relevance']}" if q["relevance"] else ""
+            lines.append(f"  {q['variable_name']} ({q['type']}){where}{when}")
+        return "\n".join(lines)
 
     def get_choice_list(self, name: str) -> str:
         """List a select question's choices."""
@@ -825,6 +854,23 @@ class SurveyStore:
         )
 
 
+def search_forms(stores: dict, query: str, max_results: int = 20) -> str:
+    """Search every form's questions; each form ranks its own, best first."""
+    ranked = sorted(
+        (
+            (score, form, name)
+            for form, store in stores.items()
+            for score, name in store.search_scored(query)
+        ),
+        key=lambda x: (-x[0], x[1], x[2]),
+    )[:max_results]
+    if not ranked:
+        return f"No question of {', '.join(stores)} matches {query!r}."
+    return "\n".join(
+        f"{form}.{stores[form].search_line(name)}" for _, form, name in ranked
+    )
+
+
 def _open(
     config: Path | None, directory: Path, form: str | None, project: bool = False
 ) -> SurveyStore:
@@ -874,7 +920,12 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
     var = commands.add_parser("var", help="describe questions or columns")
     var.add_argument("names", nargs="+")
     var.add_argument("--columns", action="store_true", help="list every column")
-    search = commands.add_parser("search", help="find questions by name or text")
+    commands.add_parser("group", help="a group's questions in order").add_argument(
+        "group"
+    )
+    search = commands.add_parser(
+        "search", help="find questions by name or text (every form without --form)"
+    )
     search.add_argument("query", nargs="+")
     search.add_argument("--max", type=int, default=20)
     commands.add_parser("choices", help="a select's choices").add_argument("name")
@@ -897,6 +948,21 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
     flow.add_argument("dataset", nargs="?", help="one dataset's columns, end to end")
     args = parser.parse_args(argv)
 
+    if (
+        store is None
+        and args.command == "search"
+        and args.form is None
+        and args.config is not None
+    ):
+        import tomllib
+
+        data = tomllib.loads(args.config.read_text(encoding="utf-8"))
+        stores = {
+            f: SurveyStore(args.config.parent / data["out_dir"] / f, f)
+            for f in data["forms"]
+        }
+        print(search_forms(stores, " ".join(args.query), args.max))
+        return
     if store is None:
         store = _open(
             args.config, args.dir, args.form, args.command in ("project", "flow", "db")
@@ -904,6 +970,7 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
     answer = {
         "var": lambda: store.lookup_variables(args.names, args.columns),
         "search": lambda: store.search_questions(" ".join(args.query), args.max),
+        "group": lambda: store.get_group(args.group),
         "choices": lambda: store.get_choice_list(args.name),
         "gates": lambda: store.get_gate_chain(args.name),
         "neighborhood": lambda: store.get_variable_neighborhood(args.name, args.depth),

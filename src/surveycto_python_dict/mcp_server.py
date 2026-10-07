@@ -6,7 +6,7 @@ from pathlib import Path
 from mcp.server.mcpserver import MCPServer
 
 from surveycto_python_dict.cli import load_config
-from surveycto_python_dict.survey import SurveyStore
+from surveycto_python_dict.survey import SurveyStore, search_forms
 
 _INSTRUCTIONS = (
     "Answers questions about one SurveyCTO project: what it is about and its entities "
@@ -50,9 +50,20 @@ def make_server(stores: dict[str, SurveyStore]) -> MCPServer:
         return store(form).lookup_variables(names, columns)
 
     @server.tool()
-    def search_questions(form: str, query: str, max_results: int = 20) -> str:
-        """Find a form's questions by words in their name or text (TF-IDF ranked)."""
+    def search_questions(
+        query: str, form: str | None = None, max_results: int = 20
+    ) -> str:
+        """Find questions by words in their name or text (TF-IDF ranked), or by their
+        exact name; in every form, or in ``form``.
+        """
+        if form is None:
+            return search_forms(stores, query, max_results)
         return store(form).search_questions(query, max_results)
+
+    @server.tool()
+    def get_group(form: str, group: str) -> str:
+        """List a group's questions in form order, with their type and condition."""
+        return store(form).get_group(group)
 
     @server.tool()
     def get_choice_list(form: str, name: str) -> str:

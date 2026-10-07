@@ -104,6 +104,7 @@ def test_server_registers_the_tools(store):
         "lookup_variable",
         "lookup_variables",
         "search_questions",
+        "get_group",
         "get_choice_list",
         "get_gate_chain",
         "get_survey_info",
@@ -313,3 +314,19 @@ def test_survey_info_lists_questions_with_no_column(tmp_path, analyzer):
     store = SurveyStore(cfg.form_dir("farm"), "farm")
     assert store.summary["questions_without_columns"] == ["visit"]
     assert "no submission holds a value: 1 (visit)" in store.get_survey_info()
+
+
+def test_group_lists_its_questions_in_order(store):
+    out = store.get_group("plot")
+    assert out.splitlines()[0] == "plot: 2 questions"
+    assert out.index("plot_crop") < out.index("plot_size")
+    assert store.get_group("plt").startswith("No group named 'plt'. Close: plot")
+
+
+def test_search_finds_an_exact_name_first_and_across_forms(store):
+    from surveycto_python_dict.survey import search_forms
+
+    assert store.search_questions("per_plot").splitlines()[0].startswith("per_plot")
+    out = search_forms({"farm": store}, "plot size")
+    assert out.splitlines()[0].startswith("farm.plot_size")
+    assert search_forms({"farm": store}, "zzz") == "No question of farm matches 'zzz'."

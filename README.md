@@ -201,7 +201,7 @@ rebuilding lets it in.
 
 `just mcp` (`uv run scto-mcp --config config.toml`) serves a project's outputs over
 stdio to a local agent. The form tools take the form's id: `lookup_variable(s)`,
-`search_questions`, `get_choice_list`, `get_gate_chain`, `get_survey_info`,
+`search_questions` (every form when no id is given), `get_group`, `get_choice_list`, `get_gate_chain`, `get_survey_info`,
 `get_variable_neighborhood`, `get_repeat_structure`, `get_datasets`. The project tools
 take none: `get_project` (the description, entities and candidate keys), `get_flow`
 (the chain, or one dataset's columns end to end) and `get_structure_db` (a summary of
