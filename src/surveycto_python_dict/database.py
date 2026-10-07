@@ -677,8 +677,8 @@ def write_database(
             }
         )
     con.close()
-    order = list(structure)
-    objects.sort(key=lambda o: order.index(o["name"]))
+    order = {name: i for i, name in enumerate(structure)}
+    objects.sort(key=lambda o: order[o["name"]])
     (out_dir / f"{project}_db.json").write_text(
         json.dumps(objects, indent=2, ensure_ascii=False), encoding="utf-8"
     )

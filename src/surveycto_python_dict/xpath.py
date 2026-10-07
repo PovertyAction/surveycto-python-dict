@@ -31,6 +31,8 @@ _TOKEN_RE = re.compile(
     re.VERBOSE,
 )
 
+_TRAILING_SPACE = re.compile(r"\s*\Z")
+
 _BINARY = {
     "or": 1,
     "and": 2,
@@ -152,7 +154,7 @@ class _Parser:
     def _tokenize(self, expr: str) -> list[tuple[str, str]]:
         tokens, i = [], 0
         while i < len(expr):
-            if expr[i:].strip() == "":
+            if _TRAILING_SPACE.match(expr, i):
                 break
             m = _TOKEN_RE.match(expr, i)
             if m is None or m.end() == i:
