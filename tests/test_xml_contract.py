@@ -486,16 +486,15 @@ class TestStringValuedChoiceCodes:
         assert m["ambiguous_choice"] is True
 
     def test_choice_index_recovers_the_original_value_and_label(self, tmp_path):
-        """With the choice universe supplied, the ORIGINAL value comes back.
+        """A select's own choices undo sanitisation: `AB-12` arrives as `AB_12`.
 
-        The sanitised token is lossy (`AB-12` and `AB_12` both render `AB_12`),
-        so the parser stays dependency-free and the caller injects the universe
-        it already resolves for labels.
+        A `search()` select's choices count once they are read from its dataset.
         """
         p = tmp_path / "strform.xml"
         p.write_text(_XML_STRING_CHOICES, encoding="utf-8")
         c = parse_contract(p)
-        c.choice_index = {"langs": {"AB_12": ("AB-12", "Alpha Beta 12")}}
+        assert c.map_column("langs_AB_12")["choice_code"] == "AB_12"
+        c.nodes["langs"].choice_items = [{"value": "AB-12", "label": "Alpha Beta 12"}]
         m = c.map_column("langs_AB_12")
         assert m["choice_code"] == "AB-12"
         assert m["choice_label"] == "Alpha Beta 12"

@@ -114,8 +114,8 @@ def sanitize_choice_value(value: str) -> str:
 
     Every character outside `[A-Za-z0-9_]` becomes an underscore, which is why a
     sanitised token cannot be reversed without the form's own choice universe --
-    `AB-12` and `AB_12` both arrive as `AB_12`. Callers building a choice index
-    for `FormContract.choice_index` must key it through this function.
+    `AB-12` and `AB_12` both arrive as `AB_12`. `FormContract._universe` keys a
+    select's choices through this function to undo it.
     """
     return _SANITISE_RE.sub("_", value)
 
@@ -301,7 +301,6 @@ class FormContract:
         formid: str,
         formdef_version: str | None,
         nodes: dict[str, Node],
-        choice_index: dict | None = None,
         encrypted: bool = False,
     ):
         """Store the node model and build the deterministic leaf-name resolver index."""
@@ -310,13 +309,9 @@ class FormContract:
         self.nodes: dict[str, Node] = nodes
         # The form has a public key: submissions are encrypted except publishable fields.
         self.encrypted = encrypted
-        # {node_path: {sanitised token: (original value, label|None)}}, for
-        # de-sanitising a string-valued select_multiple choice back to the value the
-        # form actually declared. Optional and injected by the caller: resolving a
-        # `search()` choice universe needs the form's attached CSVs, which this
-        # parser knows nothing about. Absent, a sanitised token is carried
-        # verbatim -- lossy but never wrong about which choice it is.
-        self.choice_index: dict = choice_index or {}
+        # (node path, its choice list) -> {sanitised token: (value, label) | None};
+        # see `_universe`.
+        self._universes: dict[tuple, dict] = {}
         # leaf token -> [paths], used to resolve a de-indexed wide base name.
         # Built from sorted paths so resolution is DETERMINISTIC: nodes is keyed
         # off a set union (hash-seed-dependent iteration), so without sorting the
@@ -406,10 +401,30 @@ class FormContract:
             return None
         return best[1], best[2], best[3]
 
+    def _universe(self, node: Node) -> dict:
+        """Return ``node``'s choices by the token SurveyCTO writes into a column name.
+
+        Read from ``node.choice_items`` when first asked for that list, so a
+        ``search()`` select's choices count once they are read from its dataset. Two
+        values that sanitise to one token map to ``None``: ambiguous.
+        """
+        key = (node.path, id(node.choice_items))
+        if key not in self._universes:
+            universe: dict = {}
+            for item in node.choice_items:
+                value = str(item["value"])
+                token = sanitize_choice_value(value)
+                if token in universe and (universe[token] or (value,))[0] != value:
+                    universe[token] = None
+                elif token not in universe:
+                    universe[token] = (value, item.get("label"))
+            self._universes[key] = universe
+        return self._universes[key]
+
     def _decode_choice(self, node: Node, token: str):
         """Sanitised token -> (choice value, label|None, resolved-by-index).
 
-        Prefers the injected choice universe, the only thing that can undo
+        Prefers the select's own choices (`_universe`), the only thing that can undo
         sanitisation (`AB-12` and `AB_12` both render `AB_12`). Falls back to the
         one shape recoverable from the token alone: a dash->underscore negative
         sentinel (`_66` -> `-66`), since a leading underscore is impossible in a
@@ -428,7 +443,7 @@ class FormContract:
         Both paths finish through the same coercion, so a numeric code does not
         change type depending on whether the choice CSV happened to ship.
         """
-        universe = self.choice_index.get(node.path, {})
+        universe = self._universe(node)
         if token in universe:
             hit = universe[token]
             if hit is None:  # known-ambiguous: two values sanitise to this token
