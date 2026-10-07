@@ -109,6 +109,12 @@ def build_dictionary(
             bounds = pc.min_max(column)
             entry["data_min"] = _json_value(bounds["min"].as_py())
             entry["data_max"] = _json_value(bounds["max"].as_py())
+        if pa.types.is_string(field.type) and non_null:
+            # Many values at exactly the longest length can mean a limit cut them.
+            lengths = pc.utf8_length(column)
+            longest = pc.max(lengths).as_py()
+            entry["max_length"] = longest
+            entry["at_max_length"] = pc.sum(pc.equal(lengths, longest)).as_py()
         entry["parquet"] = {
             "arrow_type": str(field.type),
             "xml_type": meta.get("xml_type"),

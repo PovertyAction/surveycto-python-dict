@@ -219,3 +219,9 @@ def test_sentinels_take_the_question_label_and_dates_count():
     assert _sentinel_counts(days, sentinels, {}) == {
         "1877-01-21": {"label": "Not reported", "count": 1}
     }
+
+
+def test_text_columns_report_their_longest_value(variables):
+    owner = variables["owner"]
+    # "Ana Maria Gomez Restrepo" is the only non-empty owner.
+    assert (owner["max_length"], owner["at_max_length"]) == (24, 1)

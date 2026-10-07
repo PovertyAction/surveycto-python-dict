@@ -464,6 +464,10 @@ class SurveyStore:
             )
         if "data_min" in v:
             parts.append(f"range {v['data_min']}..{v['data_max']}")
+        if "max_length" in v:
+            parts.append(
+                f"longest {v['max_length']} chars ({v['at_max_length']} values that long)"
+            )
         if "sentinels" in v:
             codes = ", ".join(
                 f"{c} {s['label']} x{s['count']}" for c, s in v["sentinels"].items()
@@ -766,7 +770,8 @@ class SurveyStore:
             lines.append("  Columns:")
             lines += [
                 f"    {c['column']}  non-null {c['non_null']}/{n_rows}, "
-                f"distinct {c['distinct']}  pii: {c['pii']['status']}"
+                f"distinct {c['distinct']}, longest {c['max_length']} chars "
+                f"({c['at_max_length']} values that long)  pii: {c['pii']['status']}"
                 + (f"  read by {', '.join(c['read_by'])}" if c["read_by"] else "")
                 for c in columns
             ]

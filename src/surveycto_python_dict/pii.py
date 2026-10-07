@@ -455,6 +455,7 @@ def dataset_codebook(
                 in [q["data_source"].get("column")]
                 + [m["column"] for m in q["data_source"]["match"]]
             ]
+            lengths = [len(v) for v in values if v is not None]
             rows.append(
                 {
                     "dataset": dataset,
@@ -462,6 +463,12 @@ def dataset_codebook(
                     "rows": len(records),
                     "non_null": sum(v is not None for v in values),
                     "distinct": len({v for v in values if v is not None}),
+                    # Many values at exactly the longest length can mean a limit cut
+                    # them when the dataset was written.
+                    "max_length": max(lengths, default=0),
+                    "at_max_length": lengths.count(max(lengths, default=0))
+                    if lengths
+                    else 0,
                     "read_by": read_by,
                     "pii": block,
                 }
