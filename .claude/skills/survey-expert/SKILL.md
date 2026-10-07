@@ -25,7 +25,9 @@ writes: one folder per form, `<out_dir>/<form>/`, and the project's `<out_dir>/f
 
 Call `get_project` (`<S> project`) first. When it says the project is not described
 or has no entities, set them up with the user before answering questions that depend
-on them:
+on them. If the project holds no personal data (study metadata, say) and almost every
+column is `no_hits` or `may_contain_pii`, suggest `[pii] no_personal_data = true` to
+the user and a rebuild:
 
 1. Ask for what describes the study: a pre-analysis plan, a replication paper, a
    protocol, a codebook. Remind them to share only documents they are allowed to share
@@ -139,6 +141,8 @@ Each `variables.<column>` entry has:
   only the codes someone picked do, in the wide parquet and the long views alike.
 - **Choices** are inline per question; a select's `choice_list` is its own name.
 - **Repeats**: fields inside a repeat get `_<n>` per instance (`_<n>_<m>` when nested).
+  A select_multiple inside a repeat is `<name>_<code>_<n>`: the choice code comes
+  before the instance.
   Each repeat has a synthetic `<repeat>_count` question whose `calculation` is the
   repeat count. Repeat siblings belong to the same instance; handle them together.
 - **Notes** are exported as always-empty columns with no question.
