@@ -17,6 +17,7 @@ from collections import Counter
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from surveycto_python_dict.survey import choice_labels
 from surveycto_python_dict.xml_contract import FormContract
 
 _REF_RE = re.compile(r"\$\{([^}]+)\}")
@@ -26,6 +27,7 @@ _SURVEY_KEYS = (
     "choice_list",
     "choices",
     "choices_withheld",
+    "choices_per_submission",
     "relevance",
     "group_relevances",
     "constraint",
@@ -49,20 +51,37 @@ def _ordered(arrow_type: pa.DataType) -> bool:
     )
 
 
-def _sentinel_counts(column: pa.ChunkedArray, sentinels: dict[int, str]) -> dict:
+def _sentinel_counts(
+    column: pa.ChunkedArray, sentinels: dict, labels: dict[str, str]
+) -> dict:
+    """Count the sentinel codes in ``column``, each labelled by the question's own
+    choice when it declares the code (``labels``), else by the study's table.
+    """
+    numbers = {c for c in sentinels if isinstance(c, int)}
     if pa.types.is_integer(column.type) or pa.types.is_floating(column.type):
-        values = Counter(v for v in column.to_pylist() if v in sentinels)
+        values = Counter(v for v in column.to_pylist() if v in numbers)
         found = {int(v): n for v, n in values.items()}
     elif pa.types.is_string(column.type):
-        codes = {str(code): code for code in sentinels}
+        codes = {str(code): code for code in numbers}
         found = {
             codes[v]: n for v, n in Counter(column.to_pylist()).items() if v in codes
         }
+    elif pa.types.is_date(column.type) or pa.types.is_timestamp(column.type):
+        dates = {c for c in sentinels if isinstance(c, dt.date)}
+        days = (
+            v.date() if isinstance(v, dt.datetime) else v
+            for v in column.to_pylist()
+            if v is not None
+        )
+        found = dict(Counter(d for d in days if d in dates))
     else:
         return {}
     return {
-        str(code): {"label": sentinels[code], "count": found[code]}
-        for code in sorted(found)
+        str(code): {
+            "label": labels.get(str(code), sentinels[code]),
+            "count": found[code],
+        }
+        for code in sorted(found, key=str)
     }
 
 
@@ -90,6 +109,12 @@ def build_dictionary(
             bounds = pc.min_max(column)
             entry["data_min"] = _json_value(bounds["min"].as_py())
             entry["data_max"] = _json_value(bounds["max"].as_py())
+        if pa.types.is_string(field.type) and non_null:
+            # Many values at exactly the longest length can mean a limit cut them.
+            lengths = pc.utf8_length(column)
+            longest = pc.max(lengths).as_py()
+            entry["max_length"] = longest
+            entry["at_max_length"] = pc.sum(pc.equal(lengths, longest)).as_py()
         entry["parquet"] = {
             "arrow_type": str(field.type),
             "xml_type": meta.get("xml_type"),
@@ -121,22 +146,31 @@ def build_dictionary(
             if "choice_value" in meta:
                 # A select_multiple binary stands for one choice: 1 chosen, 0 not.
                 entry["choice_value"] = meta["choice_value"]
-                label = next(
-                    c["label"]
-                    for c in question["choices"]
-                    if c["value"] == meta["choice_value"]
+                # A list kept in its dataset is not in the outputs, nor its labels.
+                label = (
+                    "(label in the dataset)"
+                    if question["choices_withheld"]
+                    else choice_labels(question["choices"])[meta["choice_value"]]
                 )
                 entry["value_labels"] = [
                     {"value": "1", "label": label},
                     {"value": "0", "label": "not chosen"},
                 ]
             elif question["type"] == "select_one" and not question["choices_withheld"]:
-                entry["value_labels"] = question["choices"]
+                entry["value_labels"] = [
+                    {"value": value, "label": label}
+                    for value, label in choice_labels(question["choices"]).items()
+                ]
             entry["survey"] = {k: question[k] for k in _SURVEY_KEYS}
             entry["survey"]["original_variable_name"] = question["variable_name"]
             entry["survey"]["group_path"] = "/".join(question["group_path"])
 
-        found = _sentinel_counts(column, sentinels)
+        labels = (
+            choice_labels(question["choices"])
+            if question and question["choices"]
+            else {}
+        )
+        found = _sentinel_counts(column, sentinels, labels)
         if found:
             entry["sentinels"] = found
         variables[field.name] = entry
@@ -158,6 +192,15 @@ def build_dictionary(
             "by_arrow_type": dict(
                 Counter(v["parquet"]["arrow_type"] for v in variables.values())
             ),
+            # No submission holds a value for these, so the export has no column. A
+            # repeat_count entry describes the repeat, not a field of its own.
+            "questions_without_columns": [
+                q["variable_name"]
+                for q in questions
+                if q["type"] != "repeat_count"
+                and q["variable_name"]
+                not in {v["question"] for v in variables.values()}
+            ],
         },
         "variables": variables,
     }
@@ -204,14 +247,6 @@ def build_graph(questions: list[dict], vardict: dict) -> dict:
             refs = dict.fromkeys(r for e in exprs if e for r in _REF_RE.findall(e))
             edges += [
                 {"source": r, "target": name, "type": kind} for r in refs if r in names
-            ]
-
-    for group in members.values():
-        for left in group:
-            edges += [
-                {"source": left, "target": right, "type": "repeat_sibling"}
-                for right in group
-                if right != left
             ]
 
     repeat_groups = {}

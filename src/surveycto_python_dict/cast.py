@@ -84,7 +84,7 @@ def _select_one_type(node: Node) -> pa.DataType:
     A code with a leading zero ("01") or letters ("yes") keeps the column as text, so
     no code changes meaning.
     """
-    codes = [str(c["value"]) for c in node.choice_items]
+    codes = [str(c["value"]) for c in node.all_choices]
     if codes and all(_INTEGER_CODE.fullmatch(code) for code in codes):
         return pa.int64()
     return pa.string()
@@ -144,14 +144,14 @@ def _columns(names: list[str], contract: FormContract) -> list[_Column]:
             multi_instances.setdefault(node.path, set()).add(iterations)
             picked.setdefault((node.path, iterations), set()).add(str(m["choice_code"]))
             if node.path not in codes_of:
-                codes_of[node.path] = {str(c["value"]) for c in node.choice_items}
+                codes_of[node.path] = {str(c["value"]) for c in node.all_choices}
             codes = codes_of[node.path]
             if str(m["choice_code"]) not in codes:
                 columns[name] = _text(
                     name,
                     f"choice code {m['choice_code']!r} is not among the form's choices",
                     _node_metadata(node),
-                    (*key[:3], len(node.choice_items)),
+                    (*key[:3], len(node.all_choices)),
                     binary_group=(node.path, iterations),
                 )
             continue
@@ -175,7 +175,7 @@ def _columns(names: list[str], contract: FormContract) -> list[_Column]:
         if not node.repeat_path:
             instances = {()}
         for iterations in instances:
-            for index, item in enumerate(node.choice_items):
+            for index, item in enumerate(node.all_choices):
                 if (
                     node.choices_per_submission
                     and str(item["value"]) not in picked[path, iterations]

@@ -118,6 +118,18 @@ def _codes(v: Value) -> list[str]:
     return _string(v).split()
 
 
+def _items(separator: Value, items: Value) -> list[str]:
+    """Split a SurveyCTO list (``item-at``, ``count-items``, ...); empty: no items."""
+    text = _string(items)
+    return text.split(_string(separator)) if text else []
+
+
+def _at(items: list[str], index: Value) -> str:
+    """Return the item at a 0-based index, or empty text past the end."""
+    i = int(_number(index))
+    return items[i] if 0 <= i < len(items) else ""
+
+
 _FUNCTIONS: dict[str, tuple[int, int, Callable[..., Value]]] = {
     # name: (min args, max args, implementation on evaluated args)
     "selected": (2, 2, lambda a, b: _string(b) in _codes(a)),
@@ -142,6 +154,30 @@ _FUNCTIONS: dict[str, tuple[int, int, Callable[..., Value]]] = {
     "starts-with": (2, 2, lambda a, b: _string(a).startswith(_string(b))),
     "regex": (2, 2, lambda a, p: re.search(_string(p), _string(a)) is not None),
     "coalesce": (2, 2, lambda a, b: a if _string(a) != "" else b),
+    # SurveyCTO's list and string functions; indexes start at 0.
+    "selected-at": (2, 2, lambda a, i: _at(_codes(a), i)),
+    "count-items": (2, 2, lambda sep, xs: float(len(_items(sep, xs)))),
+    "item-at": (3, 3, lambda sep, xs, i: _at(_items(sep, xs), i)),
+    "item-index": (
+        3,
+        3,
+        lambda sep, xs, x: float(
+            _items(sep, xs).index(_string(x)) if _string(x) in _items(sep, xs) else -1
+        ),
+    ),
+    "item-present": (3, 3, lambda sep, xs, x: _string(x) in _items(sep, xs)),
+    "de-duplicate": (
+        2,
+        2,
+        lambda sep, xs: _string(sep).join(dict.fromkeys(_items(sep, xs))),
+    ),
+    "substr": (
+        2,
+        3,
+        lambda a, start, end=None: _string(a)[
+            int(_number(start)) : None if end is None else int(_number(end))
+        ],
+    ),
 }
 
 
@@ -238,6 +274,9 @@ class _Parser:
             return node
         if kind == "name" and self.peek() == ("op", "("):
             return self.call(value)
+        if (kind, value) == ("name", "null"):
+            # `${a} != null`: a path to no node, which the form reads as empty.
+            return lambda row: ""
         raise UnsupportedExpression(f"unsupported {value!r} in {self.expr!r}")
 
     def call(self, name: str) -> Callable:

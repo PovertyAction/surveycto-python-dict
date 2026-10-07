@@ -55,6 +55,22 @@ def ev(expr, **values):
         ("coalesce(${a}, ${b}) = 5", {"a": None, "b": 5}, True),
         ("int(${a}) = 3", {"a": 3.7}, True),
         ("number(${a}) > 2", {"a": "2.5"}, True),
+        # SurveyCTO list and string functions, 0-based.
+        ("selected-at(${m}, 1) = '2'", {"m": "1 2 77"}, True),
+        ("selected-at(${m}, 5) = ''", {"m": "1 2"}, True),
+        ("count-items(',', ${l}) = 3", {"l": "a,b,c"}, True),
+        ("count-items(',', ${l}) = 0", {"l": None}, True),
+        ("item-at(' - ', ${l}, 1) = 'b'", {"l": "a - b - c"}, True),
+        ("item-at(',', ${l}, 9) = ''", {"l": "a,b"}, True),
+        ("item-index(',', ${l}, 'c') = 2", {"l": "a,b,c"}, True),
+        ("item-index(',', ${l}, 'z') = -1", {"l": "a,b,c"}, True),
+        ("item-present(',', ${l}, 'b')", {"l": "a,b,c"}, True),
+        ("item-present(',', ${l}, 'z')", {"l": "a,b,c"}, False),
+        ("de-duplicate(',', ${l}) = 'a,b'", {"l": "a,b,a"}, True),
+        ("substr(${t}, 1, 3) = 'bc'", {"t": "abcd"}, True),
+        ("substr(${t}, 2) = 'cd'", {"t": "abcd"}, True),
+        ("${a} != null", {"a": "x"}, True),
+        ("${a} != null", {"a": None}, False),
     ],
 )
 def test_evaluates(expr, values, expected):

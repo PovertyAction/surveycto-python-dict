@@ -38,6 +38,7 @@ the MCP's ``get_structure_db`` reads, and rendered for people as ``<project>_db.
 """
 
 import json
+from collections import Counter
 from functools import reduce
 from pathlib import Path
 
@@ -125,8 +126,8 @@ _DESCRIPTIONS = {
     },
     "questions": {"grain": "one row per question", "key": ["question"], "joins": []},
     "choices": {
-        "grain": "one row per choice of a select",
-        "key": ["question", "value"],
+        "grain": "one row per choice of a select; when: the search() filter values of its list",
+        "key": ["question", "when", "value"],
         "joins": ["{s}.choices.question = {s}.questions.question"],
     },
     "edges": {
@@ -179,7 +180,8 @@ _PROJECT = {
         "joins": ["reads.dataset = datasets.dataset", "reads.form = forms.form"],
     },
     "joins": {
-        "grain": "one row per reader field matched to the publisher field it comes from",
+        "grain": "one row per reader field matched to the publisher field it comes "
+        "from; unique: the dataset column identifies one row",
         "key": ["reader_form", "reader_field", "dataset", "dataset_column"],
         "joins": [
             "<reader_form>.<reader_table>.<reader_field> = "
@@ -271,6 +273,7 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                 "joins": [f"{on}  (many to one)"],
             }
 
+    n_columns = Counter(v["question"] for v in variables.values())
     tables = {
         "dictionary": pd.DataFrame(
             [
@@ -288,6 +291,8 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                     "xml_type": v["parquet"]["xml_type"],
                     "cast_fallback": v["parquet"].get("cast_fallback"),
                     "non_null_count": v["non_null_count"],
+                    "max_length": v.get("max_length"),
+                    "at_max_length": v.get("at_max_length"),
                     "missing_rate": v["missing_rate"],
                     "pii_status": v["pii"]["status"],
                     "pii_basis": v["pii"]["basis"],
@@ -304,6 +309,8 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                     "question_text": q["question_text"],
                     "group_path": q["group_path"],
                     "repeat_group": repeat_of.get(q["variable_name"]),
+                    # 0: no submission holds a value, so the data has no column.
+                    "n_columns": n_columns.get(q["variable_name"], 0),
                     "relevance": q["relevance"],
                     "group_relevances": q["group_relevances"],
                     "constraint": q["constraint"],
@@ -311,6 +318,7 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                     "required": q["required"],
                     "publishable": q["publishable"],
                     "choices_withheld": q["choices_withheld"],
+                    "choices_per_submission": q["choices_per_submission"],
                 }
                 for q in questions
             ]
@@ -321,12 +329,13 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                     "question": q["variable_name"],
                     "value": c["value"],
                     "label": c["label"],
+                    "when": json.dumps(c["when"]) if "when" in c else None,
                 }
                 for q in questions
                 if q["choices"] and not q["choices_withheld"]
                 for c in q["choices"]
             ],
-            columns=["question", "value", "label"],
+            columns=["question", "value", "label", "when"],
         ),
         "edges": pd.DataFrame(graph["edges"], columns=["source", "target", "type"]),
         "dataset_codebook": pd.DataFrame(
@@ -338,6 +347,8 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                     "rows": c["rows"],
                     "non_null": c["non_null"],
                     "distinct": c["distinct"],
+                    "max_length": c["max_length"],
+                    "at_max_length": c["at_max_length"],
                     "read_by": c["read_by"],
                     "pii_status": c["pii"]["status"],
                     "pii_basis": c["pii"]["basis"],
@@ -352,6 +363,8 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                 "rows",
                 "non_null",
                 "distinct",
+                "max_length",
+                "at_max_length",
                 "read_by",
                 "pii_status",
                 "pii_basis",
@@ -508,6 +521,11 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
         if publisher is None or publisher == r["form"]:
             continue
         reader = forms[r["form"]]
+        stats = {
+            c["column"]: c
+            for c in reader["codebook"]
+            if c["dataset"] == r["name_in_form"]
+        }
         for q in reader["questions"]:
             source = q["data_source"]
             if not source or source["dataset"] != r["name_in_form"]:
@@ -518,6 +536,7 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
                 if path is None or not (value.startswith("${") and value.endswith("}")):
                     continue
                 field, published = value[2:-1], path.rsplit("/", 1)[-1]
+                column = stats[m["column"]]
                 row = {
                     "reader_form": r["form"],
                     "reader_table": reader["repeat_of"].get(field) or "submissions",
@@ -528,6 +547,13 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
                     "publisher_table": forms[publisher]["repeat_of"].get(published)
                     or "submissions",
                     "publisher_field": published,
+                    # Unique: each value matches one dataset row. Otherwise the
+                    # reader's pulldata()/search() can return another row's value.
+                    "unique": column["distinct"]
+                    == column["non_null"]
+                    == column["rows"],
+                    "distinct_values": column["distinct"],
+                    "dataset_rows": column["rows"],
                 }
                 if row not in joins:
                     joins.append(row)
@@ -602,6 +628,9 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
                 "publisher_form",
                 "publisher_table",
                 "publisher_field",
+                "unique",
+                "distinct_values",
+                "dataset_rows",
             ],
         ),
     }
@@ -613,7 +642,13 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
         "joins": [
             f"{j['reader_form']}.{j['reader_table']}.{j['reader_field']} = "
             f"{j['publisher_form']}.{j['publisher_table']}.{j['publisher_field']}  "
-            f"(through dataset.{j['dataset']}.{j['dataset_column']})"
+            f"(through dataset.{j['dataset']}.{j['dataset_column']}"
+            + (
+                ")"
+                if j["unique"]
+                else f"; not unique: {j['distinct_values']} distinct values in "
+                f"{j['dataset_rows']} rows, so a match can return another row)"
+            )
             for j in joins
         ],
     }

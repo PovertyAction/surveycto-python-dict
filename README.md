@@ -28,8 +28,11 @@ The repo follows IPA's `ipa-python-template`: `just lint` runs the pre-commit ho
 Copy `.env.example` to `.env` and fill it in: `SCTO_SERVER` (the subdomain),
 `SCTO_USER`, `SCTO_PASSWORD`, `SCTO_KEY_PATH` for encrypted forms, and
 `SCTO_SENTINELS`, the study's non-response codes (`"-99=Don't know;-88=Refused;..."`),
-which `just build` and `just stats` require. Never commit `.env`, the `.pem` key,
-`config.toml` or `data/`.
+which `just build` and `just stats` require. A question that declares one of these
+codes as a choice keeps its own label for it. Dates the team types into a date question
+to code the same answers go in the optional `SCTO_DATE_SENTINELS`
+(`"1900-01-01=Don't know"`): date columns count them apart, as numbers count the
+codes. Never commit `.env`, the `.pem` key, `config.toml` or `data/`.
 
 A project is one connected study: one or more forms on one server that chain through
 the server datasets they publish and read (any number of datasets, none included). It
@@ -71,11 +74,16 @@ those columns go through the type rules and Presidio like any other. Set
 `no_personal_data = true` for a project that holds none (study metadata, say): every
 column, dataset column and `search()` list that is not blacklisted or device metadata
 (`username`, `deviceid`, ...) is `whitelisted` with basis `project`, and Presidio
-never runs.
+never runs. The `[pii]` settings also change the parquet's columns: a `search()` list
+Presidio withholds is not written out, so its select_multiple has binaries only for the
+codes picked. Rebuild after changing them, and write cleaning code against that build.
 
-A `search()` select's choices come from its dataset, never from the XML. The build
-scans each list with Presidio and adds it whole when nothing is found; any hit
-withholds the whole list (`choices_withheld` gives the entities). A whitelisted select
+A `search()` select's choices come from its dataset, never from the XML. A list of up to
+50 choices is written into the outputs; a longer one stays in its dataset, and the
+question names the dataset's value and label columns (`choices_withheld` gives the
+count). The build scans each list with Presidio and adds it whole when nothing is found;
+any hit withholds the whole list (`choices_withheld` gives the entities). A
+select_multiple whose list is not written out has binaries only for the codes picked. A whitelisted select
 gets its list unscanned; a blacklisted one never has its dataset read.
 
 ## How the forms chain: `flow.json`
@@ -167,9 +175,11 @@ are copies of the JSON outputs. A CSV attached to a form sits in `dataset` as
 identify a dataset's rows, checked unique.
 
 `joins` connects the forms: a reader's field, the dataset column it matches, and the
-publisher's field behind that column. Each form's `dataset_links` gives the same
-matches within the form, so a query can follow a value from one form to the next as
-the forms do. Select in SQL, clean in pandas:
+publisher's field behind that column, and `unique`: whether that column identifies one
+dataset row. When it does not (a label shared by several studies), the form's match can
+return another row, and so can a query that follows it. Each form's `dataset_links`
+gives the same matches within the form, so a query can follow a value from one form to
+the next as the forms do. Select in SQL, clean in pandas:
 
 ```python
 import duckdb
@@ -193,14 +203,15 @@ rebuilding lets it in.
 
 `just mcp` (`uv run scto-mcp --config config.toml`) serves a project's outputs over
 stdio to a local agent. The form tools take the form's id: `lookup_variable(s)`,
-`search_questions`, `get_choice_list`, `get_gate_chain`, `get_survey_info`,
+`search_questions` (every form when no id is given), `get_group`, `get_choice_list`, `get_gate_chain`, `get_survey_info`,
 `get_variable_neighborhood`, `get_repeat_structure`, `get_datasets`. The project tools
 take none: `get_project` (the description, entities and candidate keys), `get_flow`
-(the chain, or one dataset's columns end to end) and `get_structure_db` (a summary of `<project>.duckdb`, or one schema in full: a form's
-tables with the datasets and cross-form joins it uses). `lookup_variable` follows a
-field that reads a dataset back to the field another form publishes it from, with its
-origin. It reads only the JSON outputs, never the parquet, and shows each column's
-`pii` status.
+(the chain, or one dataset's columns end to end) and `get_structure_db` (a summary of
+`<project>.duckdb`, one schema: a form's tables with the datasets and cross-form joins it
+uses, or one table's columns). Long lists are summarised with the argument that lists
+them in full. `lookup_variable` follows a field that reads a dataset back to the field
+another form publishes it from, with its origin. It reads only the JSON outputs, never
+the parquet, and shows each column's `pii` status.
 
 To connect it to Claude Code, copy `.mcp.json.example` to `.mcp.json` (git-ignored) and
 point `--config` at your config. The `survey-expert` skill

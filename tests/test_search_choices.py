@@ -72,12 +72,16 @@ def form(tmp_path):
     return tmp_path / "shop.xml", datasets
 
 
-def _screen(form, analyzer, config=PiiConfig()):
+# Two submissions, both in zone 1: buyer's list is zone 1's buyers.
+_ROWS = [{"zone": "1", "KEY": "uuid:a"}, {"zone": "1", "KEY": "uuid:b"}]
+
+
+def _screen(form, analyzer, config=PiiConfig(), rows=_ROWS):
     xml, datasets = form
     contract = parse_contract(xml)
     spy = Spy(analyzer)
     files = {p.stem: p for p in datasets.glob("*.csv")}
-    screen_search_choices(contract, files, config, spy)
+    screen_search_choices(contract, files, config, spy, rows)
     return {q["variable_name"]: q for q in build_questions(contract)}, spy
 
 
@@ -102,11 +106,38 @@ def test_universe_keeps_literal_extras_and_applies_literal_filters(form):
         c["value"]
         for c in search_universe(nodes["north"], DatasetTable(datasets / "towns.csv"))
     ] == ["21"]
-    # A filter on a field is decided per submission: every row is a possible choice.
+    # A filter on a field keeps the rows of the values the field takes, each
+    # choice saying which.
+    buyers = DatasetTable(datasets / "buyers.csv")
+    assert search_universe(nodes["buyer"], buyers, {"zone_code": {"1", "2"}}) == [
+        {"value": "7", "label": "Ana Maria Gomez Restrepo", "when": {"zone_code": "1"}},
+        {"value": "8", "label": "Jorge Perez", "when": {"zone_code": "2"}},
+    ]
     assert [
         c["value"]
-        for c in search_universe(nodes["buyer"], DatasetTable(datasets / "buyers.csv"))
-    ] == ["7", "8"]
+        for c in search_universe(nodes["buyer"], buyers, {"zone_code": {"2"}})
+    ] == ["8"]
+    with pytest.raises(ValueError, match="zone_code"):
+        search_universe(nodes["buyer"], buyers)
+
+
+def test_a_filter_on_a_field_keeps_the_rows_the_submissions_reach(form):
+    questions, _ = _screen(form, NoHits(), PiiConfig(whitelist=("buyer",)))
+    assert questions["buyer"]["choices"] == [
+        {"value": "7", "label": "Ana Maria Gomez Restrepo", "when": {"zone_code": "1"}}
+    ]
+
+
+def test_a_filter_on_an_expression_withholds_the_list(form):
+    xml, datasets = form
+    xml.write_text(
+        xml.read_text(encoding="utf-8").replace(
+            "'zone_code',  /shop/zone )", "'zone_code', concat( /shop/zone , '0'))"
+        ),
+        encoding="utf-8",
+    )
+    questions, _ = _screen(form, NoHits())
+    assert questions["buyer"]["choices_withheld"][0].startswith("filtered by concat(")
 
 
 class NoHits:
@@ -140,7 +171,8 @@ def test_any_hit_withholds_the_whole_list(form, analyzer):
 
 
 def test_whitelisted_list_is_added_unscanned(form, analyzer):
-    questions, spy = _screen(form, analyzer, PiiConfig(whitelist=("buyer",)))
+    rows = [{"zone": "1", "KEY": "uuid:a"}, {"zone": "2", "KEY": "uuid:b"}]
+    questions, spy = _screen(form, analyzer, PiiConfig(whitelist=("buyer",)), rows)
     assert [c["value"] for c in questions["buyer"]["choices"]] == ["7", "8"]
     assert "Jorge Perez" not in spy.texts
 

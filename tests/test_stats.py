@@ -171,6 +171,62 @@ def test_integer_select_one_gets_frequencies_not_a_mean():
     q = {
         "type": "select_one",
         "choices": [{"value": "0", "label": "No"}, {"value": "1", "label": "Yes"}],
+        "choices_withheld": None,
     }
     out = _describe([1, 1, 0], entry, q, is_binary=False)
     assert out == {"frequencies": "0 No: 1 (33.3%); 1 Yes: 2 (66.7%)"}
+
+
+def test_a_group_condition_uses_its_own_repeat_index(tmp_path, analyzer):
+    # plot's condition `index() <= 1` is about the plot, also for a parcel inside it.
+    xml = (
+        XML.replace(
+            '<plot jr:template=""><plot_crop/><plot_size/></plot>',
+            '<plot jr:template=""><plot_crop/><plot_size/>'
+            '<parcel jr:template=""><parcel_size/></parcel></plot>',
+        )
+        .replace(
+            '<bind nodeset="/farm/plot" relevant=" /farm/plots  &gt; 0"/>',
+            '<bind nodeset="/farm/plot" relevant="index() &lt;= 1"/>'
+            '<bind nodeset="/farm/plot/parcel/parcel_size" type="decimal"/>',
+        )
+        .replace(
+            '<input ref="/farm/plot/plot_size"><label>Plot size</label></input>',
+            '<input ref="/farm/plot/plot_size"><label>Plot size</label></input>'
+            '<group ref="/farm/plot/parcel"><label>Parcel</label>'
+            '<repeat nodeset="/farm/plot/parcel">'
+            '<input ref="/farm/plot/parcel/parcel_size"><label>Parcel size</label></input>'
+            "</repeat></group>",
+        )
+    )
+    rows = [{**ROWS[0], "parcel_size_1_1": "1", "parcel_size_1_2": "2"}, ROWS[1]]
+    stats = _by_name(_build(tmp_path, analyzer, xml=xml, rows=rows))
+    second = stats["parcel_size_1_2"]
+    assert (
+        second["eligible"],
+        second["answered"],
+        second["answered_when_skipped"],
+    ) == (
+        1,
+        1,
+        0,
+    )
+
+
+def test_a_column_with_no_question_has_no_missing_count(stats):
+    assert stats["intro"]["missing_when_eligible"] == ""  # a note
+
+
+def test_a_date_sentinel_is_counted_apart(tmp_path, analyzer):
+    import datetime as dt
+
+    cfg = _build(tmp_path, analyzer)
+    sentinels = {**SENTINELS, dt.date(2025, 3, 6): "Not reported"}
+    visit = {
+        r["variable"]: r for r in summary_stats(cfg.form_dir("farm"), "farm", sentinels)
+    }["visit"]
+    assert (visit["sentinel"], visit["sentinel_detail"], visit["min"]) == (
+        1,
+        "2025-03-06 Not reported: 1",
+        "",
+    )

@@ -104,6 +104,7 @@ def test_server_registers_the_tools(store):
         "lookup_variable",
         "lookup_variables",
         "search_questions",
+        "get_group",
         "get_choice_list",
         "get_gate_chain",
         "get_survey_info",
@@ -240,7 +241,7 @@ def test_withheld_choices_name_the_dataset_columns_not_choices(store):
         choices_withheld=["presidio:PERSON"],
     )
     out = store.get_choice_list("crop")
-    assert "choices withheld (presidio:PERSON)" in out
+    assert "choices not listed (presidio:PERSON)" in out
     assert "value column `crop_id`, label column `crop_name`" in out
     assert "crop_id = crop_name" not in out
 
@@ -264,3 +265,68 @@ def test_datasets_describe_the_join_to_the_form(store):
     assert "prev reads owner" in out
     assert "owner  non-null 2/2, distinct 1" in out
     assert "Fictional Owner" not in out
+
+
+def test_many_columns_are_summarised_and_listed_on_request(store, monkeypatch):
+    from surveycto_python_dict import survey
+
+    monkeypatch.setattr(survey, "_LISTED", 1)
+    out = store.lookup_variable("plot_crop")
+    assert "Columns: 4, plot_crop_1_1 ... " in out
+    assert "lookup_variable('plot_crop', columns=True)" in out
+    assert "plot_crop_2_2  " not in out
+    assert "plot_crop_2_2" in store.lookup_variable("plot_crop", columns=True)
+
+
+def test_neighborhood_names_the_repeat_instead_of_its_members(store):
+    out = store.get_variable_neighborhood("plot_size")
+    assert out.startswith("plot_size is in repeat plot with 2 questions")
+    assert "repeat_sibling" not in out
+
+
+def test_repeat_structure_lists_members_and_drills_into_one(store, monkeypatch):
+    from surveycto_python_dict import survey
+
+    monkeypatch.setattr(survey, "_LISTED", 1)
+    out = store.get_repeat_structure()
+    assert "members (2): plot_crop, ... 1 more; get_repeat_structure('plot')" in out
+    assert "plot_size" in store.get_repeat_structure("plot")
+
+
+def test_project_commands_need_no_form(store, capsys):
+    from surveycto_python_dict.survey import main
+
+    config = store.form_dir.parent.parent / "two.toml"
+    config.write_text('forms = ["farm", "visit"]\nout_dir = "out"\n', encoding="utf-8")
+    main(["--config", str(config), "flow"])
+    assert "Stage 1:\n  farm" in capsys.readouterr().out
+
+
+def test_survey_info_lists_questions_with_no_column(tmp_path, analyzer):
+    from farm_form import ROWS
+
+    config = tmp_path / "config.toml"
+    config.write_text('forms = ["farm"]\nout_dir = "out"\n', encoding="utf-8")
+    cfg = load_config(config)
+    # Nobody answered `visit`: the export has no column for it.
+    write_pull(cfg, rows=[{k: v for k, v in r.items() if k != "visit"} for r in ROWS])
+    build(cfg, SENTINELS, analyzer)
+    store = SurveyStore(cfg.form_dir("farm"), "farm")
+    assert store.summary["questions_without_columns"] == ["visit"]
+    assert "no submission holds a value: 1 (visit)" in store.get_survey_info()
+
+
+def test_group_lists_its_questions_in_order(store):
+    out = store.get_group("plot")
+    assert out.splitlines()[0] == "plot: 2 questions"
+    assert out.index("plot_crop") < out.index("plot_size")
+    assert store.get_group("plt").startswith("No group named 'plt'. Close: plot")
+
+
+def test_search_finds_an_exact_name_first_and_across_forms(store):
+    from surveycto_python_dict.survey import search_forms
+
+    assert store.search_questions("per_plot").splitlines()[0].startswith("per_plot")
+    out = search_forms({"farm": store}, "plot size")
+    assert out.splitlines()[0].startswith("farm.plot_size")
+    assert search_forms({"farm": store}, "zzz") == "No question of farm matches 'zzz'."

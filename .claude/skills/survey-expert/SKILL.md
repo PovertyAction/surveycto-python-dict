@@ -61,18 +61,19 @@ uv run scto-survey --config config.toml --form <form> <command>
 
 | Need | MCP tool | Shell (`<S> <command>`) |
 |---|---|---|
-| What a question or column is, and where a value read from a dataset comes from | `lookup_variable(form, name)` / `lookup_variables(form, names)` | `var <name> [<name> ...]` |
-| Find questions by words | `search_questions(form, query)` | `search <words>` |
+| What a question or column is, and where a value read from a dataset comes from (more than 20 columns are summarised; `columns=True` lists each) | `lookup_variable(form, name)` / `lookup_variables(form, names)` | `var <name> [<name> ...] [--columns]` |
+| Find questions by words or exact name, in every form or one | `search_questions(query)` / `search_questions(query, form)` | `search <words>` (every form without `--form`) |
 | A select's choices | `get_choice_list(form, name)` | `choices <name>` |
 | Why a question is asked | `get_gate_chain(form, name)` | `gates <name>` |
-| What feeds, gates or sits next to it | `get_variable_neighborhood(form, name, depth)` | `neighborhood <name> --depth N` |
-| Repeat groups | `get_repeat_structure(form)` | `repeats` |
+| What feeds, gates or constrains it, and the repeat it is in | `get_variable_neighborhood(form, name, depth)` | `neighborhood <name> --depth N` |
+| A group's questions in order | `get_group(form, group)` | `group <group>` |
+| Repeat groups, then one repeat's members | `get_repeat_structure(form)` / `get_repeat_structure(form, repeat)` | `repeats [<repeat>]` |
 | Form overview | `get_survey_info(form)` | `info` |
 | The datasets a form reads and their joins | `get_datasets(form)` | `datasets` |
 | What the project is about: description, entities, candidate keys | `get_project()` | `project` |
 | How the forms chain: stages, publishers, readers | `get_flow()` | `flow` |
 | Where a dataset's columns come from and who reads them | `get_flow(dataset)` | `flow <dataset>` |
-| The project database: a summary, then one schema | `get_structure_db()` / `get_structure_db(schema)` | `db` / `db <schema>` |
+| The project database: a summary, one schema, one table's columns | `get_structure_db()` / `get_structure_db(schema)` / `get_structure_db(schema, table)` | `db` / `db <schema>` / `db <schema> <table>` |
 
 A name can be a question (`water_source`) or a column (`water_source_3`); a column
 lookup returns its question with every column it produced. Read the JSON files
@@ -133,9 +134,13 @@ Each `variables.<column>` entry has:
 - **select_multiple** comes as one binary per choice, `<name>_<code>` (negative codes
   as `<name>__99`). A binary is `1` when chosen, `0` when another choice of the same
   question was chosen in that row (and repeat instance), and null when none was: the
-  question was skipped. Every choice has a column, even one nobody picked.
+  question was skipped. Every choice has a column, even one nobody picked, unless
+  `choices_per_submission` is true (the form filters the list per submission): then
+  only the codes someone picked do, in the wide parquet and the long views alike.
 - **Choices** are inline per question; a select's `choice_list` is its own name.
 - **Repeats**: fields inside a repeat get `_<n>` per instance (`_<n>_<m>` when nested).
+  A select_multiple inside a repeat is `<name>_<code>_<n>`: the choice code comes
+  before the instance.
   Each repeat has a synthetic `<repeat>_count` question whose `calculation` is the
   repeat count. Repeat siblings belong to the same instance; handle them together.
 - **Notes** are exported as always-empty columns with no question.

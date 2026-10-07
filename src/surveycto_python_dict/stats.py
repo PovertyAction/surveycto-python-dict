@@ -17,7 +17,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 
 from surveycto_python_dict.pii import FLAGGED
-from surveycto_python_dict.survey import gates, rule
+from surveycto_python_dict.survey import choice_labels, gates, rule
 from surveycto_python_dict.xpath import (
     UnsupportedExpression,
     compile_expression,
@@ -153,6 +153,10 @@ class _Row:
         if name not in self.data.questions:
             raise UnsupportedExpression(f"${{{name}}} is not a question in the data")
         chain = self.data.repeat_chain(name)
+        if len(chain) > len(self.iterations):
+            raise UnsupportedExpression(
+                f"${{{name}}} sits in a repeat inside the group whose condition reads it"
+            )
         if chain != self.data.repeat_chain(self.question)[: len(chain)]:
             raise UnsupportedExpression(
                 f"${{{name}}} sits in a repeat that does not enclose {self.question}"
@@ -175,7 +179,7 @@ def _gate(data: _Data, gate: str, question: str, iterations: tuple, own: list):
     fn = compile_expression(gate)
     if reads_self(gate):
         return lambda r: bool(fn(_Row(data, question, iterations, r, own[r])))
-    key = (gate, tuple(data.repeat_chain(question)), iterations)
+    key = (gate, tuple(data.repeat_chain(question)[: len(iterations)]), iterations)
     memo = data.gates.setdefault(key, [None] * len(own))
 
     def holds(r: int) -> bool:
@@ -216,8 +220,17 @@ def _eligibility(
         return [False] * n_rows, composed, True, "disabled"
     own = data.values[column]
     try:
+        # Each gate at its own repeat level: index() in a group's condition is the
+        # index of that group's repeat, not the question's innermost one.
         tests = [
-            _gate(data, g, q["variable_name"], iterations, own) for g in conditions
+            _gate(
+                data,
+                g["relevance"],
+                q["variable_name"],
+                iterations[: g["repeat_depth"]],
+                own,
+            )
+            for g in q["gates"]
         ]
         eligible = [all(t(r) for t in tests) for r in range(n_rows)]
         # A repeat instance exists only up to the repeat count, at every level.
@@ -254,8 +267,9 @@ def summary_stats(
     variables = dictionary["variables"]
     data = _Data(table, questions, variables)
     n_rows = table.num_rows
+    # Numeric codes as numbers and as text; date codes as ISO text, as dates are read.
     sentinel_codes = {
-        **{c: m for c, m in sentinels.items()},
+        **{c: m for c, m in sentinels.items() if isinstance(c, int)},
         **{str(c): m for c, m in sentinels.items()},
     }
 
@@ -268,6 +282,9 @@ def summary_stats(
         )
         values = data.values[column]
         is_binary = "choice_value" in entry
+        # A timestamp is read as ISO text; a date sentinel matches its day.
+        day = entry["parquet"]["arrow_type"].startswith("timestamp")
+        labels = choice_labels(q["choices"]) if q and q["choices"] else {}
         sentinel_hits: dict = {}
         valid = []
         answered = missing = outside = 0
@@ -278,8 +295,9 @@ def summary_stats(
             if not ok:
                 outside += 1
                 continue
-            if not is_binary and not isinstance(v, bool) and v in sentinel_codes:
-                sentinel_hits[v] = sentinel_hits.get(v, 0) + 1
+            code = v[:10] if day else v
+            if not is_binary and not isinstance(v, bool) and code in sentinel_codes:
+                sentinel_hits[code] = sentinel_hits.get(code, 0) + 1
                 continue
             answered += 1
             valid.append(v)
@@ -300,10 +318,12 @@ def summary_stats(
             answered=answered,
             sentinel=sum(sentinel_hits.values()),
             sentinel_detail="; ".join(
-                f"{c} {sentinel_codes[c]}: {n}"
+                f"{c} {labels.get(str(c), sentinel_codes[c])}: {n}"
                 for c, n in sorted(sentinel_hits.items(), key=str)
             ),
-            missing_when_eligible=missing,
+            # A column with no question (a note, a group, a field from another form
+            # version) has no rule saying when it should hold a value.
+            missing_when_eligible=missing if q or entry.get("system") else "",
             answered_when_skipped=outside,
             n_valid=len(valid),
         )
@@ -321,13 +341,15 @@ def _describe(valid: list, entry: dict, q: dict | None, is_binary: bool) -> dict
         return {"selected": selected, "selected_share": _fmt(selected / len(valid))}
     # A select_one gets frequencies whether its codes are stored as text or integers.
     if q is not None and q["type"] == "select_one":
-        labels = {c["value"]: c["label"] for c in q["choices"]}
+        # A list kept in its dataset has no labels here, only the codes found.
+        labels = {} if q["choices_withheld"] else choice_labels(q["choices"])
         counts = {code: 0 for code in labels}
         for v in valid:
             counts[str(v)] = counts.get(str(v), 0) + 1
         return {
             "frequencies": "; ".join(
-                f"{code} {labels.get(code, '(not a choice)')}: {n} ({n / len(valid):.1%})"
+                f"{code} {labels.get(code, '(in the dataset)' if q['choices_withheld'] else '(not a choice)')}: "
+                f"{n} ({n / len(valid):.1%})"
                 for code, n in counts.items()
             )
         }

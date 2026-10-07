@@ -141,14 +141,29 @@ def build_questions(contract: FormContract) -> list[dict]:
     repeats = set(contract.repeat_groups)
     questions = []
 
-    def group_context(node: Node) -> tuple[list[str], bool]:
-        """Return enclosing group relevances (outer first) and whether any is "0"."""
-        relevances = []
+    def group_context(node: Node) -> tuple[list[str], bool, list[dict], int]:
+        """Return enclosing group relevances (outer first), whether any is "0", the
+        same as gates with their group and repeat depth, and the node's repeat depth.
+
+        A gate's ``repeat_depth`` is how many repeats enclose its group, the group
+        included: ``index()`` in it is the index of that repeat.
+        """
+        relevances, gates, depth = [], [], 0
         for i in range(1, len(node.group_path) + 1):
             group = contract.nodes["/".join(node.group_path[:i])]
+            depth += group.name in repeats
             if group.relevant is not None:
-                relevances.append(refs(group.relevant))
-        return relevances, "0" in relevances
+                relevance = refs(group.relevant)
+                relevances.append(relevance)
+                gates.append(
+                    {"group": group.name, "relevance": relevance, "repeat_depth": depth}
+                )
+        return relevances, "0" in relevances, gates, depth
+
+    def own_gate(relevance: str | None, depth: int) -> list[dict]:
+        if relevance is None:
+            return []
+        return [{"group": None, "relevance": relevance, "repeat_depth": depth}]
 
     def label(node: Node) -> str:
         return refs(node.label) or ""
@@ -168,7 +183,9 @@ def build_questions(contract: FormContract) -> list[dict]:
     for node in contract.nodes.values():
         if not node.is_leaf and node.name in repeats:
             count = counted_by.get(node.name)
-            group_relevances, parent_disabled = group_context(count or node)
+            group_relevances, parent_disabled, gates, depth = group_context(
+                count or node
+            )
             relevance = refs((count or node).relevant)
             calculation = refs(count.calculate if count else node.repeat_count)
             questions.append(
@@ -176,12 +193,14 @@ def build_questions(contract: FormContract) -> list[dict]:
                     "type": "repeat_count",
                     "choice_list": None,
                     "choices": None,
+                    "choices_per_submission": False,
                     "variable_name": f"{node.name}_count",
                     "question_text": f"Number of iterations in '{label(node) or node.name}' repeat group",
                     "disabled": parent_disabled or relevance == "0",
                     "constraint": None,
                     "relevance": relevance,
                     "group_relevances": group_relevances,
+                    "gates": gates + own_gate(relevance, depth),
                     "required": False,
                     "calculation": calculation,
                     "appearance": None,
@@ -199,7 +218,7 @@ def build_questions(contract: FormContract) -> list[dict]:
         qtype = _xlsform_type(node)
         if _excluded(node.name, qtype):
             continue
-        group_relevances, parent_disabled = group_context(node)
+        group_relevances, parent_disabled, gates, depth = group_context(node)
         relevance = refs(node.relevant)
         constraint = refs(node.constraint)
         calculation = refs(node.calculate)
@@ -211,11 +230,16 @@ def build_questions(contract: FormContract) -> list[dict]:
                 "choices": (
                     [
                         {"value": c["value"], "label": refs(c["label"])}
+                        | ({"when": c["when"]} if "when" in c else {})
                         for c in node.choice_items
                     ]
                     if is_select
                     else None
                 ),
+                # The form filters the list per submission (an itemset that reads
+                # the form, a search() filtered by a field): a select_multiple has
+                # binaries only for the codes someone picked.
+                "choices_per_submission": node.choices_per_submission,
                 "variable_name": node.name,
                 "question_text": label(node)
                 or (calculation if qtype == "calculate" else ""),
@@ -223,6 +247,7 @@ def build_questions(contract: FormContract) -> list[dict]:
                 "constraint": constraint,
                 "relevance": relevance,
                 "group_relevances": group_relevances,
+                "gates": gates + own_gate(relevance, depth),
                 "required": node.required,
                 "calculation": calculation,
                 "appearance": refs(node.appearance),
