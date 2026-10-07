@@ -15,6 +15,11 @@ Each published column gets the origin of the field behind it: ``entered`` (a que
 the enumerator answers, a ``search()`` pick included), ``metadata`` (a preload such as
 the username), ``carried`` (a calculate that traces back to a ``pulldata()`` from
 another dataset) or ``calculated`` (any other calculate).
+
+``keys`` lists the columns that can identify an entity: each dataset's key and each
+column a ``pulldata()``/``search()`` matches on, with the forms (and the table in each)
+and datasets that carry it. ``project`` holds what the user says the project is about:
+a description and named entities, each on one of those columns (``describe_project``).
 """
 
 import csv
@@ -90,8 +95,10 @@ def _reads(contract: FormContract, name: str, columns: list[str]) -> list[dict]:
         if not source or source["dataset"] != name:
             continue
         if source["kind"] == "pulldata":
+            match = [source["key"]]
             used = [source["value"].strip("'\""), source["key"]]
         else:
+            match = list(source["filter"])
             items = [v for i in node.choice_items for v in (i["value"], i["label"])]
             used = [*source["filter"], *(c for c in items if c in columns)]
         fields.append(
@@ -99,9 +106,87 @@ def _reads(contract: FormContract, name: str, columns: list[str]) -> list[dict]:
                 "field": node.path,
                 "via": source["kind"],
                 "columns": list(dict.fromkeys(used)),
+                "match": match,
             }
         )
     return fields
+
+
+def _where(
+    contracts: dict[str, FormContract], datasets: list[dict], column: str
+) -> dict:
+    """Return the forms (with the table in each) and datasets that carry ``column``."""
+    forms = {}
+    for form, contract in contracts.items():
+        tables = sorted(
+            {
+                n.repeat_path[-1] if n.repeat_path else "submissions"
+                for n in contract.nodes.values()
+                if n.name == column
+            }
+        )
+        if tables:
+            forms[form] = tables
+    return {
+        "forms": forms,
+        "datasets": [d["id"] for d in datasets if column in d["columns"]],
+    }
+
+
+def _keys(contracts: dict[str, FormContract], datasets: list[dict], reads) -> list:
+    """Return the columns that can identify an entity, the most widely carried first."""
+    key_of: dict[str, list[str]] = {}
+    for d in datasets:
+        if d["key"]:
+            key_of.setdefault(d["key"], []).append(d["id"])
+    matched: dict[str, int] = {}
+    for r in reads:
+        for f in r["fields"]:
+            for column in f["match"]:
+                matched[column] = matched.get(column, 0) + 1
+    keys = [
+        {
+            "column": column,
+            "key_of": key_of.get(column, []),
+            "matched_by": matched.get(column, 0),
+            **_where(contracts, datasets, column),
+        }
+        for column in sorted(set(key_of) | set(matched))
+    ]
+    return sorted(keys, key=lambda k: -(len(k["forms"]) + len(k["datasets"])))
+
+
+def describe_project(
+    flow: dict,
+    contracts: dict[str, FormContract],
+    description: str | None,
+    entities: dict[str, dict],
+) -> dict:
+    """Return the ``project`` section: the user's description and their entities.
+
+    Each entity names the column that identifies it; a column no form or dataset
+    carries raises, and so does a parent that is not another entity.
+    """
+    described = []
+    for name, entity in entities.items():
+        where = _where(contracts, flow["datasets"], entity["key"])
+        if not where["forms"] and not where["datasets"]:
+            raise ValueError(
+                f"entity {name!r}: no form or dataset has a column {entity['key']!r}"
+            )
+        parent = entity.get("parent")
+        if parent is not None and parent not in entities:
+            raise ValueError(f"entity {name!r}: parent {parent!r} is not an entity")
+        described.append(
+            {
+                "name": name,
+                "key": entity["key"],
+                "description": entity["description"],
+                "parent": parent,
+                **where,
+            }
+        )
+    return {"description": description, "entities": described}
 
 
 def build_flow(
@@ -240,4 +325,9 @@ def build_flow(
         ],
         "datasets": list(datasets.values()),
         "reads": reads,
+        "keys": _keys(
+            {form: contract for form, (contract, _) in forms.items()},
+            list(datasets.values()),
+            reads,
+        ),
     }

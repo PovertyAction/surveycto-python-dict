@@ -5,8 +5,13 @@ import json
 import pytest
 
 from surveycto_python_dict.contract import form_entry, resolve_datasets
-from surveycto_python_dict.flow import build_flow
-from surveycto_python_dict.survey import render_flow, render_mermaid, upstream_lines
+from surveycto_python_dict.flow import build_flow, describe_project
+from surveycto_python_dict.survey import (
+    render_flow,
+    render_mermaid,
+    render_project,
+    upstream_lines,
+)
 from surveycto_python_dict.xml_contract import parse_contract
 
 # listing publishes `households`: hhid and village at the top, plot_size from a repeat.
@@ -126,8 +131,13 @@ def test_reads_name_the_fields_and_columns(flow):
     assert visit["households"]["name_in_form"] == "Households"
     assert visit["households"]["attached"] is True
     assert visit["households"]["fields"] == [
-        {"field": "hh", "via": "search", "columns": ["hhid", "village"]},
-        {"field": "where", "via": "pulldata", "columns": ["village", "hhid"]},
+        {"field": "hh", "via": "search", "columns": ["hhid", "village"], "match": []},
+        {
+            "field": "where",
+            "via": "pulldata",
+            "columns": ["village", "hhid"],
+            "match": ["hhid"],
+        },
     ]
     assert visit["zones"]["attached"] is False
 
@@ -252,3 +262,64 @@ def test_a_read_traces_back_to_the_publishing_field(flow):
         "Comes from: zones (external: no project form fills it)"
     ]
     assert upstream_lines(flow, "listing", "hhid") == []
+
+
+def test_candidate_keys_say_where_each_column_lives(flow):
+    keys = {k["column"]: k for k in flow["keys"]}
+    assert keys["hhid"]["key_of"] == ["households"]
+    assert keys["hhid"]["matched_by"] == 1
+    assert keys["hhid"]["forms"] == {"listing": ["submissions"]}
+    assert keys["hhid"]["datasets"] == ["households"]
+    assert keys["zone_id"]["key_of"] == ["zones"]
+
+
+def _contracts(tmp_path):
+    contracts = {}
+    for form, xml in {"listing": _LISTING, "visit": _VISIT}.items():
+        (tmp_path / f"{form}-c.xml").write_text(xml, encoding="utf-8")
+        contracts[form] = parse_contract(tmp_path / f"{form}-c.xml")
+    return contracts
+
+
+def test_project_entities_are_the_users_and_checked(flow, tmp_path):
+    contracts = _contracts(tmp_path)
+    entities = {
+        "household": {"key": "hhid", "description": "A listed household"},
+        "plot": {"key": "plot_size", "description": "A plot", "parent": "household"},
+    }
+    project = describe_project(flow, contracts, "A farm census.", entities)
+    assert project["description"] == "A farm census."
+    household, plot = project["entities"]
+    assert household["forms"] == {"listing": ["submissions"]}
+    assert household["datasets"] == ["households"]
+    assert plot["forms"] == {"listing": ["plot"]}
+    assert plot["parent"] == "household"
+    flow = {**flow, "project": project}
+    text = render_project(flow)
+    assert text.startswith("About: A farm census.")
+    assert "  household (hhid): A listed household" in text
+    assert "  plot (plot_size): A plot; part of household" in text
+    # A key the user named is no longer a candidate.
+    assert "  hhid:" not in text
+    assert "  zone_id: key of zones" in text
+
+
+def test_project_entity_on_a_missing_column_or_parent_raises(flow, tmp_path):
+    contracts = _contracts(tmp_path)
+    with pytest.raises(ValueError, match="no form or dataset has a column 'nope'"):
+        describe_project(
+            flow, contracts, None, {"x": {"key": "nope", "description": ""}}
+        )
+    with pytest.raises(ValueError, match="parent 'ghost' is not an entity"):
+        describe_project(
+            flow,
+            contracts,
+            None,
+            {"x": {"key": "hhid", "description": "", "parent": "ghost"}},
+        )
+
+
+def test_project_without_description_asks_for_one(flow):
+    text = render_project({**flow, "project": {"description": None, "entities": []}})
+    assert text.startswith("About: not described yet. Ask the user")
+    assert "Entities: none named yet." in text

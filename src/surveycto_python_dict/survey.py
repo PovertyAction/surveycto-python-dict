@@ -155,6 +155,53 @@ def render_structure_schema(project: str, objects: list[dict], schema: str) -> s
     return render_structure(project, picked)
 
 
+def _places(item: dict) -> str:
+    forms = "; ".join(f"{f} ({', '.join(t)})" for f, t in item["forms"].items())
+    return f"in {forms or 'no form'}; datasets: {', '.join(item['datasets']) or '-'}"
+
+
+def render_project(flow: dict) -> str:
+    """Render what the project is about: the user's description, entities and keys.
+
+    The description and entities come from the config's ``[project]`` and
+    ``[entities.*]``; the candidate keys from the outputs.
+    """
+    project = flow["project"]
+    lines = [
+        "About: "
+        + (
+            project["description"]
+            or "not described yet. Ask the user what the project is about; a "
+            "pre-analysis plan, replication paper or protocol helps. It goes in the "
+            "config's [project] description."
+        ),
+        "",
+    ]
+    if project["entities"]:
+        lines.append("Entities (named by the user):")
+        for e in project["entities"]:
+            parent = f"; part of {e['parent']}" if e["parent"] else ""
+            lines.append(f"  {e['name']} ({e['key']}): {e['description']}{parent}")
+            lines.append(f"    {_places(e)}")
+    else:
+        lines.append(
+            "Entities: none named yet. Each goes in the config as [entities.<name>] "
+            "with its key, a description and an optional parent."
+        )
+    named = {e["key"] for e in project["entities"]}
+    candidates = [k for k in flow["keys"] if k["column"] not in named]
+    if candidates:
+        lines += ["", "Candidate keys (from the outputs, most widely carried first):"]
+        for k in candidates:
+            what = []
+            if k["key_of"]:
+                what.append(f"key of {', '.join(k['key_of'])}")
+            if k["matched_by"]:
+                what.append(f"matched by {k['matched_by']} reads")
+            lines.append(f"  {k['column']}: {'; '.join(what)}; {_places(k)}")
+    return "\n".join(lines)
+
+
 def upstream_lines(flow: dict, form: str, name: str) -> list[str]:
     """Return where the dataset columns that ``form``'s field ``name`` reads come from."""
     datasets = {d["id"]: d for d in flow["datasets"]}
@@ -618,6 +665,10 @@ class SurveyStore:
             return render_structure_summary(self.project, objects)
         return render_structure_schema(self.project, objects, schema)
 
+    def get_project(self) -> str:
+        """Render what the project is about: description, entities, candidate keys."""
+        return render_project(self.flow)
+
     def get_flow(self, dataset: str | None = None) -> str:
         """Render the project's ``flow.json``, or one dataset's columns with ``dataset``."""
         return render_flow(self.flow, dataset)
@@ -699,6 +750,7 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
     db.add_argument(
         "schema", nargs="?", help="one schema in full (a form, dataset, main)"
     )
+    commands.add_parser("project", help="what the project is about: entities, keys")
     flow = commands.add_parser("flow", help="how the project's forms chain")
     flow.add_argument("dataset", nargs="?", help="one dataset's columns, end to end")
     args = parser.parse_args(argv)
@@ -716,6 +768,7 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
         "datasets": store.get_datasets,
         "db": lambda: store.get_structure_db(args.schema),
         "flow": lambda: store.get_flow(args.dataset),
+        "project": store.get_project,
     }[args.command]()
     print(answer)
 

@@ -104,6 +104,39 @@ dataset's publisher, origins and readers, and the reads without an attachment;
 `flow <dataset>` traces each column from the field that publishes it, with its origin,
 to the fields that read it.
 
+## What the project is about: description and entities
+
+The outputs say how the data is stored: a submission, a repeat instance, a dataset row.
+What those rows are about (a household, a study, an endline wave) comes from you. Two
+config sections hold it:
+
+```toml
+[project]
+description = "In your words: the study, its design, its units and stages."
+
+[entities.household]
+key = "hhid"                         # the column that identifies one
+description = "A household listed at baseline"
+
+[entities.member]
+key = "member_id"
+description = "A household member"
+parent = "household"
+```
+
+The survey-expert skill fills them with you. Give it what describes the study: a
+pre-analysis plan, a replication paper, a protocol, a codebook. It reads them, lists the
+candidate keys the outputs carry (`get_project`: each dataset's key and each column the
+forms match on, with the forms, tables and datasets that hold it), proposes entities on
+those keys and writes the sections once you confirm. The description is yours: the
+skill asks for it rather than writing one from the questions. Share only documents you
+are allowed to share with the agent: an embargoed plan or unpublished results may not
+be.
+
+`just flow` (seconds) rewrites `flow.json` and `flow.md` with them; a key no form or
+dataset carries is an error. `get_project` then opens an agent's work on the project:
+the description, the entities with where each lives, and the keys not yet named.
+
 ## Querying with DuckDB: one database per project
 
 `just duckdb` (after `just stats`) writes `<project>.duckdb`, one database for the whole
@@ -156,8 +189,8 @@ rebuilding lets it in.
 stdio to a local agent. The form tools take the form's id: `lookup_variable(s)`,
 `search_questions`, `get_choice_list`, `get_gate_chain`, `get_survey_info`,
 `get_variable_neighborhood`, `get_repeat_structure`, `get_datasets`. The project tools
-take none: `get_flow` (the chain, or one dataset's columns end to end) and
-`get_structure_db` (a summary of `<project>.duckdb`, or one schema in full: a form's
+take none: `get_project` (the description, entities and candidate keys), `get_flow`
+(the chain, or one dataset's columns end to end) and `get_structure_db` (a summary of `<project>.duckdb`, or one schema in full: a form's
 tables with the datasets and cross-form joins it uses). `lookup_variable` follows a
 field that reads a dataset back to the field another form publishes it from, with its
 origin. It reads only the JSON outputs, never the parquet, and shows each column's

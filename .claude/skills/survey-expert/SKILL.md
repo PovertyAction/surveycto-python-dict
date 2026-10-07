@@ -21,6 +21,31 @@ writes: one folder per form, `<out_dir>/<form>/`, and the project's `<out_dir>/f
 | `<out_dir>/flow.json`, `flow.md` | The project: which form publishes each dataset, which forms read it (fields and columns), each published column's origin, each form's stage; `flow.md` draws it |
 | `<form>_summary_stats.csv` | `just stats`: per column, eligible rows under skip logic, sentinels apart, then stats; flagged PII columns get counts only |
 
+## Start with what the project is about
+
+Call `get_project` (`<S> project`) first. When it says the project is not described
+or has no entities, set them up with the user before answering questions that depend
+on them:
+
+1. Ask for what describes the study: a pre-analysis plan, a replication paper, a
+   protocol, a codebook. Remind them to share only documents they are allowed to share
+   with you.
+2. Ask the user to say in a few sentences what the project is about. Use their words
+   for `[project] description`; don't write one from the questions.
+3. From the documents and the candidate keys `get_project` lists, propose entities: a
+   name, the key column, a one-line description from the documents, and a parent where
+   one entity sits inside another. Show them as the TOML below and ask the user to
+   confirm or correct each.
+   ```toml
+   [entities.household]
+   key = "hhid"
+   description = "A household listed at baseline"
+   ```
+4. Write the confirmed sections into the project's config, run `just flow <config>`,
+   and ask the user to reconnect the MCP so `get_project` serves them.
+5. Add one line to the analysis project's CLAUDE.md pointing at `get_project` and the
+   config, so the description and entities keep one home.
+
 ## How to look things up
 
 Use the `survey-expert` MCP tools when they are connected. Otherwise the same answers
@@ -44,6 +69,7 @@ uv run scto-survey --config config.toml --form <form> <command>
 | Repeat groups | `get_repeat_structure(form)` | `repeats` |
 | Form overview | `get_survey_info(form)` | `info` |
 | The datasets a form reads and their joins | `get_datasets(form)` | `datasets` |
+| What the project is about: description, entities, candidate keys | `get_project()` | `project` |
 | How the forms chain: stages, publishers, readers | `get_flow()` | `flow` |
 | Where a dataset's columns come from and who reads them | `get_flow(dataset)` | `flow <dataset>` |
 | The project database: a summary, then one schema | `get_structure_db()` / `get_structure_db(schema)` | `db` / `db <schema>` |

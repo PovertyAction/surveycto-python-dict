@@ -9,8 +9,9 @@ from surveycto_python_dict.cli import load_config
 from surveycto_python_dict.survey import SurveyStore
 
 _INSTRUCTIONS = (
-    "Answers questions about one SurveyCTO project: its forms ({forms}), how they chain "
-    "through datasets (get_flow), and each form's questions, skip logic, choices, "
+    "Answers questions about one SurveyCTO project: what it is about and its entities "
+    "(get_project, start there), its forms ({forms}), how they chain through datasets "
+    "(get_flow), and each form's questions, skip logic, choices, "
     "columns and their relationships. Form tools take the form's id. Every column "
     "carries pii.status. Check pii.status before reading a variable's values: "
     "contains_pii and may_contain_pii columns hold, or may hold, personal data; their "
@@ -78,6 +79,13 @@ def make_server(stores: dict[str, SurveyStore]) -> MCPServer:
     def get_datasets(form: str) -> str:
         """Describe the datasets a form reads and how their rows join to the form."""
         return store(form).get_datasets()
+
+    @server.tool()
+    def get_project() -> str:
+        """Say what the project is about: the user's description, the entities they
+        named (each with its key column and where it appears), and candidate keys.
+        """
+        return project.get_project()
 
     @server.tool()
     def get_flow(dataset: str | None = None) -> str:

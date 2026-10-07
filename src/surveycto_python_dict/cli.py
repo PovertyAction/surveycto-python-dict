@@ -37,7 +37,7 @@ from surveycto_python_dict.cast import cast_wide
 from surveycto_python_dict.codebook import write_pii_review
 from surveycto_python_dict.contract import DatasetSource, form_entry, resolve_datasets
 from surveycto_python_dict.dictionary import build_dictionary, build_graph, write_json
-from surveycto_python_dict.flow import build_flow
+from surveycto_python_dict.flow import build_flow, describe_project
 from surveycto_python_dict.pii import (
     PiiConfig,
     attach,
@@ -51,7 +51,15 @@ from surveycto_python_dict.questions import build_questions, write_sections
 from surveycto_python_dict.survey import render_mermaid
 from surveycto_python_dict.xml_contract import FormContract, parse_contract
 
-_TOP_KEYS = {"forms", "server_datasets", "out_dir", "pii", "datasets"}
+_TOP_KEYS = {
+    "forms",
+    "server_datasets",
+    "out_dir",
+    "pii",
+    "datasets",
+    "project",
+    "entities",
+}
 
 
 @dataclass(frozen=True)
@@ -65,6 +73,10 @@ class Config:
     pii: PiiConfig
     # [datasets.<name>] key: the columns that identify a dataset row.
     dataset_keys: dict[str, list[str]]
+    # [project] description: what the project is about, in the user's words.
+    description: str | None
+    # [entities.<name>]: key (the column that identifies it), description, parent.
+    entities: dict[str, dict]
 
     @property
     def project(self) -> str:
@@ -105,6 +117,13 @@ def load_config(path: Path) -> Config:
     datasets = data.get("datasets", {})
     for name, section in datasets.items():
         _check_keys(f"[datasets.{name}]", set(section), {"key"})
+    project = data.get("project", {})
+    _check_keys("[project]", set(project), {"description"})
+    entities = data.get("entities", {})
+    for name, section in entities.items():
+        _check_keys(
+            f"[entities.{name}]", set(section), {"key", "description", "parent"}
+        )
     if not data["forms"]:
         raise ValueError("forms is empty: name at least one form")
     return Config(
@@ -113,6 +132,8 @@ def load_config(path: Path) -> Config:
         out_dir=Path(path).parent / data["out_dir"],
         pii=PiiConfig(**pii),
         dataset_keys={name: section["key"] for name, section in datasets.items()},
+        description=project.get("description"),
+        entities=entities,
     )
 
 
@@ -291,6 +312,12 @@ def write_flow(cfg: Config) -> Path:
         cfg.raw_dir / "datasets",
         {form: cfg.form_raw(form) / "files" for form in cfg.forms},
     )
+    flow["project"] = describe_project(
+        flow,
+        {form: contract for form, (contract, _) in forms.items()},
+        cfg.description,
+        cfg.entities,
+    )
     path = cfg.out_dir / "flow.json"
     write_json(flow, path)
     (cfg.out_dir / "flow.md").write_text(
@@ -342,6 +369,11 @@ def build_main(argv: list[str] | None = None) -> None:
     """Entry point for ``scto-build``."""
     load_dotenv()
     build(_config_arg(argv), env_sentinels())
+
+
+def flow_main(argv: list[str] | None = None) -> None:
+    """Entry point for ``scto-flow``: rewrite ``flow.json`` and ``flow.md`` alone."""
+    write_flow(_config_arg(argv))
 
 
 def run_main(argv: list[str] | None = None) -> None:

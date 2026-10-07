@@ -111,6 +111,7 @@ def test_server_registers_the_tools(store):
         "get_repeat_structure",
         "get_datasets",
         "get_flow",
+        "get_project",
         "get_structure_db",
     }
     assert "pii.status" in server.instructions

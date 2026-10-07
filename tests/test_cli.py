@@ -229,3 +229,20 @@ def test_build_dictionary_holds_no_flagged_value(built):
     text = outputs["dictionary"].read_text(encoding="utf-8")
     for value in ("Ana Maria Gomez Restrepo", "3104567890", "Jorge Perez"):
         assert value not in text
+
+
+def test_load_config_project_and_entities(tmp_path):
+    cfg = load_config(
+        _config(
+            tmp_path,
+            '[project]\ndescription = "A farm census."\n\n'
+            '[entities.household]\nkey = "hhid"\ndescription = "A household"\n',
+        )
+    )
+    assert cfg.description == "A farm census."
+    assert cfg.entities == {"household": {"key": "hhid", "description": "A household"}}
+
+
+def test_load_config_entity_typo_raises(tmp_path):
+    with pytest.raises(ValueError, match="kee"):
+        load_config(_config(tmp_path, '[entities.household]\nkee = "hhid"\n'))

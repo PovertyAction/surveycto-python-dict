@@ -17,6 +17,10 @@ setup:
 pull cfg=config:
     uv run scto-pull --config {{ cfg }}
 
+[doc("Rewrite flow.json and flow.md alone, e.g. after editing [project] or [entities]")]
+flow cfg=config:
+    uv run scto-flow --config {{ cfg }}
+
 [doc("Build each form's questions.json, sections, parquet, dictionary, graph, PII review and dataset codebook, then flow.json")]
 build cfg=config:
     uv run scto-build --config {{ cfg }}

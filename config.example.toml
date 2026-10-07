@@ -23,3 +23,15 @@ blacklist = []
 # The columns that identify a dataset's rows (checked unique), by its flow.json id.
 # [datasets.my_dataset]
 # key = ["hhid", "round"]
+
+# What the project is about, in your words, and the entities its rows are about.
+# The survey-expert skill helps fill these from a pre-analysis plan or paper.
+# [project]
+# description = "..."
+# [entities.household]
+# key = "hhid"
+# description = "A household listed at baseline"
+# [entities.member]
+# key = "member_id"
+# description = "A household member"
+# parent = "household"
