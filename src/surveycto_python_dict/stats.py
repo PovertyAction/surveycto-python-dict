@@ -267,8 +267,9 @@ def summary_stats(
     variables = dictionary["variables"]
     data = _Data(table, questions, variables)
     n_rows = table.num_rows
+    # Numeric codes as numbers and as text; date codes as ISO text, as dates are read.
     sentinel_codes = {
-        **{c: m for c, m in sentinels.items()},
+        **{c: m for c, m in sentinels.items() if isinstance(c, int)},
         **{str(c): m for c, m in sentinels.items()},
     }
 
@@ -281,6 +282,9 @@ def summary_stats(
         )
         values = data.values[column]
         is_binary = "choice_value" in entry
+        # A timestamp is read as ISO text; a date sentinel matches its day.
+        day = entry["parquet"]["arrow_type"].startswith("timestamp")
+        labels = choice_labels(q["choices"]) if q and q["choices"] else {}
         sentinel_hits: dict = {}
         valid = []
         answered = missing = outside = 0
@@ -291,8 +295,9 @@ def summary_stats(
             if not ok:
                 outside += 1
                 continue
-            if not is_binary and not isinstance(v, bool) and v in sentinel_codes:
-                sentinel_hits[v] = sentinel_hits.get(v, 0) + 1
+            code = v[:10] if day else v
+            if not is_binary and not isinstance(v, bool) and code in sentinel_codes:
+                sentinel_hits[code] = sentinel_hits.get(code, 0) + 1
                 continue
             answered += 1
             valid.append(v)
@@ -313,7 +318,7 @@ def summary_stats(
             answered=answered,
             sentinel=sum(sentinel_hits.values()),
             sentinel_detail="; ".join(
-                f"{c} {sentinel_codes[c]}: {n}"
+                f"{c} {labels.get(str(c), sentinel_codes[c])}: {n}"
                 for c, n in sorted(sentinel_hits.items(), key=str)
             ),
             # A column with no question (a note, a group, a field from another form

@@ -28,8 +28,11 @@ The repo follows IPA's `ipa-python-template`: `just lint` runs the pre-commit ho
 Copy `.env.example` to `.env` and fill it in: `SCTO_SERVER` (the subdomain),
 `SCTO_USER`, `SCTO_PASSWORD`, `SCTO_KEY_PATH` for encrypted forms, and
 `SCTO_SENTINELS`, the study's non-response codes (`"-99=Don't know;-88=Refused;..."`),
-which `just build` and `just stats` require. Never commit `.env`, the `.pem` key,
-`config.toml` or `data/`.
+which `just build` and `just stats` require. A question that declares one of these
+codes as a choice keeps its own label for it. Dates the team types into a date question
+to code the same answers go in the optional `SCTO_DATE_SENTINELS`
+(`"1877-01-21=Not reported"`): date columns count them apart, as numbers count the
+codes. Never commit `.env`, the `.pem` key, `config.toml` or `data/`.
 
 A project is one connected study: one or more forms on one server that chain through
 the server datasets they publish and read (any number of datasets, none included). It

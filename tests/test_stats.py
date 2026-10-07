@@ -214,3 +214,18 @@ def test_a_group_condition_uses_its_own_repeat_index(tmp_path, analyzer):
 
 def test_a_column_with_no_question_has_no_missing_count(stats):
     assert stats["intro"]["missing_when_eligible"] == ""  # a note
+
+
+def test_a_date_sentinel_is_counted_apart(tmp_path, analyzer):
+    import datetime as dt
+
+    cfg = _build(tmp_path, analyzer)
+    sentinels = {**SENTINELS, dt.date(2025, 3, 6): "Not reported"}
+    visit = {
+        r["variable"]: r for r in summary_stats(cfg.form_dir("farm"), "farm", sentinels)
+    }["visit"]
+    assert (visit["sentinel"], visit["sentinel_detail"], visit["min"]) == (
+        1,
+        "2025-03-06 Not reported: 1",
+        "",
+    )

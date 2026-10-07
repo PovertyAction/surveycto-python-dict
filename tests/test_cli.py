@@ -64,6 +64,7 @@ def test_load_config_pii(tmp_path):
 
 
 def test_env_sentinels(monkeypatch):
+    monkeypatch.delenv("SCTO_DATE_SENTINELS", raising=False)
     monkeypatch.setenv("SCTO_SENTINELS", "-99=Don't know; -88=Refused;-1=Missing;")
     assert env_sentinels() == {-99: "Don't know", -88: "Refused", -1: "Missing"}
 
@@ -246,3 +247,11 @@ def test_load_config_project_and_entities(tmp_path):
 def test_load_config_entity_typo_raises(tmp_path):
     with pytest.raises(ValueError, match="kee"):
         load_config(_config(tmp_path, '[entities.household]\nkee = "hhid"\n'))
+
+
+def test_env_date_sentinels(monkeypatch):
+    import datetime as dt
+
+    monkeypatch.setenv("SCTO_SENTINELS", "-99=Don't know")
+    monkeypatch.setenv("SCTO_DATE_SENTINELS", "1877-01-21=Not reported;")
+    assert env_sentinels() == {-99: "Don't know", dt.date(1877, 1, 21): "Not reported"}

@@ -50,20 +50,37 @@ def _ordered(arrow_type: pa.DataType) -> bool:
     )
 
 
-def _sentinel_counts(column: pa.ChunkedArray, sentinels: dict[int, str]) -> dict:
+def _sentinel_counts(
+    column: pa.ChunkedArray, sentinels: dict, labels: dict[str, str]
+) -> dict:
+    """Count the sentinel codes in ``column``, each labelled by the question's own
+    choice when it declares the code (``labels``), else by the study's table.
+    """
+    numbers = {c for c in sentinels if isinstance(c, int)}
     if pa.types.is_integer(column.type) or pa.types.is_floating(column.type):
-        values = Counter(v for v in column.to_pylist() if v in sentinels)
+        values = Counter(v for v in column.to_pylist() if v in numbers)
         found = {int(v): n for v, n in values.items()}
     elif pa.types.is_string(column.type):
-        codes = {str(code): code for code in sentinels}
+        codes = {str(code): code for code in numbers}
         found = {
             codes[v]: n for v, n in Counter(column.to_pylist()).items() if v in codes
         }
+    elif pa.types.is_date(column.type) or pa.types.is_timestamp(column.type):
+        dates = {c for c in sentinels if isinstance(c, dt.date)}
+        days = (
+            v.date() if isinstance(v, dt.datetime) else v
+            for v in column.to_pylist()
+            if v is not None
+        )
+        found = dict(Counter(d for d in days if d in dates))
     else:
         return {}
     return {
-        str(code): {"label": sentinels[code], "count": found[code]}
-        for code in sorted(found)
+        str(code): {
+            "label": labels.get(str(code), sentinels[code]),
+            "count": found[code],
+        }
+        for code in sorted(found, key=str)
     }
 
 
@@ -136,7 +153,12 @@ def build_dictionary(
             entry["survey"]["original_variable_name"] = question["variable_name"]
             entry["survey"]["group_path"] = "/".join(question["group_path"])
 
-        found = _sentinel_counts(column, sentinels)
+        labels = (
+            choice_labels(question["choices"])
+            if question and question["choices"]
+            else {}
+        )
+        found = _sentinel_counts(column, sentinels, labels)
         if found:
             entry["sentinels"] = found
         variables[field.name] = entry

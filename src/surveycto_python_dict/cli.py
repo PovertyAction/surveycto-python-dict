@@ -22,6 +22,7 @@ CSV files attached to it (``files/``); ``<form>/`` holds its built outputs; and
 """
 
 import argparse
+import datetime as dt
 import json
 import os
 import tomllib
@@ -138,11 +139,13 @@ def load_config(path: Path) -> Config:
     )
 
 
-def env_sentinels() -> dict[int, str]:
-    """Return ``SCTO_SENTINELS`` as ``{code: meaning}``.
+def env_sentinels() -> dict[int | dt.date, str]:
+    """Return ``SCTO_SENTINELS`` and ``SCTO_DATE_SENTINELS`` as ``{code: meaning}``.
 
     The study's non-response codes, as ``code=meaning`` pairs separated by ``;``:
-    ``SCTO_SENTINELS="-99=Don't know;-88=Refused;-77=Not applicable"``.
+    ``SCTO_SENTINELS="-99=Don't know;-88=Refused;-77=Not applicable"``. Dates the
+    team types into a date question to code the same answers go, optionally, in
+    ``SCTO_DATE_SENTINELS="1877-01-21=Not reported"``.
     """
     raw = os.environ.get("SCTO_SENTINELS", "").strip().strip(";")
     if not raw:
@@ -156,6 +159,14 @@ def env_sentinels() -> dict[int, str]:
         if not sep or not code.strip() or not meaning.strip():
             raise ValueError(f"SCTO_SENTINELS: {pair.strip()!r} is not code=meaning")
         table[int(code.strip())] = meaning.strip()
+    dates = os.environ.get("SCTO_DATE_SENTINELS", "").strip().strip(";")
+    for pair in dates.split(";") if dates else []:
+        code, sep, meaning = pair.partition("=")
+        if not sep or not meaning.strip():
+            raise ValueError(
+                f"SCTO_DATE_SENTINELS: {pair.strip()!r} is not date=meaning"
+            )
+        table[dt.date.fromisoformat(code.strip())] = meaning.strip()
     return table
 
 

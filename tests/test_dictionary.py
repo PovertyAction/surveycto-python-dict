@@ -203,3 +203,21 @@ def test_select_one_value_labels_are_its_choices(variables):
 def test_uncoded_columns_have_no_value_labels(variables):
     assert "value_labels" not in variables["area"]
     assert "value_labels" not in variables["KEY"]
+
+
+def test_sentinels_take_the_question_label_and_dates_count():
+    import datetime as dt
+
+    import pyarrow as pa
+
+    from surveycto_python_dict.dictionary import _sentinel_counts
+
+    sentinels = {-88: "Refused", dt.date(1877, 1, 21): "Not reported"}
+    codes = pa.chunked_array([["-88", "1", "-88"]])
+    assert _sentinel_counts(codes, sentinels, {"-88": "Other (specify)"}) == {
+        "-88": {"label": "Other (specify)", "count": 2}
+    }
+    days = pa.chunked_array([[dt.date(1877, 1, 21), dt.date(2020, 5, 1), None]])
+    assert _sentinel_counts(days, sentinels, {}) == {
+        "1877-01-21": {"label": "Not reported", "count": 1}
+    }
