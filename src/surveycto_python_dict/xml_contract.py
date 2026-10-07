@@ -523,7 +523,7 @@ class FormContract:
                     # discarding it would throw away the answer we just looked up.
                     choice, label, ambiguous_choice = None, None, True
             else:
-                # Per-study dynamic calculates: `<node>_<studyID>`, no choice.
+                # Per-study dynamic calculates: `<node>_<id>`, no choice.
                 string_key = token
 
         result = {
