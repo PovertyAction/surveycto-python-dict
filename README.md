@@ -7,7 +7,7 @@ per-variable PII signal.
 ## Use
 
 ```sh
-just setup                           # uv sync, including the spaCy models
+just setup                           # uv sync, including the spaCy models; pre-commit hooks
 cp config.example.toml config.toml   # set form_id
 just pull                            # form XML + submissions (wide JSON) -> <out_dir>/<form_id>/raw
 just build                           # dictionaries, parquet, graph, PII review; rerun any time
@@ -18,6 +18,9 @@ just mcp                             # survey-expert MCP server over stdio
 
 Each recipe takes another config as an argument (`just build path/to/config.toml`);
 `just` lists them all.
+
+The repo follows IPA's `ipa-python-template`: `just lint` runs the pre-commit hooks
+(ruff, codespell, markdownlint) that CI runs on every pull request to `main`.
 
 Copy `.env.example` to `.env` and fill it in: `SCTO_SERVER` (the subdomain),
 `SCTO_USER`, `SCTO_PASSWORD`, `SCTO_KEY_PATH` for encrypted forms, and

@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest", "responses", "ruff"]
+dev = ["codespell>=2.4.1", "pre-commit>=4.2.0", "pytest", "responses", "ruff"]
 
 [project.scripts]
 scto-pull  = "surveycto_python_dict.cli:pull_main"
@@ -64,3 +64,8 @@ docstring-code-format = true
 [tool.uv.sources]
 es-core-news-lg = { url = "https://github.com/explosion/spacy-models/releases/download/es_core_news_lg-3.8.0/es_core_news_lg-3.8.0-py3-none-any.whl" }
 en-core-web-lg = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl" }
+
+[tool.codespell]
+builtin = "clear,rare,informal,usage,code,names"
+ignore-words-list = "jupyter,ipa,ws,anc,stdio,dur,tread,whitelist,blacklist"
+skip = "uv.lock"
