@@ -760,6 +760,8 @@ def parse_contract(xml_path) -> FormContract:
     labels: dict[str, str] = {}
     mediatypes: dict[str, str] = {}
     counts: dict[str, str] = {}
+    # SurveyCTO lets a body control carry the calculate: a field prefilled or hidden.
+    body_calculates: dict[str, str] = {}
     body = next((c for c in root if _ln(c.tag) == "body"), None)
     if body is not None:
         for el in body.iter():
@@ -775,6 +777,8 @@ def parse_contract(xml_path) -> FormContract:
                 labels[rel] = label_text(label)
             if el.get("mediatype"):
                 mediatypes[rel] = el.get("mediatype")
+            if el.get("calculate"):
+                body_calculates[rel] = el.get("calculate")
             if ctl == "repeat":
                 count = next(
                     (v for k, v in el.attrib.items() if _ln(k) == "count"), None
@@ -821,7 +825,8 @@ def parse_contract(xml_path) -> FormContract:
         ctl = controls.get(path)
         ap = appearances.get(path)
         select_multiple = ctl == "select" or b.get("type") == "select"
-        source = _parse_data_source(ap, b.get("calculate"))
+        calculate = b.get("calculate") or body_calculates.get(path)
+        source = _parse_data_source(ap, calculate)
         searched_by_field = bool(
             source
             and source["kind"] == "search"
@@ -838,14 +843,14 @@ def parse_contract(xml_path) -> FormContract:
             control=_SELECT_CONTROL.get(ctl, ctl),
             is_select_multiple=select_multiple,
             choice_items=items.get(path, []),
-            calculate=b.get("calculate"),
+            calculate=calculate,
             relevant=b.get("relevant"),
             constraint=b.get("constraint"),
             required=str(b.get("required", "")).strip() in ("true()", "true", "1"),
             readonly=str(b.get("readonly", "")).strip() in ("true()", "true", "1"),
             publishable=str(b.get("publishable", "")).strip()
             in ("true()", "true", "1"),
-            pulldata=_parse_pulldata(b.get("calculate")),
+            pulldata=_parse_pulldata(calculate),
             preload=b.get("preload"),
             preload_params=b.get("preloadParams"),
             data_source=source,
