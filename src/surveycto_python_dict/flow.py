@@ -34,6 +34,8 @@ from pathlib import Path
 from surveycto_python_dict.contract import DatasetSource
 from surveycto_python_dict.xml_contract import FormContract
 
+_QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
+
 # The share of a dataset's columns a form's fields must cover to publish it.
 NEAR = 0.9
 
@@ -95,25 +97,37 @@ def _origins(contract: FormContract) -> dict[str, tuple[str, set[str]]]:
 
 
 def _reads(contract: FormContract, name: str, columns: list[str]) -> list[dict]:
-    """Return each field of ``contract`` that reads dataset ``name``, with its columns."""
+    """Return each field of ``contract`` that reads dataset ``name``, with its columns.
+
+    ``missing`` lists the columns it names that the dataset lacks; ``computed`` is a
+    ``pulldata()`` column given as an expression (``concat('score_', index())``).
+    """
     fields = []
     for node in contract.nodes.values():
         source = node.data_source
         if not source or source["dataset"] != name:
             continue
+        computed = None
         if source["kind"] == "pulldata":
             match = [source["key"]]
-            used = [source["value"].strip("'\""), source["key"]]
+            value = source["value"]
+            if _QUOTED.fullmatch(value):
+                used = [value[1:-1], source["key"]]
+            else:
+                computed, used = value, [source["key"]]
         else:
             match = list(source["filter"])
             items = [v for i in node.choice_items for v in (i["value"], i["label"])]
             used = [*source["filter"], *(c for c in items if c in columns)]
+        used = list(dict.fromkeys(used))
         fields.append(
             {
                 "field": node.path,
                 "via": source["kind"],
-                "columns": list(dict.fromkeys(used)),
+                "columns": used,
                 "match": match,
+                "missing": [c for c in used if c not in columns],
+                "computed": computed,
             }
         )
     return fields

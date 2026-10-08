@@ -293,7 +293,13 @@ def upstream_lines(flow: dict, form: str, name: str) -> list[str]:
                     f"{_closest(d)})"
                 )
                 continue
+            if f["computed"]:
+                lines.append(
+                    f"Comes from: {d['id']}, the column named by {f['computed']}"
+                )
             for column in f["columns"]:
+                if column in f["missing"]:
+                    lines.append(f"Comes from: {d['id']}.{column} (no such column)")
                 if column in d["legacy_columns"]:
                     lines.append(
                         f"Comes from: {d['id']}.{column} (no field of "
@@ -440,6 +446,11 @@ def render_flow(flow: dict, dataset: str | None = None) -> str:
             if column in readers:
                 line += f"  -> {', '.join(readers[column])}"
             lines.append(line)
+        lines += [
+            f"  {column}  no such column; read by {', '.join(fields)}"
+            for column, fields in readers.items()
+            if column not in d["columns"]
+        ]
         return "\n".join(lines)
 
     lines = []
@@ -805,11 +816,12 @@ class SurveyStore:
             by_dataset.setdefault(column["dataset"], []).append(column)
         if not by_dataset:
             return "The form reads no datasets."
-        id_of = {
-            r["name_in_form"]: r["dataset"]
-            for r in self.flow["reads"]
-            if r["form"] == self.form_id
-        }
+        id_of, read_of = {}, {}
+        for r in self.flow["reads"]:
+            if r["form"] == self.form_id:
+                id_of[r["name_in_form"]] = r["dataset"]
+                for f in r["fields"]:
+                    read_of[r["name_in_form"], f["field"]] = f
         project = self.project
         blocks = []
         for dataset, columns in by_dataset.items():
@@ -827,17 +839,32 @@ class SurveyStore:
                 source = q["data_source"]
                 if not source or source["dataset"] != dataset:
                     continue
-                for m in source["match"] or [{"column": None, "value": None}]:
+                read = read_of[
+                    dataset, "/".join([*q["group_path"], q["variable_name"]])
+                ]
+                if source["kind"] == "search":
+                    what = f"{q['variable_name']} takes its choices from these rows"
+                elif read["computed"]:
                     what = (
-                        f"{q['variable_name']} reads {source['column']}"
-                        if source["kind"] == "pulldata"
-                        else f"{q['variable_name']} takes its choices from these rows"
+                        f"{q['variable_name']} reads the column named by "
+                        f"{source['column']}"
                     )
+                else:
+                    what = f"{q['variable_name']} reads {source['column']}"
+                    if source["column"] in read["missing"]:
+                        what += f" (no such column in {dataset})"
+                for m in source["match"] or [{"column": None, "value": None}]:
                     joins.setdefault((m["column"], m["value"]), []).append(what)
             by_name = {c["column"]: c for c in columns}
             for (column, value), uses in joins.items():
                 if column is None:
                     lines.append(f"    (no filter): {'; '.join(uses)}")
+                    continue
+                if column not in by_name:
+                    lines.append(
+                        f"    {dataset}.{column} = {value}: no such column in {dataset}"
+                    )
+                    lines += [f"      {use}" for use in uses]
                     continue
                 key = by_name[column]
                 unique = (

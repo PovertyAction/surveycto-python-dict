@@ -131,15 +131,47 @@ def test_reads_name_the_fields_and_columns(flow):
     assert visit["households"]["name_in_form"] == "Households"
     assert visit["households"]["attached"] is True
     assert visit["households"]["fields"] == [
-        {"field": "hh", "via": "search", "columns": ["hhid", "village"], "match": []},
+        {
+            "field": "hh",
+            "via": "search",
+            "columns": ["hhid", "village"],
+            "match": [],
+            "missing": [],
+            "computed": None,
+        },
         {
             "field": "where",
             "via": "pulldata",
             "columns": ["village", "hhid"],
             "match": ["hhid"],
+            "missing": [],
+            "computed": None,
         },
     ]
     assert visit["zones"]["attached"] is False
+
+
+def test_a_read_of_a_column_the_dataset_lacks_is_flagged(tmp_path):
+    visit = _VISIT.replace("'village', 'hhid'", "'villages', 'hhid'").replace(
+        "pulldata('zones', 'zone_name', 'zone_id', '1')",
+        "pulldata('zones', concat('zone_', 'name'), 'zone_id', '1')",
+    )
+    flow = _flow(tmp_path, {"listing": _LISTING, "visit": visit})
+    reads = {
+        (r["dataset"], f["field"]): f
+        for r in flow["reads"]
+        if r["form"] == "visit"
+        for f in r["fields"]
+    }
+    assert reads["households", "where"]["missing"] == ["villages"]
+    assert reads["zones", "area"]["computed"] == "concat('zone_', 'name')"
+    assert reads["zones", "area"]["columns"] == ["zone_id"]
+    assert "Comes from: households.villages (no such column)" in upstream_lines(
+        flow, "visit", "where"
+    )
+    assert "  villages  no such column; read by visit.where (pulldata)" in render_flow(
+        flow, "households"
+    )
 
 
 def test_two_forms_covering_a_dataset_raise(tmp_path):
