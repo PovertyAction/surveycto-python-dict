@@ -80,7 +80,8 @@ class Config:
     dataset_publishers: dict[str, str]
     # [project] description: what the project is about, in the user's words.
     description: str | None
-    # [entities.<name>]: key (the column that identifies it), description, parent.
+    # [entities.<name>]: key (the columns that identify it, together), description,
+    # parent.
     entities: dict[str, dict]
 
     @property
@@ -108,6 +109,11 @@ def _check_keys(section: str, got: set[str], allowed: set[str]) -> None:
         raise ValueError(f"unknown key(s) in {section}: {', '.join(unknown)}")
 
 
+def _columns(key: str | list[str]) -> list[str]:
+    """Return a config key, one column or a list, as a list."""
+    return [key] if isinstance(key, str) else list(key)
+
+
 def load_config(path: Path) -> Config:
     """Parse ``path``; unknown keys raise so a typo never silently falls back."""
     data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
@@ -129,6 +135,7 @@ def load_config(path: Path) -> Config:
         _check_keys(
             f"[entities.{name}]", set(section), {"key", "description", "parent"}
         )
+        section["key"] = _columns(section["key"])
     if not data["forms"]:
         raise ValueError("forms is empty: name at least one form")
     return Config(
@@ -137,7 +144,7 @@ def load_config(path: Path) -> Config:
         out_dir=Path(path).parent / data["out_dir"],
         pii=PiiConfig(**pii),
         dataset_keys={
-            name: section["key"]
+            name: _columns(section["key"])
             for name, section in datasets.items()
             if "key" in section
         },

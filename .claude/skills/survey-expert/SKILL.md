@@ -33,8 +33,9 @@ on them:
 2. Ask the user to say in a few sentences what the project is about. Use their words
    for `[project] description`; don't write one from the questions.
 3. From the documents and the candidate keys `get_project` lists, propose entities: a
-   name, the key column, a one-line description from the documents, and a parent where
-   one entity sits inside another. Show them as the TOML below and ask the user to
+   name, the key column (or the columns that identify it together, as a list), a
+   one-line description from the documents, and a parent where one entity sits inside
+   another. Show them as the TOML below and ask the user to
    confirm or correct each.
    ```toml
    [entities.household]

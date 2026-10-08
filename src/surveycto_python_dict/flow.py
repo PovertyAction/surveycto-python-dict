@@ -23,7 +23,7 @@ another dataset) or ``calculated`` (any other calculate).
 ``keys`` lists the columns that can identify an entity: each dataset's key and each
 column a ``pulldata()``/``search()`` matches on, with the forms (and the table in each)
 and datasets that carry it. ``project`` holds what the user says the project is about:
-a description and named entities, each on one of those columns (``describe_project``).
+a description and named entities, each on one or more columns (``describe_project``).
 """
 
 import csv
@@ -185,15 +185,38 @@ def describe_project(
 ) -> dict:
     """Return the ``project`` section: the user's description and their entities.
 
-    Each entity names the column that identifies it; a column no form or dataset
-    carries raises, and so does a parent that is not another entity.
+    Each entity names the columns that identify it, together; a column no form or
+    dataset carries raises, and so do columns no form or dataset carries together and
+    a parent that is not another entity. ``forms`` and ``datasets`` are where the
+    columns are carried together, with each form's tables.
     """
     described = []
     for name, entity in entities.items():
-        where = _where(contracts, flow["datasets"], entity["key"])
+        wheres = []
+        for column in entity["key"]:
+            where = _where(contracts, flow["datasets"], column)
+            if not where["forms"] and not where["datasets"]:
+                raise ValueError(
+                    f"entity {name!r}: no form or dataset has a column {column!r}"
+                )
+            wheres.append(where)
+        forms = set.intersection(*(set(w["forms"]) for w in wheres))
+        where = {
+            "forms": {
+                form: sorted({t for w in wheres for t in w["forms"][form]})
+                for form in wheres[0]["forms"]
+                if form in forms
+            },
+            "datasets": [
+                d
+                for d in wheres[0]["datasets"]
+                if all(d in w["datasets"] for w in wheres)
+            ],
+        }
         if not where["forms"] and not where["datasets"]:
             raise ValueError(
-                f"entity {name!r}: no form or dataset has a column {entity['key']!r}"
+                f"entity {name!r}: no form or dataset has all of "
+                f"{', '.join(entity['key'])}"
             )
         parent = entity.get("parent")
         if parent is not None and parent not in entities:

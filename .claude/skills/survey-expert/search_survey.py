@@ -254,14 +254,16 @@ def render_project(flow: dict) -> str:
         lines.append("Entities (named by the user):")
         for e in project["entities"]:
             parent = f"; part of {e['parent']}" if e["parent"] else ""
-            lines.append(f"  {e['name']} ({e['key']}): {e['description']}{parent}")
+            key = ", ".join(e["key"])
+            lines.append(f"  {e['name']} ({key}): {e['description']}{parent}")
             lines.append(f"    {_places(e)}")
     else:
         lines.append(
             "Entities: none named yet. Each goes in the config as [entities.<name>] "
-            "with its key, a description and an optional parent."
+            "with its key (one column, or a list of the columns that identify it "
+            "together), a description and an optional parent."
         )
-    named = {e["key"] for e in project["entities"]}
+    named = {c for e in project["entities"] for c in e["key"]}
     candidates = [k for k in flow["keys"] if k["column"] not in named]
     if candidates:
         lines += ["", "Candidate keys (from the outputs, most widely carried first):"]

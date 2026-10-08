@@ -379,8 +379,12 @@ def _contracts(tmp_path):
 def test_project_entities_are_the_users_and_checked(flow, tmp_path):
     contracts = _contracts(tmp_path)
     entities = {
-        "household": {"key": "hhid", "description": "A listed household"},
-        "plot": {"key": "plot_size", "description": "A plot", "parent": "household"},
+        "household": {"key": ["hhid"], "description": "A listed household"},
+        "plot": {
+            "key": ["plot_size"],
+            "description": "A plot",
+            "parent": "household",
+        },
     }
     project = describe_project(flow, contracts, "A farm census.", entities)
     assert project["description"] == "A farm census."
@@ -403,14 +407,14 @@ def test_project_entity_on_a_missing_column_or_parent_raises(flow, tmp_path):
     contracts = _contracts(tmp_path)
     with pytest.raises(ValueError, match="no form or dataset has a column 'nope'"):
         describe_project(
-            flow, contracts, None, {"x": {"key": "nope", "description": ""}}
+            flow, contracts, None, {"x": {"key": ["nope"], "description": ""}}
         )
     with pytest.raises(ValueError, match="parent 'ghost' is not an entity"):
         describe_project(
             flow,
             contracts,
             None,
-            {"x": {"key": "hhid", "description": "", "parent": "ghost"}},
+            {"x": {"key": ["hhid"], "description": "", "parent": "ghost"}},
         )
 
 
@@ -418,3 +422,22 @@ def test_project_without_description_asks_for_one(flow):
     text = render_project({**flow, "project": {"description": None, "entities": []}})
     assert text.startswith("About: not described yet. Ask the user")
     assert "Entities: none named yet." in text
+
+
+def test_an_entity_keyed_by_two_columns_lives_where_both_are(flow, tmp_path):
+    contracts = _contracts(tmp_path)
+    entities = {"stay": {"key": ["hhid", "village"], "description": "A stay"}}
+    stay = describe_project(flow, contracts, None, entities)["entities"][0]
+    assert stay["forms"] == {"listing": ["submissions"]}
+    assert stay["datasets"] == ["households"]
+    text = render_project(
+        {**flow, "project": {"description": None, "entities": [stay]}}
+    )
+    assert "  stay (hhid, village): A stay" in text
+    with pytest.raises(ValueError, match="no form or dataset has all of hhid, zone_id"):
+        describe_project(
+            flow,
+            contracts,
+            None,
+            {"x": {"key": ["hhid", "zone_id"], "description": ""}},
+        )

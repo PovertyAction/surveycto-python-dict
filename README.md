@@ -138,6 +138,11 @@ description = "A household listed at baseline"
 key = "member_id"
 description = "A household member"
 parent = "household"
+
+[entities.visit]
+key = ["hhid", "round"]              # several columns that identify one together
+description = "One round's visit to a household"
+parent = "household"
 ```
 
 The survey-expert skill fills them with you. Give it what describes the study: a
@@ -149,8 +154,9 @@ skill asks for it rather than writing one from the questions. Share only documen
 are allowed to share with the agent: an embargoed plan or unpublished results may not
 be.
 
-`just flow` (seconds) rewrites `flow.json` and `flow.md` with them; a key no form or
-dataset carries is an error. `get_project` then opens an agent's work on the project:
+`just flow` (seconds) rewrites `flow.json` and `flow.md` with them; a key column no
+form or dataset carries is an error, and so are key columns no form or dataset carries
+together. `get_project` then opens an agent's work on the project:
 the description, the entities with where each lives, and the keys not yet named.
 
 ## Querying with DuckDB: one database per project
