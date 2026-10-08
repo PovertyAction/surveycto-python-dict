@@ -518,6 +518,18 @@ class SurveyStore:
             (self.form_dir.parent / "flow.json").read_text(encoding="utf-8")
         )
 
+    def read(self, dataset: str, path: str) -> tuple[dict, dict]:
+        """Return the ``flow.json`` dataset this form names ``dataset`` and the read of
+        it by field ``path``.
+        """
+        datasets = {d["id"]: d for d in self.flow["datasets"]}
+        for r in self.flow["reads"]:
+            if r["form"] == self.form_id and r["name_in_form"] == dataset:
+                for f in r["fields"]:
+                    if f["field"] == path:
+                        return datasets[r["dataset"]], f
+        raise KeyError(f"{self.form_id}: {path} does not read {dataset}")
+
     # -- lookups -------------------------------------------------------------------
 
     def _column_line(self, name: str) -> str:
@@ -802,7 +814,35 @@ class SurveyStore:
                     f", ... {more} more; get_repeat_structure('{name}')" if more else ""
                 ),
             ]
+            if repeat is not None:
+                lines += self._instance_lines(g)
         return "\n".join(lines)
+
+    def _instance_lines(self, g: dict) -> list[str]:
+        """Return what sets a repeat's instances: the fields its count reads and the
+        member calculates that read ``index()``, as the form writes them.
+        """
+        lines = []
+        for ref in dict.fromkeys(_REF_RE.findall(g["count"] or "")):
+            q = self.questions.get(ref)
+            if q is None:
+                continue
+            what = (
+                f"= {_short(q['calculation'], 160)}"
+                if q["calculation"]
+                else f"({q['type']}) {_short(q['question_text'])}"
+            )
+            lines.append(f"  count reads {ref} {what}")
+        indexed = [
+            (m, self.questions[m]["calculation"])
+            for m in g["members"]
+            if m in self.questions
+            and "index()" in (self.questions[m]["calculation"] or "")
+        ]
+        if indexed:
+            lines.append("  set per instance (calculates that read index()):")
+            lines += [f"    {m} = {_short(c, 160)}" for m, c in indexed]
+        return lines
 
     def _table_of(self, value: str | None) -> str:
         """Return the table a ``${field}`` lives in: submissions or its repeat view."""
@@ -954,6 +994,108 @@ def search_forms(stores: dict, query: str, max_results: int = 20) -> str:
     )
 
 
+def _path(q: dict) -> str:
+    return "/".join([*q["group_path"], q["variable_name"]])
+
+
+def trace_lineage(stores: dict, form: str, name: str) -> str:
+    """Trace where ``form``'s field ``name`` gets its value, back to the questions
+    someone answered.
+
+    One line per hop, indented by depth: a calculate to the fields it reads; a
+    ``pulldata()`` to the dataset column and the field another form publishes it
+    from; a ``search()`` select to the dataset columns its choices come from. A hop
+    that goes no further says why (an external dataset, a column the dataset lacks).
+    """
+    lines: list[str] = []
+    seen: set[tuple[str, str]] = set()
+
+    def column(d: dict, col: str, depth: int) -> None:
+        pad = "  " * depth
+        if not d["published_by"]:
+            what = "an attached file" if d["kind"] == "form_file" else "external"
+            lines.append(f"{pad}{d['id']}.{col}: {what}, no project form fills it")
+        elif col in d["publish_map"]:
+            field = _leaf(d["publish_map"][col])
+            lines.append(f"{pad}{d['id']}.{col}: published by {d['published_by']}")
+            walk(d["published_by"], field, depth + 1)
+        elif col in d["legacy_columns"]:
+            lines.append(
+                f"{pad}{d['id']}.{col}: no field of {d['published_by']}'s current "
+                "version"
+            )
+        else:
+            lines.append(f"{pad}{d['id']}.{col}: no such column")
+
+    def walk(form: str, name: str, depth: int) -> None:
+        pad = "  " * depth
+        if (form, name) in seen:
+            lines.append(f"{pad}{form}.{name}: traced above")
+            return
+        seen.add((form, name))
+        store = stores[form]
+        q = store.questions.get(name)
+        if q is None:
+            lines.append(f"{pad}{form}.{name}: no question of {form}")
+            return
+        source, calculation = q["data_source"], q["calculation"]
+        refs = list(dict.fromkeys(_REF_RE.findall(calculation or "")))
+        if source and source["kind"] == "pulldata":
+            match = " and ".join(
+                f"{m['column']} = {m['value']}" for m in source["match"]
+            )
+            lines.append(
+                f"{pad}{form}.{name} <- pulldata {source['dataset']}.{source['column']}"
+                f" where {match}"
+            )
+            d, read = store.read(source["dataset"], _path(q))
+            if read["computed"]:
+                lines.append(f"{pad}  {d['id']}: the column is named per row")
+            else:
+                column(d, source["column"], depth + 1)
+            keys = {r for m in source["match"] for r in _REF_RE.findall(m["value"])}
+            refs = [r for r in refs if r not in keys]
+        elif calculation:
+            lines.append(f"{pad}{form}.{name} = {_short(calculation, 160)}")
+        else:
+            lines.append(
+                f"{pad}{form}.{name} ({q['type']}): {_short(q['question_text'])}"
+                + ("" if source else _choices_text(q))
+            )
+        if source and source["kind"] == "search":
+            d, read = store.read(source["dataset"], _path(q))
+            lines.append(f"{pad}  choices: rows of {d['id']}")
+            for col in read["columns"]:
+                if col not in read["match"]:
+                    column(d, col, depth + 2)
+        for ref in refs:
+            walk(form, ref, depth + 1)
+
+    walk(form, name, 0)
+    return "\n".join(lines)
+
+
+def _choices_text(q: dict) -> str:
+    if q["choices_withheld"]:
+        return f"; choices in its dataset ({', '.join(q['choices_withheld'])})"
+    if not q["choices"]:
+        return ""
+    labels = list(choice_labels(q["choices"]).items())
+    shown = ", ".join(f"{v} = {plain_label(lab)}" for v, lab in labels[:_LISTED])
+    more = f", ... {len(labels) - _LISTED} more" if len(labels) > _LISTED else ""
+    return f"; choices {shown}{more}"
+
+
+def project_stores(config: Path) -> dict[str, SurveyStore]:
+    """Open every form of the project ``config`` names."""
+    import tomllib
+
+    data = tomllib.loads(config.read_text(encoding="utf-8"))
+    return {
+        f: SurveyStore(config.parent / data["out_dir"] / f, f) for f in data["forms"]
+    }
+
+
 def _open(
     config: Path | None, directory: Path, form: str | None, project: bool = False
 ) -> SurveyStore:
@@ -1029,21 +1171,23 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
     commands.add_parser("project", help="what the project is about: entities, keys")
     flow = commands.add_parser("flow", help="how the project's forms chain")
     flow.add_argument("dataset", nargs="?", help="one dataset's columns, end to end")
+    commands.add_parser(
+        "lineage", help="where a field's value comes from, across forms (--config)"
+    ).add_argument("name")
     args = parser.parse_args(argv)
 
+    if args.command == "lineage":
+        if args.config is None or args.form is None:
+            raise ValueError("lineage reads every form: pass --config and --form")
+        print(trace_lineage(project_stores(args.config), args.form, args.name))
+        return
     if (
         store is None
         and args.command == "search"
         and args.form is None
         and args.config is not None
     ):
-        import tomllib
-
-        data = tomllib.loads(args.config.read_text(encoding="utf-8"))
-        stores = {
-            f: SurveyStore(args.config.parent / data["out_dir"] / f, f)
-            for f in data["forms"]
-        }
+        stores = project_stores(args.config)
         print(search_forms(stores, " ".join(args.query), args.max))
         return
     if store is None:

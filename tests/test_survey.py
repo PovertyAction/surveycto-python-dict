@@ -114,6 +114,7 @@ def test_server_registers_the_tools(store):
         "get_flow",
         "get_project",
         "get_structure_db",
+        "trace_lineage",
     }
     assert "pii.status" in server.instructions
 
@@ -291,6 +292,14 @@ def test_repeat_structure_lists_members_and_drills_into_one(store, monkeypatch):
     out = store.get_repeat_structure()
     assert "members (2): plot_crop, ... 1 more; get_repeat_structure('plot')" in out
     assert "plot_size" in store.get_repeat_structure("plot")
+
+
+def test_repeat_structure_says_what_sets_its_instances(store):
+    store.questions["plot_size"]["calculation"] = "concat('plot-', index())"
+    out = store.get_repeat_structure("plot")
+    assert "  count reads plots (integer) Plots" in out
+    assert "  set per instance (calculates that read index()):" in out
+    assert "    plot_size = concat('plot-', index())" in out
 
 
 def test_project_commands_need_no_form(store, capsys):

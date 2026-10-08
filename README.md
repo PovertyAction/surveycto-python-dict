@@ -214,8 +214,11 @@ rebuilding lets it in.
 `just mcp` (`uv run scto-mcp --config config.toml`) serves a project's outputs over
 stdio to a local agent. The form tools take the form's id: `lookup_variable(s)`,
 `search_questions` (every form when no id is given), `get_group`, `get_choice_list`, `get_gate_chain`, `get_survey_info`,
-`get_variable_neighborhood`, `get_repeat_structure`, `get_datasets`. The project tools
-take none: `get_project` (the description, entities and candidate keys), `get_flow`
+`get_variable_neighborhood`, `get_repeat_structure` (with a repeat, what sets its
+instances), `get_datasets`, and `trace_lineage`, which follows a field's value across
+forms: a calculate to the fields it reads, a `pulldata()` or `search()` to the field
+another form publishes the dataset column from, back to the questions someone answered.
+The project tools take none: `get_project` (the description, entities and candidate keys), `get_flow`
 (the chain, or one dataset's columns end to end) and `get_structure_db` (a summary of
 `<project>.duckdb`, one schema: a form's tables with the datasets and cross-form joins it
 uses, or one table's columns). Long lists are summarised with the argument that lists
@@ -228,6 +231,6 @@ point `--config` at your config. The `survey-expert` skill
 (`.claude/skills/survey-expert/SKILL.md`) teaches an agent to read the outputs and to
 check `pii.status` first; without MCP it uses the same answers from
 `uv run scto-survey --config config.toml --form <form>
-<var|search|choices|gates|neighborhood|repeats|info|datasets|flow|db>`.
+<var|search|choices|gates|neighborhood|repeats|info|datasets|flow|db|lineage>`.
 
 Design: `surveycto-api-extractor-PROMPT.md`; API notes: `docs/`.

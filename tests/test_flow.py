@@ -6,10 +6,13 @@ import pytest
 
 from surveycto_python_dict.contract import form_entry, resolve_datasets
 from surveycto_python_dict.flow import build_flow, describe_project
+from surveycto_python_dict.questions import build_questions
 from surveycto_python_dict.survey import (
+    SurveyStore,
     render_flow,
     render_mermaid,
     render_project,
+    trace_lineage,
     upstream_lines,
 )
 from surveycto_python_dict.xml_contract import parse_contract
@@ -441,3 +444,37 @@ def test_an_entity_keyed_by_two_columns_lives_where_both_are(flow, tmp_path):
             None,
             {"x": {"key": ["hhid", "zone_id"], "description": ""}},
         )
+
+
+def _stores(tmp_path, flow, xmls):
+    stores = {}
+    for form, xml in xmls.items():
+        path = tmp_path / f"{form}-s.xml"
+        path.write_text(xml, encoding="utf-8")
+        store = SurveyStore.__new__(SurveyStore)
+        store.form_id, store.flow = form, flow
+        store.questions = {
+            q["variable_name"]: q for q in build_questions(parse_contract(path))
+        }
+        stores[form] = store
+    return stores
+
+
+def test_lineage_follows_reads_back_to_the_entered_question(flow, tmp_path):
+    stores = _stores(tmp_path, flow, {"listing": _LISTING, "visit": _VISIT})
+    assert trace_lineage(stores, "visit", "where").splitlines() == [
+        "visit.where <- pulldata Households.village where hhid = ${hh}",
+        "  households.village: published by listing",
+        "    listing.village (text): Village",
+    ]
+    assert trace_lineage(stores, "visit", "area").splitlines() == [
+        "visit.area <- pulldata zones.zone_name where zone_id = '1'",
+        "  zones.zone_name: external, no project form fills it",
+    ]
+    hh = trace_lineage(stores, "visit", "hh").splitlines()
+    assert hh[:4] == [
+        "visit.hh (select_one): Household",
+        "  choices: rows of households",
+        "    households.hhid: published by listing",
+        "      listing.hhid (text): Household",
+    ]
