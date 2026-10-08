@@ -230,3 +230,21 @@ def test_a_date_sentinel_is_counted_apart(tmp_path, analyzer):
         "2025-03-06 Not reported: 1",
         "",
     )
+
+
+def test_a_ragged_column_is_not_evaluated_and_not_mistaken_for_its_instance(
+    tmp_path, analyzer
+):
+    # plot_size_1_3 has two indices for a depth-1 repeat: another form version.
+    xml = XML.replace(' jr:count=" /farm/plots "', "")
+    rows = [ROWS[0], {**ROWS[1], "plot_size_1_3": "4"}]
+    stats = _by_name(_build(tmp_path, analyzer, xml=xml, rows=rows))
+    ragged = stats["plot_size_1_3"]
+    assert ragged["eligibility_evaluated"] is False
+    assert (
+        ragged["eligibility_note"] == "layout from another form version; not evaluated"
+    )
+    assert ragged["answered_when_skipped"] == ""
+    assert ragged["missing_when_eligible"] == ""
+    # Row 2 still has no plot instance: the ragged value is not plot_size_1's.
+    assert stats["plot_size_1"]["eligible"] == 1
