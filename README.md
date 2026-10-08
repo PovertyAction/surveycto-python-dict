@@ -94,11 +94,15 @@ gets its list unscanned; a blacklisted one never has its dataset read.
   a server dataset id or an attached CSV regardless of case. Each read lists the
   fields and the dataset columns they use. A server dataset the form reads without
   attaching it on the server is kept and marked `attached: false`.
-- **Publishes.** A form publishes a dataset when every dataset column is one of its
-  fields: by the field's name, or by a repeat field's wide column (`score_2`).
-  `publish_map` gives the field behind each column. When two forms cover a dataset the
-  build stops; a dataset no form covers is external (uploaded, or published from
-  outside the project).
+- **Publishes.** A form publishes a dataset when at least 90% of the dataset's columns
+  are its fields: by the field's name, or by a repeat field's wide column (`score_2`).
+  `publish_map` gives the field behind each column; `legacy_columns` lists the rest,
+  fields the form's current version no longer has or columns added on the server.
+  When several forms cover a dataset, the forms that read it drop out; when two are
+  left, the build stops and asks for `[datasets.<id>] published_by`, which also names
+  the publisher of a dataset under 90%. A dataset no form covers is external
+  (uploaded, or published from outside the project); `closest` names the form covering
+  most of its columns.
 - **Stages.** A form is stage 1 when it reads nothing another project form publishes,
   else one more than the latest stage it reads from.
 - **Origins.** Each published column takes the origin of the field behind it:

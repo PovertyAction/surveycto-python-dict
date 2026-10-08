@@ -78,10 +78,10 @@ _CSVS = {
 }
 
 
-def _flow(tmp_path, xmls, listed=()):
+def _flow(tmp_path, xmls, listed=(), csvs=None, published_by=None):
     datasets = tmp_path / "datasets"
-    datasets.mkdir()
-    for name, text in _CSVS.items():
+    datasets.mkdir(parents=True)
+    for name, text in {**_CSVS, **(csvs or {})}.items():
         (datasets / f"{name}.csv").write_text(text, encoding="utf-8")
     forms = {}
     for form, xml in xmls.items():
@@ -90,7 +90,7 @@ def _flow(tmp_path, xmls, listed=()):
         entry = form_entry(_FORM_LIST, form)
         sources = resolve_datasets(contract, entry, {d["id"] for d in _SERVER})
         forms[form] = (contract, sources)
-    return build_flow(forms, _SERVER, listed, datasets, {})
+    return build_flow(forms, _SERVER, listed, datasets, {}, published_by)
 
 
 @pytest.fixture
@@ -147,8 +147,71 @@ def test_two_forms_covering_a_dataset_raise(tmp_path):
         "/listing/", "/visit/"
     )
     twin = twin.replace("<listing ", "<visit ").replace("</listing>", "</visit>")
-    with pytest.raises(ValueError, match="households"):
+    with pytest.raises(ValueError, match=r"\[datasets.households\] published_by"):
         _flow(tmp_path, {"listing": _LISTING, "visit": twin}, ("households",))
+
+
+def test_a_reader_that_reasks_the_fields_does_not_publish(tmp_path):
+    # visit reads households and has fields named like all its columns.
+    visit = _VISIT.replace(
+        "<hh/><where/><area/>",
+        "<hh/><where/><area/><hhid/><village/><plot><plot_size/></plot>",
+    )
+    flow = _flow(tmp_path, {"listing": _LISTING, "visit": visit})
+    households = next(d for d in flow["datasets"] if d["id"] == "households")
+    assert households["published_by"] == "listing"
+
+
+# households with every plot instance and one column no current field explains.
+_WIDE = (
+    "hhid,village,zone,plot_size,"
+    + ",".join(f"plot_size_{i}" for i in range(1, 8))
+    + ",{extra}\n"
+)
+
+
+def test_a_column_no_field_explains_is_legacy(tmp_path):
+    csvs = {"households": _WIDE.format(extra="retired")}
+    flow = _flow(tmp_path, {"listing": _LISTING, "visit": _VISIT}, csvs=csvs)
+    households = next(d for d in flow["datasets"] if d["id"] == "households")
+    assert households["published_by"] == "listing"
+    assert households["legacy_columns"] == ["retired"]
+    assert "retired" not in households["publish_map"]
+    assert "; 1 columns no field of its current version" in render_flow(flow)
+    assert "  retired  (no field of listing's current version)" in render_flow(
+        flow, "households"
+    )
+
+
+def test_a_dataset_mostly_unexplained_is_external_unless_named(tmp_path):
+    extra = ",".join(f"old_{i}" for i in range(4))
+    csvs = {"households": _WIDE.format(extra=extra)}
+    flow = _flow(tmp_path, {"listing": _LISTING, "visit": _VISIT}, csvs=csvs)
+    households = next(d for d in flow["datasets"] if d["id"] == "households")
+    assert households["published_by"] is None
+    assert households["closest"] == {"form": "listing", "columns": 11}
+    assert upstream_lines(flow, "visit", "where") == [
+        "Comes from: households (external: no project form fills it; 11 of its 15 "
+        "columns are fields of listing: set [datasets.households] published_by if "
+        "it publishes it)"
+    ]
+    named = _flow(
+        tmp_path / "named",
+        {"listing": _LISTING, "visit": _VISIT},
+        csvs=csvs,
+        published_by={"households": "listing"},
+    )
+    households = next(d for d in named["datasets"] if d["id"] == "households")
+    assert households["published_by"] == "listing"
+    assert households["legacy_columns"] == [f"old_{i}" for i in range(4)]
+
+
+def test_published_by_must_name_a_covering_form_and_a_read_dataset(tmp_path):
+    xmls = {"listing": _LISTING, "visit": _VISIT}
+    with pytest.raises(ValueError, match="no column is a field of visit"):
+        _flow(tmp_path, xmls, published_by={"households": "visit"})
+    with pytest.raises(ValueError, match="no server dataset nowhere"):
+        _flow(tmp_path / "b", xmls, published_by={"nowhere": "listing"})
 
 
 def test_render_flow_shows_stages_and_column_lineage(flow):

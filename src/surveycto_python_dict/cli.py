@@ -75,6 +75,9 @@ class Config:
     pii: PiiConfig
     # [datasets.<name>] key: the columns that identify a dataset row.
     dataset_keys: dict[str, list[str]]
+    # [datasets.<name>] published_by: the form that publishes it, where the columns
+    # don't tell.
+    dataset_publishers: dict[str, str]
     # [project] description: what the project is about, in the user's words.
     description: str | None
     # [entities.<name>]: key (the column that identifies it), description, parent.
@@ -118,7 +121,7 @@ def load_config(path: Path) -> Config:
             pii[key] = tuple(pii[key])
     datasets = data.get("datasets", {})
     for name, section in datasets.items():
-        _check_keys(f"[datasets.{name}]", set(section), {"key"})
+        _check_keys(f"[datasets.{name}]", set(section), {"key", "published_by"})
     project = data.get("project", {})
     _check_keys("[project]", set(project), {"description"})
     entities = data.get("entities", {})
@@ -133,7 +136,16 @@ def load_config(path: Path) -> Config:
         server_datasets=tuple(data.get("server_datasets", ())),
         out_dir=Path(path).parent / data["out_dir"],
         pii=PiiConfig(**pii),
-        dataset_keys={name: section["key"] for name, section in datasets.items()},
+        dataset_keys={
+            name: section["key"]
+            for name, section in datasets.items()
+            if "key" in section
+        },
+        dataset_publishers={
+            name: section["published_by"]
+            for name, section in datasets.items()
+            if "published_by" in section
+        },
         description=project.get("description"),
         entities=entities,
     )
@@ -328,6 +340,7 @@ def write_flow(cfg: Config) -> Path:
         cfg.server_datasets,
         cfg.raw_dir / "datasets",
         {form: cfg.form_raw(form) / "files" for form in cfg.forms},
+        cfg.dataset_publishers,
     )
     flow["project"] = describe_project(
         flow,

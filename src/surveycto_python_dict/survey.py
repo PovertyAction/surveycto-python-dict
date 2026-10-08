@@ -289,10 +289,16 @@ def upstream_lines(flow: dict, form: str, name: str) -> list[str]:
             if not d["published_by"]:
                 what = "an attached file" if d["kind"] == "form_file" else "external"
                 lines.append(
-                    f"Comes from: {d['id']} ({what}: no project form fills it)"
+                    f"Comes from: {d['id']} ({what}: no project form fills it"
+                    f"{_closest(d)})"
                 )
                 continue
             for column in f["columns"]:
+                if column in d["legacy_columns"]:
+                    lines.append(
+                        f"Comes from: {d['id']}.{column} (no field of "
+                        f"{d['published_by']}'s current version)"
+                    )
                 if column not in d["publish_map"]:
                     continue
                 origin = d["origins"][column]
@@ -306,6 +312,22 @@ def upstream_lines(flow: dict, form: str, name: str) -> list[str]:
 
 def _leaf(path: str) -> str:
     return path.rsplit("/", 1)[-1]
+
+
+def _closest(d: dict) -> str:
+    """Return the form covering most of an external dataset's columns, if any."""
+    c = d["closest"]
+    if not c:
+        return ""
+    return (
+        f"; {c['columns']} of its {len(d['columns'])} columns are fields of "
+        f"{c['form']}: set [datasets.{d['id']}] published_by if it publishes it"
+    )
+
+
+def _legacy(d: dict) -> str:
+    n = len(d["legacy_columns"])
+    return f"; {n} columns no field of its current version" if n else ""
 
 
 _ORIGINS = ("entered", "calculated", "carried", "metadata")
@@ -395,6 +417,7 @@ def render_flow(flow: dict, dataset: str | None = None) -> str:
         lines = [
             f"{d['id']} ({d['title']}): {d['rows']} rows, key {d['key'] or '-'}, "
             f"published by {d['published_by'] or 'no project form (external)'}"
+            f"{_legacy(d) if d['published_by'] else _closest(d)}"
         ]
         readers: dict[str, list[str]] = {}
         for r in flow["reads"]:
@@ -412,6 +435,8 @@ def render_flow(flow: dict, dataset: str | None = None) -> str:
                 origin = d["origins"][column]
                 line += f"  <- {d['published_by']}.{source} ({origin['kind']}"
                 line += f" from {', '.join(origin['from'])})" if origin["from"] else ")"
+            elif column in d["legacy_columns"]:
+                line += f"  (no field of {d['published_by']}'s current version)"
             if column in readers:
                 line += f"  -> {', '.join(readers[column])}"
             lines.append(line)
@@ -432,9 +457,10 @@ def render_flow(flow: dict, dataset: str | None = None) -> str:
     lines += ["", "Datasets:"]
     for d in flow["datasets"]:
         source = (
-            f"published by {d['published_by']} ({_origin_text(d)})"
+            f"published by {d['published_by']} ({_origin_text(d)}){_legacy(d)}"
             if d["published_by"]
             else ("attached file" if d["kind"] == "form_file" else "external")
+            + _closest(d)
         )
         readers = ", ".join(d["read_by"]) or "no project form"
         lines.append(
