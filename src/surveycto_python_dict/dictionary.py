@@ -189,6 +189,8 @@ def build_dictionary(
             "n_cast_fallback": sum(
                 1 for v in variables.values() if "cast_fallback" in v["parquet"]
             ),
+            # Columns whose repeat indices do not fit the form: another form version.
+            "n_ragged": sum(1 for v in variables.values() if v.get("ragged")),
             "by_arrow_type": dict(
                 Counter(v["parquet"]["arrow_type"] for v in variables.values())
             ),

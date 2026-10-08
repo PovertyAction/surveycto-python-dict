@@ -238,7 +238,12 @@ def test_a_ragged_column_is_not_evaluated_and_not_mistaken_for_its_instance(
     # plot_size_1_3 has two indices for a depth-1 repeat: another form version.
     xml = XML.replace(' jr:count=" /farm/plots "', "")
     rows = [ROWS[0], {**ROWS[1], "plot_size_1_3": "4"}]
-    stats = _by_name(_build(tmp_path, analyzer, xml=xml, rows=rows))
+    cfg = _build(tmp_path, analyzer, xml=xml, rows=rows)
+    stats = _by_name(cfg)
+    dictionary = cfg.form_dir("farm") / "farm_variable_dictionary.json"
+    assert (
+        json.loads(dictionary.read_text(encoding="utf-8"))["summary"]["n_ragged"] == 1
+    )
     ragged = stats["plot_size_1_3"]
     assert ragged["eligibility_evaluated"] is False
     assert (

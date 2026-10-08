@@ -554,6 +554,8 @@ class SurveyStore:
             parts.append(f"sentinels {codes}")
         if "cast_fallback" in v["parquet"]:
             parts.append(f"kept as text: {v['parquet']['cast_fallback']}")
+        if v.get("ragged"):
+            parts.append("ragged: another form version's layout")
         pii = v["pii"]
         parts.append(f"pii: {pii['status']} ({', '.join(pii['basis'])})")
         return "  ".join(parts)
@@ -568,6 +570,9 @@ class SurveyStore:
             parts.append(f"{len(instances)} repeat instances")
         if choices:
             parts.append(f"{len(choices)} choices")
+        ragged = sum(1 for v in entries if v.get("ragged"))
+        if ragged:
+            parts.append(f"{ragged} from another form version (ragged)")
         parts += [
             f"missing rate {min(rates)}-{max(rates)}",
             f"pii {dict(Counter(v['pii']['status'] for v in entries))}",
@@ -968,7 +973,8 @@ class SurveyStore:
                 f"{d['name']} (version {d['form_version']}): submissions: {d['n_observations']}, "
                 f"columns: {d['n_variables']}, questions: {s['n_questions']}",
                 f"pii: {s['pii']}",
-                f"columns kept as text: {s['n_cast_fallback']}; all missing: {s['n_all_missing']}",
+                f"columns kept as text: {s['n_cast_fallback']}; all missing: {s['n_all_missing']}; "
+                f"from another form version (ragged): {s['n_ragged']}",
                 f"top-level groups: {', '.join(top_groups) or '-'}",
                 f"questions with no column, since no submission holds a value: "
                 f"{len(absent)}" + (f" ({', '.join(absent)})" if absent else ""),

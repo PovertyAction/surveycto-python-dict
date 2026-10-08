@@ -747,7 +747,8 @@ def main(argv: list[str] | None = None) -> None:
         ).fetchone()
         if ragged:
             print(
-                f"[duckdb] {form}: {ragged} columns from other form versions stay wide"
+                f"[duckdb] {form}: {ragged} columns from other form versions stay wide; "
+                f"{form}.dictionary where ragged lists them"
             )
     con.close()
     print(f"[duckdb] {len(cfg.forms)} forms -> {path}")
