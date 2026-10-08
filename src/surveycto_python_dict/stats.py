@@ -54,6 +54,28 @@ COLUMNS = [
     "distinct",
     "frequencies",
 ]
+# Each column's type when the CSV is read back: min, median and max hold a number or
+# a date, so text.
+SQL_TYPES = {
+    **dict.fromkeys(COLUMNS, "VARCHAR"),
+    "eligibility_evaluated": "BOOLEAN",
+    **dict.fromkeys(
+        (
+            "rows",
+            "eligible",
+            "skipped_by_logic",
+            "answered",
+            "sentinel",
+            "missing_when_eligible",
+            "answered_when_skipped",
+            "n_valid",
+            "selected",
+            "distinct",
+        ),
+        "BIGINT",
+    ),
+    **dict.fromkeys(("mean", "sd", "p25", "p75", "selected_share"), "DOUBLE"),
+}
 
 
 def _plain(value):

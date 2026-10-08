@@ -49,6 +49,7 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from surveycto_python_dict.pii import SAFE
+from surveycto_python_dict.stats import SQL_TYPES
 from surveycto_python_dict.survey import render_structure
 
 
@@ -402,8 +403,12 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
     for name, frame in tables.items():
         _table(con, form, name, frame)
     stats = (form_dir / f"{form}_summary_stats.csv").resolve().as_posix()
+    # The dialect and types stated: a sniff of the first rows can miss the quoting.
+    columns = ", ".join(f"{_literal(c)}: {_literal(t)}" for c, t in SQL_TYPES.items())
     con.execute(
-        f"CREATE TABLE {_q(form, 'stats')} AS SELECT * FROM read_csv({_literal(stats)})"
+        f"CREATE TABLE {_q(form, 'stats')} AS SELECT * FROM read_csv("
+        f"{_literal(stats)}, header = true, delim = ',', quote = '\"', "
+        f"escape = '\"', columns = {{{columns}}})"
     )
     for name, described in _DESCRIPTIONS.items():
         structure[f"{form}.{name}"] = {
