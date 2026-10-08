@@ -115,11 +115,18 @@ def _cell(ws, name: str, value) -> WriteOnlyCell:
 REVIEW_COLUMNS = ["column", "label", "status", "basis", "hit_rows", "non_null"]
 
 
+VALUE_COLUMNS = ["KEY", "column", "value"]
+# A sheet's rows, the header included.
+_EXCEL_ROWS = 1_048_576
+
+
 def write_pii_review(table: pa.Table, vardict: dict, path: Path) -> Path:
-    """Write ``KEY`` plus every flagged column to ``path``: a Columns and a Values sheet.
+    """Write every flagged column to ``path``: a Columns sheet and a Values sheet with
+    one row per value (``KEY``, column, value), which filters by column in Excel.
 
     Text stays text, so IDs keep their leading zeros. Timestamps are UTC, written
-    without the zone, which Excel does not store.
+    without the zone, which Excel does not store. More values than a sheet holds
+    raise.
     """
     variables = vardict["variables"]
     flagged = [
@@ -138,16 +145,21 @@ def write_pii_review(table: pa.Table, vardict: dict, path: Path) -> Path:
         ]
         for c in flagged
     ]
+    keys = table.column("KEY").to_pylist()
     values = [
-        [
-            v.replace(tzinfo=None) if isinstance(v, dt.datetime) else v
-            for v in row.values()
-        ]
-        for row in table.select(["KEY", *flagged]).to_pylist()
+        [key, c, v.replace(tzinfo=None) if isinstance(v, dt.datetime) else v]
+        for c in flagged
+        for key, v in zip(keys, table.column(c).to_pylist(), strict=True)
+        if v is not None
     ]
+    if len(values) >= _EXCEL_ROWS:
+        raise ValueError(
+            f"{path.name}: {len(values)} flagged values, more than a sheet's "
+            f"{_EXCEL_ROWS - 1} rows; clear columns in [pii] whitelist and rebuild"
+        )
     workbook = Workbook(write_only=True)
     _sheet(workbook, "Columns", REVIEW_COLUMNS, columns)
-    _sheet(workbook, "Values", ["KEY", *flagged], values)
+    _sheet(workbook, "Values", VALUE_COLUMNS, values)
     workbook.save(path)
     return path
 

@@ -53,7 +53,7 @@ list and every server dataset pulled (`raw/datasets/<id>.csv`): the ones in
 | `<form>.parquet` | Submissions, typed from the XML |
 | `<form>_variable_dictionary.json` | One entry per column: stats, types, sentinels, `pii` |
 | `<form>_variable_graph.json` | Questions linked by calculation, relevance, constraint, repeat |
-| `<form>_pii_review.xlsx` | For the people cleaning the data: a Columns sheet (each flagged column's label, status, basis and Presidio hit rows) and a Values sheet (`KEY` plus every column flagged `contains_pii` / `may_contain_pii`) |
+| `<form>_pii_review.xlsx` | For the people cleaning the data: a Columns sheet (each flagged column's label, status, basis and Presidio hit rows) and a Values sheet, one row per value of a column flagged `contains_pii` / `may_contain_pii` (`KEY`, column, value) |
 | `<form>_summary_stats.csv` | `just stats`: per column, counts over the rows where it was asked (skip logic evaluated per row), sentinels apart, then mean/quartiles, frequencies or shares; flagged PII columns get counts only |
 | `<form>_codebook.xlsx` | `just codebook` (which writes `<form>_summary_stats.csv` too): for PIs. Variables (label, type, group, relevance, value labels, missing, sentinels, PII status) and Summary stats; no values of flagged PII columns |
 | `<form>_dataset_codebook.json` | One row per column of each dataset the form reads: counts, the questions that read it, and a `pii` block (Presidio, or `dataset.column` on the whitelist/blacklist) |
