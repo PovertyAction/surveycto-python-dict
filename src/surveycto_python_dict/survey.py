@@ -1064,10 +1064,20 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
             )
         if source and source["kind"] == "search":
             d, read = store.read(source["dataset"], _path(q))
-            lines.append(f"{pad}  choices: rows of {d['id']}")
-            for col in read["columns"]:
-                if col not in read["match"]:
-                    column(d, col, depth + 2)
+            where = " and ".join(
+                f"{m['column']} = {m['value']}" for m in source["match"]
+            )
+            line = f"{pad}  choices: rows of {d['id']}" + (
+                f" where {where}" if where else ""
+            )
+            if not d["published_by"]:
+                what = "an attached file" if d["kind"] == "form_file" else "external"
+                lines.append(f"{line} ({what}, no project form fills it)")
+            else:
+                lines.append(line)
+                for col in read["columns"]:
+                    if col not in read["match"]:
+                        column(d, col, depth + 2)
         for ref in refs:
             walk(form, ref, depth + 1)
 
