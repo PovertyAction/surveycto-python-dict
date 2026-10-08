@@ -160,6 +160,9 @@ class Node:
     choice_items: list[dict] = field(default_factory=list)
     # Why a `search()` select's dataset choices were left out, e.g. ["presidio:PERSON"].
     choices_withheld: list[str] | None = None
+    # A `search()` select's value and label columns in its dataset, from the item
+    # that names them.
+    choice_columns: dict | None = None
     # A `search()` select's choices as read from its dataset, also when they are left
     # out of the outputs: they decode column names and type the data. Never exported.
     choice_universe: list[dict] | None = None

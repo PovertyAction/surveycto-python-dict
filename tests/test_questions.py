@@ -105,6 +105,7 @@ _KEYS = [
     "group_path",
     "publishable",
     "choices_withheld",
+    "choice_columns",
     "data_source",
     "question_order",
 ]

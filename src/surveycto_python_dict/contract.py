@@ -67,6 +67,12 @@ def form_entry(form_list_xml: bytes, form_id: str) -> FormEntry:
     raise KeyError(f"form {form_id!r} is not in the form list")
 
 
+def dataset_header(csv_path: Path) -> list[str]:
+    """Return a dataset CSV's columns, reading no row."""
+    with open(csv_path, encoding="utf-8-sig", newline="") as f:
+        return next(csv.reader(f))
+
+
 class DatasetTable:
     """A dataset CSV read once, with its rows indexed by column value on demand."""
 

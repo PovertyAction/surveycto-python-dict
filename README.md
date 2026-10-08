@@ -79,10 +79,12 @@ Presidio withholds is not written out, so its select_multiple has binaries only 
 codes picked. Rebuild after changing them, and write cleaning code against that build.
 
 A `search()` select's choices come from its dataset, never from the XML. A list of up to
-50 choices is written into the outputs; a longer one stays in its dataset, and the
-question names the dataset's value and label columns (`choices_withheld` gives the
-count). The build scans each list with Presidio and adds it whole when nothing is found;
-any hit withholds the whole list (`choices_withheld` gives the entities). A
+50 choices is written into the outputs; a longer one stays in its dataset
+(`choices_withheld` gives the count). `choice_columns` names the dataset's value and
+label columns, and a list left in its dataset keeps in `choices` only the form's own
+literal choices (an "Other", say). The build scans each list with Presidio and adds it
+whole when nothing is found; any hit withholds the whole list (`choices_withheld` gives
+the entities). A
 select_multiple whose list is not written out has binaries only for the codes picked. A whitelisted select
 gets its list unscanned; a blacklisted one never has its dataset read.
 

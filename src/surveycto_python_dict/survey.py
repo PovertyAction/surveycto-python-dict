@@ -79,12 +79,16 @@ def _short(text: str, limit: int = 100) -> str:
 
 
 def _withheld(q: dict) -> str:
-    columns = q["choices"][0]
-    return (
+    text = (
         f"choices not listed ({', '.join(q['choices_withheld'])}); they are in the "
-        f"dataset of `{q['appearance']}`, value column `{columns['value']}`, "
-        f"label column `{columns['label']}`"
+        f"dataset of `{q['appearance']}`"
     )
+    columns = q["choice_columns"]
+    if columns:
+        text += (
+            f", value column `{columns['value']}`, label column `{columns['label']}`"
+        )
+    return text
 
 
 def _source_line(source: dict) -> str:

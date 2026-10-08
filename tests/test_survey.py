@@ -238,7 +238,8 @@ def test_withheld_choices_name_the_dataset_columns_not_choices(store):
     store.questions["crop"] = dict(
         store.questions["crop"],
         appearance="search('crops')",
-        choices=[{"value": "crop_id", "label": "crop_name"}],
+        choices=[],
+        choice_columns={"value": "crop_id", "label": "crop_name"},
         choices_withheld=["presidio:PERSON"],
     )
     out = store.get_choice_list("crop")

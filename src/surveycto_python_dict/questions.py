@@ -208,6 +208,7 @@ def build_questions(contract: FormContract) -> list[dict]:
                     "group_path": node.group_path,
                     "publishable": count.publishable if count else False,
                     "choices_withheld": None,
+                    "choice_columns": None,
                     "data_source": None,
                     "repeat_group_name": node.name,
                 }
@@ -255,6 +256,7 @@ def build_questions(contract: FormContract) -> list[dict]:
                 "group_path": node.group_path,
                 "publishable": node.publishable,
                 "choices_withheld": node.choices_withheld,
+                "choice_columns": node.choice_columns,
                 "data_source": _data_source(node, refs),
             }
         )
