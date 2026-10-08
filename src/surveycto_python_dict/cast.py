@@ -1,7 +1,8 @@
 """Cast all-string wide JSON rows into a typed Arrow table through the form contract.
 
 Empty strings and absent keys are null. A select_multiple comes as per-choice
-binaries present only when chosen: within one field (and one repeat instance), an
+binaries present only when chosen (one the export leaves as a single column of codes
+is split into them): within one field (and one repeat instance), an
 unchosen binary is 0 when any sibling was chosen, else null; every choice gets its
 column, except where the form filters the list per submission: there only the choices
 someone picked at that instance do, since an unoffered choice is not unchosen. A column that cannot be typed (a value that does not parse, a column the
@@ -219,8 +220,42 @@ def _cast(
     return pa.array([v or None for v in raw], type=pa.string()), text
 
 
+_INSTANCES = re.compile(r"(_[0-9]+)*$")
+
+
+def _split_raw_multiples(rows: list[dict], contract: FormContract) -> list[dict]:
+    """Return ``rows`` with each select_multiple exported raw (one column, the codes
+    separated by spaces) rewritten as its per-choice binaries, as the export writes
+    the others.
+    """
+    multiples = {
+        n.name for n in contract.nodes.values() if n.is_select_multiple and n.is_leaf
+    }
+    raw: dict[str, tuple[Node, tuple[int, ...]]] = {}
+    for name in dict.fromkeys(name for row in rows for name in row):
+        if _INSTANCES.sub("", name) not in multiples or is_system_column(name):
+            continue
+        m = contract.map_column(name)
+        if m["kind"] != "matched" or m["choice_code"] is not None or m.get("ragged"):
+            continue
+        node = contract.nodes[m["node_path"]]
+        if node.is_select_multiple and node.is_leaf:
+            raw[name] = (node, tuple(i for _, i in m["repeat_iterations"]))
+    if not raw:
+        return rows
+    split = []
+    for row in rows:
+        row = dict(row)
+        for name, (node, iterations) in raw.items():
+            for code in row.pop(name, "").split():
+                row[_binary_name(node, code, iterations)] = "1"
+        split.append(row)
+    return split
+
+
 def cast_wide(rows: list[dict], contract: FormContract) -> pa.Table:
     """Return the submissions as a typed table, system columns first, then form order."""
+    rows = _split_raw_multiples(rows, contract)
     names = list(dict.fromkeys(name for row in rows for name in row))
     columns = _columns(names, contract)
     groups: dict[tuple, list[str]] = {}
