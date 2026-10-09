@@ -328,8 +328,20 @@ def test_survey_info_lists_questions_with_no_column(tmp_path, analyzer):
 
 def test_group_lists_its_questions_in_order(store):
     out = store.get_group("plot")
-    assert out.splitlines()[0] == "plot: 2 questions"
+    assert out.splitlines()[0] == "plot: 2 questions, asked if ${plots} > 0"
     assert out.index("plot_crop") < out.index("plot_size")
+    # A subgroup's condition shows once, where its questions start.
+    size = store.questions["plot_size"]
+    size["group_path"] = [*size["group_path"], "measured"]
+    size["gates"] = [
+        *size["gates"],
+        {"group": "measured", "relevance": "${plot_crop} != ''", "repeat_depth": 1},
+    ]
+    lines = store.get_group("plot").splitlines()
+    assert lines[2:4] == [
+        "  -- measured: if ${plot_crop} != ''",
+        "  plot_size (decimal) [measured]",
+    ]
     assert store.get_group("plt").startswith("No group named 'plt'. Close: plot")
 
 

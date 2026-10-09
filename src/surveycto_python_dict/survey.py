@@ -735,8 +735,19 @@ class SurveyStore:
                 f" Close: {', '.join(close)}" if close else ""
             )
         lines = [f"{group}: {len(members)} questions"]
+        own = next(
+            (g for q in members for g in q["gates"] if g["group"] == group), None
+        )
+        if own:
+            lines[0] += f", asked if {own['relevance']}"
+        shown: set[str] = set()
         for q in members:
             inner = q["group_path"][q["group_path"].index(group) + 1 :]
+            # Each subgroup's condition once, where its questions start.
+            for g in q["gates"]:
+                if g["group"] in inner and g["group"] not in shown:
+                    shown.add(g["group"])
+                    lines.append(f"  -- {g['group']}: if {g['relevance']}")
             where = f" [{'/'.join(inner)}]" if inner else ""
             when = f"  if {q['relevance']}" if q["relevance"] else ""
             lines.append(f"  {q['variable_name']} ({q['type']}){where}{when}")
