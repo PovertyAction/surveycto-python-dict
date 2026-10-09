@@ -141,6 +141,7 @@ def test_reads_name_the_fields_and_columns(flow):
             "match": [],
             "missing": [],
             "computed": None,
+            "choices": ["hhid", "village"],
         },
         {
             "field": "where",
@@ -149,6 +150,7 @@ def test_reads_name_the_fields_and_columns(flow):
             "match": ["hhid"],
             "missing": [],
             "computed": None,
+            "choices": [],
         },
     ]
     assert visit["zones"]["attached"] is False
@@ -475,6 +477,20 @@ def test_lineage_follows_reads_back_to_the_entered_question(flow, tmp_path):
     assert hh[:4] == [
         "visit.hh (select_one): Household",
         "  choices: rows of households",
+        "    households.hhid: published by listing",
+        "      listing.hhid (text): Household",
+    ]
+
+
+def test_lineage_follows_a_choice_column_the_search_also_filters_on(tmp_path):
+    visit = _VISIT.replace(
+        "search('Households')", "search('Households', 'matches', 'hhid', /visit/area)"
+    )
+    xmls = {"listing": _LISTING, "visit": visit}
+    stores = _stores(tmp_path, _flow(tmp_path, xmls), xmls)
+    assert trace_lineage(stores, "visit", "hh").splitlines()[:4] == [
+        "visit.hh (select_one): Household",
+        "  choices: rows of households where hhid = ${area}",
         "    households.hhid: published by listing",
         "      listing.hhid (text): Household",
     ]
