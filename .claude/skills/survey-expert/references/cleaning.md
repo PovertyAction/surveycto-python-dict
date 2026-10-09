@@ -177,7 +177,8 @@ harder to find.
    where the question was asked. `answered_when_skipped` and `missing_when_eligible` in
    the stats CSV are those two counts. SurveyCTO clears the answer to a question that is
    not relevant, so on its data `answered_when_skipped` should be 0, and
-   `missing_when_eligible` is 0 for required questions.
+   `missing_when_eligible` is 0 for required questions (`required` in the stats CSV).
+   Calculates and optional questions can be empty by design.
 3. **Trace a violation to its source before changing data.** A non-zero count points
    to a submission from another form version or an edit on the server, not to the
    respondent: look at the rows' `formdef_version` and review corrections, fix the

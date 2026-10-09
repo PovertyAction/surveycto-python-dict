@@ -29,6 +29,7 @@ COLUMNS = [
     "variable",
     "question",
     "type",
+    "required",
     "pii_status",
     "relevance",
     "eligibility_evaluated",
@@ -60,6 +61,7 @@ RAGGED_NOTE = "layout from another form version; not evaluated"
 SQL_TYPES = {
     **dict.fromkeys(COLUMNS, "VARCHAR"),
     "eligibility_evaluated": "BOOLEAN",
+    "required": "BOOLEAN",
     **dict.fromkeys(
         (
             "rows",
@@ -343,6 +345,8 @@ def summary_stats(
             variable=column,
             question=entry["question"] or "",
             type=q["type"] if q else ("system" if entry.get("system") else ""),
+            # missing_when_eligible on a required question is a gap the form forbids.
+            required=q["required"] if q else "",
             pii_status=pii,
             relevance=rule,
             eligibility_evaluated=evaluated,

@@ -43,6 +43,7 @@ def test_sentinels_are_counted_apart_and_left_out_of_stats(stats):
 def test_skip_logic_sets_the_denominator(stats):
     area = stats["area"]
     assert area["relevance"] == "${plots} > 0"
+    assert (area["required"], stats["KEY"]["required"]) == (False, "")
     assert area["eligibility_evaluated"] is True
     # plots is -99 in row 2, so area is not asked there.
     assert (area["eligible"], area["skipped_by_logic"], area["answered"]) == (1, 1, 1)
