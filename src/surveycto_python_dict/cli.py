@@ -443,3 +443,46 @@ def run_main(argv: list[str] | None = None) -> None:
     sentinels = env_sentinels()
     pull(cfg, Client.from_env())
     build(cfg, sentinels)
+
+
+def _skill_source() -> Path:
+    """Return the survey-expert skill's folder: in the package when installed from the
+    wheel, in the repository's ``.claude/skills`` in a clone.
+    """
+    package = Path(__file__).parent
+    for folder in (
+        package / "skill",
+        package.parents[1] / ".claude/skills/survey-expert",
+    ):
+        if (folder / "SKILL.md").exists():
+            return folder
+    raise FileNotFoundError(f"no survey-expert skill next to {package}")
+
+
+def install_skill(target: Path) -> Path:
+    """Write the survey-expert skill into ``target``: SKILL.md, its references, and
+    ``search_survey.py`` from this package's ``survey.py``, so the copy matches the
+    installed tool.
+    """
+    import shutil
+
+    source = _skill_source()
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source / "SKILL.md", target / "SKILL.md")
+    shutil.copytree(source / "references", target / "references", dirs_exist_ok=True)
+    shutil.copyfile(Path(__file__).parent / "survey.py", target / "search_survey.py")
+    return target
+
+
+def skill_main(argv: list[str] | None = None) -> None:
+    """Entry point for ``scto-skill``: write the survey-expert skill into a project."""
+    parser = argparse.ArgumentParser(prog="scto-skill")
+    parser.add_argument(
+        "target",
+        nargs="?",
+        type=Path,
+        default=Path(".claude/skills/survey-expert"),
+        help="where to write it (default: .claude/skills/survey-expert)",
+    )
+    target = install_skill(parser.parse_args(argv).target)
+    print(f"[skill] survey-expert -> {target}")

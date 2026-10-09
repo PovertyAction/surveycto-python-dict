@@ -22,6 +22,20 @@ just mcp                             # survey-expert MCP server over stdio, one 
 Each recipe takes another config as an argument (`just build path/to/config.toml`);
 `just` lists them all.
 
+### Use from another project
+
+```sh
+uv add git+https://github.com/PovertyAction/surveycto-python-dict
+uv run scto-skill          # the survey-expert skill -> .claude/skills/survey-expert
+```
+
+Copy `config.example.toml`, `.env.example` and `.mcp.json.example` from this repository
+into the project and fill them in as below. The commands are the recipes' own:
+`scto-pull`, `scto-build`, `scto-outputs`, `scto-flow`, `scto-mcp` and `scto-survey`,
+each with `--config config.toml` (the `justfile` recipes from `pull` to `mcp` can be
+copied as they are). Rerun `scto-skill` after updating the package, so the skill's
+`search_survey.py` matches it.
+
 The repo follows IPA's `ipa-python-template`: `just lint` runs the pre-commit hooks
 (ruff, codespell, markdownlint) that CI runs on every pull request to `main`.
 

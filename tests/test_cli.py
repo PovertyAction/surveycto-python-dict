@@ -282,3 +282,16 @@ def test_env_date_sentinels(monkeypatch):
     monkeypatch.setenv("SCTO_SENTINELS", "-99=Don't know")
     monkeypatch.setenv("SCTO_DATE_SENTINELS", "1900-01-01=Don't know;")
     assert env_sentinels() == {-99: "Don't know", dt.date(1900, 1, 1): "Don't know"}
+
+
+def test_install_skill_writes_the_skill_and_the_current_script(tmp_path):
+    from pathlib import Path
+
+    from surveycto_python_dict import cli, survey
+
+    target = cli.install_skill(tmp_path / "skill")
+    assert (target / "SKILL.md").exists()
+    assert (target / "references" / "cleaning.md").exists()
+    assert (target / "search_survey.py").read_bytes() == Path(
+        survey.__file__
+    ).read_bytes()
