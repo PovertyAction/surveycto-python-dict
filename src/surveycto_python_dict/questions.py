@@ -11,18 +11,11 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-from surveycto_python_dict.xml_contract import FormContract, Node
+from surveycto_python_dict.xml_contract import FormContract, Node, is_system_column
 
-# XLSForm types that are not questions, and names reserved for submission metadata.
-_EXCLUDED_TYPES = {
-    "note",
-    "start",
-    "end",
-    "deviceid",
-    "username",
-    "simserial",
-    "phonenumber",
-}
+# Metadata the export writes as a system column when the field has its reserved name
+# (starttime, deviceid, ...); under any other name the field is a question.
+_METADATA_TYPES = {"start", "end", "deviceid", "username", "simserial", "phonenumber"}
 _EXCLUDED_PREFIXES = ("instanceID", "instanceName", "KEY", "SET-OF-")
 
 _INPUT_TYPES = {
@@ -132,7 +125,11 @@ def _data_source(node: Node, refs: "_Refs") -> dict | None:
 
 
 def _excluded(name: str, qtype: str) -> bool:
-    return qtype in _EXCLUDED_TYPES or name.startswith(_EXCLUDED_PREFIXES)
+    if qtype == "note":
+        return True
+    if qtype in _METADATA_TYPES:
+        return is_system_column(name)
+    return name.startswith(_EXCLUDED_PREFIXES)
 
 
 def build_questions(contract: FormContract) -> list[dict]:

@@ -72,9 +72,11 @@ lists is an error. Set `trust_publishable = false` when the form marks personal 
 publishable (to publish them to a dataset, say): publishable then clears nothing, and
 those columns go through the type rules and Presidio like any other. Set
 `no_personal_data = true` for a project that holds none (study metadata, say): every
-column, dataset column and `search()` list that is not blacklisted or device metadata
-(`username`, `deviceid`, ...) is `whitelisted` with basis `project`, and Presidio
-never runs. The `[pii]` settings also change the parquet's columns: a `search()` list
+column, dataset column and `search()` list that is not blacklisted or collection
+metadata is `whitelisted` with basis `project`, and Presidio never runs. Collection
+metadata is `contains_pii` under any setting and any name: device columns
+(`username`, `deviceid`, ...), a field that preloads them, a calculate that calls
+`enumerator-id()`, `enumerator-name()` or `username()`, and a calculate reading one. The `[pii]` settings also change the parquet's columns: a `search()` list
 Presidio withholds is not written out, so its select_multiple has binaries only for the
 codes picked. Rebuild after changing them, and write cleaning code against that build.
 

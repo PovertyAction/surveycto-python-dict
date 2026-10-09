@@ -242,3 +242,41 @@ def test_blacklist_and_whitelist_still_rank_above_untrusted_publishable(form, an
     config = PiiConfig(trust_publishable=False, whitelist=("village",))
     blocks, _ = _classify(form, analyzer, config)
     assert blocks["village"] == {"status": "whitelisted", "basis": ["reviewed"]}
+
+
+# Collection metadata under names of the form's own: a preload, a calculate calling
+# enumerator-name(), and a calculate reading the preload.
+_METADATA_XML = XML.replace("<photo/>", "<photo/><my_user/><coder/><tagged/>").replace(
+    '<bind nodeset="/farm/photo" type="binary"/>',
+    '<bind nodeset="/farm/photo" type="binary"/>'
+    '<bind nodeset="/farm/my_user" type="string" jr:preload="property" '
+    'jr:preloadParams="username"/>'
+    '<bind nodeset="/farm/coder" type="string" calculate="concat(\'by \', '
+    'enumerator-name())"/>'
+    '<bind nodeset="/farm/tagged" type="string" '
+    "calculate=\"concat( /farm/my_user , '-')\"/>",
+)
+
+
+def test_collection_metadata_is_personal_whatever_its_name(tmp_path):
+    path = tmp_path / "farm.xml"
+    path.write_text(_METADATA_XML, encoding="utf-8")
+    contract = parse_contract(path)
+    questions = build_questions(contract)
+    assert next(q for q in questions if q["variable_name"] == "my_user")["type"] == (
+        "username"
+    )
+    rows = [dict(ROWS[0], my_user="u1", coder="by A", tagged="u1-")]
+    table = cast_wide(rows, contract)
+    vardict = build_dictionary(table, questions, contract, SENTINELS)
+    form = (table, questions, vardict)
+    blocks, _ = _classify(form, None, PiiConfig(no_personal_data=True))
+    assert blocks["my_user"] == {
+        "status": "contains_pii",
+        "basis": ["metadata:username"],
+    }
+    assert blocks["coder"] == {
+        "status": "contains_pii",
+        "basis": ["calls:enumerator-name()"],
+    }
+    assert blocks["tagged"] == {"status": "contains_pii", "basis": ["lineage:my_user"]}

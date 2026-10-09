@@ -6,7 +6,11 @@ Each column gets ``{"status", "basis"[, "presidio"]}``; the first matching rule 
    blacklist; ``whitelisted`` / ``reviewed``: on the whitelist.
 1. ``cleared_by_form``: the question is ``publishable``. With ``trust_publishable =
    false`` this rule is skipped and ``publishable`` is only noted in the basis.
-2. ``contains_pii``: device metadata columns; geo and attachment question types.
+2. ``contains_pii``: device metadata columns; geo and attachment question types;
+   whatever the name, a field that preloads device or user metadata (``username``,
+   ``deviceid``, ...), a calculate that calls ``enumerator-id()``,
+   ``enumerator-name()`` or ``username()``, and a calculate reading one of these.
+   This rule holds under ``no_personal_data`` too.
 3. ``whitelisted``: system columns; integer, decimal, date, datetime and time
    questions; selects with inline choices; calculates whose every reference is
    cleared or whitelisted and that do not ``pulldata()``.
@@ -23,6 +27,7 @@ rows and up to five of their KEYs, never matched text.
 
 import csv
 import random
+import re
 import warnings
 from collections import Counter
 from dataclasses import dataclass, field
@@ -61,6 +66,9 @@ _CONTAINS_TYPES = {
     "file",
 }
 _TYPED_SAFE = {"integer", "decimal", "date", "datetime", "time"}
+# Fields that capture who or which device collected the submission, whatever their name.
+_METADATA_TYPES = {"deviceid", "subscriberid", "simserial", "phonenumber", "username"}
+_METADATA_CALLS = re.compile(r"(?<![\w-])(enumerator-id|enumerator-name|username)\(\)")
 _SELECT_TYPES = {"select_one", "select_multiple"}
 # The statuses whose values may be read, and those that hold or may hold PII.
 SAFE = {"cleared_by_form", "whitelisted"}
@@ -177,6 +185,8 @@ class _Rules:
             return {"status": "whitelisted", "basis": ["reviewed"]}
         if q["publishable"] and self.trust_publishable:
             return {"status": "cleared_by_form", "basis": ["publishable"]}
+        if basis := self.personal(q["variable_name"]):
+            return {"status": "contains_pii", "basis": [basis]}
         if qtype in _CONTAINS_TYPES:
             return {"status": "contains_pii", "basis": [f"type:{qtype}"]}
         if qtype in _TYPED_SAFE:
@@ -187,6 +197,24 @@ class _Rules:
             refs = q["references"]
             if all(r in self.by_name and self._safe(r) for r in refs):
                 return {"status": "whitelisted", "basis": [f"lineage:{','.join(refs)}"]}
+        return None
+
+    def personal(self, name: str | None, seen: frozenset = frozenset()) -> str | None:
+        """Return why question ``name`` holds collection metadata, else None: its
+        type, a function it calls, or a field its calculation reads.
+        """
+        q = self.by_name.get(name)
+        if q is None or name in seen:
+            return None
+        if q["type"] in _METADATA_TYPES:
+            return f"metadata:{q['type']}"
+        calls = _METADATA_CALLS.search(q["calculation"] or "")
+        if calls:
+            return f"calls:{calls.group(1)}()"
+        if q["calculation"]:
+            for ref in q["references"] or []:
+                if self.personal(ref, seen | {name}):
+                    return f"lineage:{ref}"
         return None
 
     def _safe(self, name: str) -> bool:
@@ -381,6 +409,8 @@ def classify(
             block = {"status": "cleared_by_form", "basis": ["publishable"]}
         elif column in _DEVICE_COLUMNS and entry.get("system"):
             block = {"status": "contains_pii", "basis": [f"device:{column}"]}
+        elif basis := rules.personal(question):
+            block = {"status": "contains_pii", "basis": [basis]}
         elif entry.get("system"):
             block = {"status": "whitelisted", "basis": ["system"]}
         elif config.no_personal_data:
