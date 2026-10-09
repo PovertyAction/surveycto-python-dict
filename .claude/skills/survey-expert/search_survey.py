@@ -1172,7 +1172,7 @@ class SurveyStore:
             f"  Columns ({len(cols)} in {len(stems)} stems; "
             f"get_datasets('{self.form_id}', '{name}', columns=True) lists each):"
         ]
-        for stem, group in stems.items():
+        for stem, group in list(stems.items())[:_LISTED]:
             readers = list(dict.fromkeys(r for c in group for r in c["read_by"]))
             statuses = dict(Counter(c["pii"]["status"] for c in group))
             what = (
@@ -1186,6 +1186,8 @@ class SurveyStore:
                 f"{max(c['non_null'] for c in group)}/{n_rows}  pii {statuses}"
                 + (f"  read by {_capped(readers)}" if readers else "")
             )
+        if len(stems) > _LISTED:
+            lines.append(f"    ... {len(stems) - _LISTED} more stems")
         return lines
 
     def get_structure_db(
