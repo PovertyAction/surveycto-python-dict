@@ -88,6 +88,44 @@ def _sentinel_counts(
     }
 
 
+# A select compared with a code: selected(${x}, 'c'), ${x} = 'c', ${x} != 5.
+_COMPARED = (
+    re.compile(r"selected\(\s*\$\{([^}]+)\}\s*,\s*'([^']+)'\s*\)"),
+    re.compile(r"\$\{([^}]+)\}\s*!?=\s*'([^']+)'"),
+    re.compile(r"\$\{([^}]+)\}\s*!?=\s*(-?[0-9]+)(?![\w.])"),
+)
+
+
+def absent_codes(questions: list[dict], contract: FormContract) -> list[dict]:
+    """Return each condition that compares a select with a code its list lacks: a
+    follow-up gated on it is never asked. A list read per submission or kept
+    unread has no known codes and is not checked.
+    """
+    selects = {}
+    for q in questions:
+        if q["type"] not in ("select_one", "select_multiple"):
+            continue
+        node = contract.nodes["/".join([*q["group_path"], q["variable_name"]])]
+        if node.data_source and node.choice_universe is None:
+            continue
+        selects[q["variable_name"]] = {str(c["value"]) for c in node.all_choices}
+    found = []
+    for q in questions:
+        for where in ("relevance", "constraint", "calculation"):
+            for pattern in _COMPARED:
+                for name, code in pattern.findall(q[where] or ""):
+                    if name in selects and code not in selects[name]:
+                        found.append(
+                            {
+                                "question": q["variable_name"],
+                                "in": where,
+                                "select": name,
+                                "code": code,
+                            }
+                        )
+    return found
+
+
 def _kind(node) -> str:
     """Return what a column with no question is: a note, a group, a preload, or not
     in the current form (written under another version, say).
@@ -217,6 +255,7 @@ def build_dictionary(
                     v["column_kind"] for v in variables.values() if "column_kind" in v
                 )
             ),
+            "conditions_on_absent_codes": absent_codes(questions, contract),
             "n_empty_notes_and_groups_dropped": int(
                 table.schema.metadata[DROPPED.encode()]
             ),

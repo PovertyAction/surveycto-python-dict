@@ -105,6 +105,16 @@ def _kinds_text(summary: dict) -> str:
     )
 
 
+def _absent_text(found: list[dict]) -> str:
+    text = f"conditions comparing a select with a code it lacks: {len(found)}"
+    shown = "; ".join(
+        f"{f['question']} ({f['in']}): {f['select']} has no {f['code']}"
+        for f in found[:_LISTED]
+    )
+    more = f"; ... {len(found) - _LISTED} more" if len(found) > _LISTED else ""
+    return text + (f" ({shown}{more})" if found else "")
+
+
 def _withheld(q: dict) -> str:
     text = (
         f"choices not listed ({', '.join(q['choices_withheld'])}); they are in the "
@@ -688,6 +698,7 @@ class SurveyStore:
                 "Binaries: only for the codes someone picked (the form filters the "
                 "list per submission, or the list stays in its dataset)."
             )
+        lines += self._qualifies_lines(q["variable_name"])
         if q["data_source"]:
             lines.append(f"Data source: {_source_line(q['data_source'])}")
             lines += upstream_lines(self.flow, self.form_id, q["variable_name"])
@@ -838,6 +849,28 @@ class SurveyStore:
                 pad = "    "
             lines += [f"{pad}{c['value']} = {c['label']}" for c in choices]
         return "\n".join(lines)
+
+    def _qualifies_lines(self, name: str) -> list[str]:
+        """Return the questions whose conditions or text read ``name``: an answer that
+        means little without this one.
+        """
+        ref = "${" + name + "}"
+        gated = [
+            o
+            for o, q in self.questions.items()
+            if o != name and any(ref in g["relevance"] for g in q["gates"])
+        ]
+        worded = [
+            o
+            for o, q in self.questions.items()
+            if o != name and ref in (q["question_text"] or "")
+        ]
+        lines = []
+        if gated:
+            lines.append(f"Asks or skips: {_capped(gated)}")
+        if worded:
+            lines.append(f"Named in the text of: {_capped(worded)}")
+        return lines
 
     def _withheld_lines(self, q: dict) -> list[str]:
         """Return why a list is left out, the form's own choices, and where a script
@@ -1185,6 +1218,7 @@ class SurveyStore:
                 f"columns kept as text: {s['n_cast_fallback']}; all missing: {s['n_all_missing']}; "
                 f"from another form version (ragged): {s['n_ragged']}",
                 f"columns without a question: {_kinds_text(s)}",
+                _absent_text(s["conditions_on_absent_codes"]),
                 f"top-level groups: {', '.join(top_groups) or '-'}",
                 f"questions with no column, since no submission holds a value: "
                 f"{len(absent)}" + (f" ({', '.join(absent)})" if absent else ""),

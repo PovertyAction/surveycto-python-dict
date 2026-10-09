@@ -236,3 +236,17 @@ def test_text_columns_report_their_longest_value(variables):
     owner = variables["owner"]
     # "Ana Maria Gomez Restrepo" is the only non-empty owner.
     assert (owner["max_length"], owner["at_max_length"]) == (24, 1)
+
+
+def test_conditions_on_codes_a_select_lacks_are_listed(tmp_path):
+    from surveycto_python_dict.dictionary import absent_codes
+
+    path = tmp_path / "farm.xml"
+    path.write_text(XML, encoding="utf-8")
+    contract = parse_contract(path)
+    questions = build_questions(contract)
+    area = next(q for q in questions if q["variable_name"] == "area")
+    area["relevance"] = "${crop} = '02' or ${crop} = '-99' or selected(${tools}, '77')"
+    assert absent_codes(questions, contract) == [
+        {"question": "area", "in": "relevance", "select": "crop", "code": "-99"}
+    ]
