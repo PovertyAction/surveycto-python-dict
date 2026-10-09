@@ -213,8 +213,10 @@ def test_a_group_condition_uses_its_own_repeat_index(tmp_path, analyzer):
     )
 
 
-def test_a_column_with_no_question_has_no_missing_count(stats):
-    assert stats["intro"]["missing_when_eligible"] == ""  # a note
+def test_a_column_with_no_question_has_no_missing_count(tmp_path, analyzer):
+    rows = [dict(ROWS[0], old_field="x"), ROWS[1]]
+    stats = _by_name(_build(tmp_path, analyzer, rows=rows))
+    assert stats["old_field"]["missing_when_eligible"] == ""
 
 
 def test_a_date_sentinel_is_counted_apart(tmp_path, analyzer):

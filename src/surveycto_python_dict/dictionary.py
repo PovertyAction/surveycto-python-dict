@@ -17,6 +17,7 @@ from collections import Counter
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from surveycto_python_dict.cast import DROPPED
 from surveycto_python_dict.survey import choice_labels
 from surveycto_python_dict.xml_contract import FormContract
 
@@ -85,6 +86,21 @@ def _sentinel_counts(
     }
 
 
+def _kind(node) -> str:
+    """Return what a column with no question is: a note, a group, a preload, or not
+    in the current form (written under another version, say).
+    """
+    if node is None:
+        return "not_in_form"
+    if not node.is_leaf:
+        return "group"
+    if node.original == "note":
+        return "note"
+    if node.preload:
+        return "preload"
+    raise ValueError(f"{node.path}: a field with a column but no question")
+
+
 def build_dictionary(
     table: pa.Table,
     questions: list[dict],
@@ -131,6 +147,8 @@ def build_dictionary(
             entry["system"] = True
         if question is None:
             entry.update(question=None, survey=None)
+            if not system:
+                entry["column_kind"] = _kind(node)
         else:
             entry["question"] = question["variable_name"]
             if not system:
@@ -191,6 +209,15 @@ def build_dictionary(
             ),
             # Columns whose repeat indices do not fit the form: another form version.
             "n_ragged": sum(1 for v in variables.values() if v.get("ragged")),
+            # Columns with no question, by what they are.
+            "columns_without_question": dict(
+                Counter(
+                    v["column_kind"] for v in variables.values() if "column_kind" in v
+                )
+            ),
+            "n_empty_notes_and_groups_dropped": int(
+                table.schema.metadata[DROPPED.encode()]
+            ),
             "by_arrow_type": dict(
                 Counter(v["parquet"]["arrow_type"] for v in variables.values())
             ),

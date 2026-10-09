@@ -50,8 +50,8 @@ list and every server dataset pulled (`raw/datasets/<id>.csv`): the ones in
 |---|---|
 | `<form>_questions.json` | One entry per question, keyed by its XLSForm name |
 | `sections/` | One slice of `questions.json` per group level |
-| `<form>.parquet` | Submissions, typed from the XML |
-| `<form>_variable_dictionary.json` | One entry per column: stats, types, sentinels, `pii` |
+| `<form>.parquet` | Submissions, typed from the XML; a note's or a group's column empty in every row is left out |
+| `<form>_variable_dictionary.json` | One entry per column: stats, types, sentinels, `pii`; a column with no question says what it is (`column_kind`: note, group, preload, `not_in_form`) |
 | `<form>_variable_graph.json` | Questions linked by calculation, relevance, constraint, repeat |
 | `<form>_pii_review.xlsx` | For the people cleaning the data: a Columns sheet (each flagged column's label, status, basis and Presidio hit rows) and a Values sheet, one row per value of a column flagged `contains_pii` / `may_contain_pii` (`KEY`, column, value) |
 | `<form>_summary_stats.csv` | `just stats`: per column, counts over the rows where it was asked (skip logic evaluated per row), sentinels apart, then mean/quartiles, frequencies or shares; flagged PII columns get counts only |

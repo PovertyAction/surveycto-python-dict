@@ -7,7 +7,9 @@ unchosen binary is 0 when any sibling was chosen, else null; every choice gets i
 column, except where the form filters the list per submission: there only the choices
 someone picked at that instance do, since an unoffered choice is not unchosen. A column that cannot be typed (a value that does not parse, a column the
 form does not define) is kept as text, with the reason in its ``cast_fallback``
-field metadata; the reason never quotes a value.
+field metadata; the reason never quotes a value. A note's or a group's column empty
+in every row is dropped (the export writes field-list groups once per repeat
+instance), and the table's metadata counts them.
 """
 
 import datetime as dt
@@ -25,6 +27,8 @@ from surveycto_python_dict.xml_contract import (
 )
 
 _TIMESTAMP = pa.timestamp("ms", tz="UTC")
+# Table metadata: how many note and group columns, empty in every row, were dropped.
+DROPPED = "empty_notes_and_groups_dropped"
 _SYSTEM_TIMESTAMPS = {"SubmissionDate", "CompletionDate", "starttime", "endtime"}
 _SYSTEM_INTS = {"duration"}
 
@@ -49,6 +53,8 @@ class _Column:
     binary_group: tuple | None = (
         None  # (node path, repeat iterations) of a choice binary
     )
+    # A note's or a group's column, which holds no answer: dropped when empty.
+    structural: bool = False
 
 
 def _parse_timestamp(value: str) -> dt.datetime:
@@ -139,7 +145,9 @@ def _columns(names: list[str], contract: FormContract) -> list[_Column]:
         iterations = tuple(i for _, i in m["repeat_iterations"])
         key = (1, order[node.path], iterations, 0)
         if not node.is_leaf:
-            columns[name] = _text(name, f"maps to group {node.path!r}", {}, key)
+            columns[name] = _text(
+                name, f"maps to group {node.path!r}", {}, key, structural=True
+            )
             continue
         if node.is_select_multiple and m["choice_code"] is not None:
             multi_instances.setdefault(node.path, set()).add(iterations)
@@ -169,7 +177,13 @@ def _columns(names: list[str], contract: FormContract) -> list[_Column]:
             if node.xml_type == "select1"
             else _XML_TYPES[node.xml_type]
         )
-        columns[name] = _Column(name, arrow_type, _node_metadata(node), key)
+        columns[name] = _Column(
+            name,
+            arrow_type,
+            _node_metadata(node),
+            key,
+            structural=node.original == "note",
+        )
 
     for path, instances in multi_instances.items():
         node = contract.nodes[path]
@@ -270,10 +284,15 @@ def cast_wide(rows: list[dict], contract: FormContract) -> pa.Table:
     }
     unanswered = [False] * len(rows)
     arrays, fields = [], []
+    dropped = 0
     for c in columns:
         raw = [row.get(c.name, "") for row in rows]
         answered = answered_by_group.get(c.binary_group, unanswered)
         array, c = _cast(c, raw, answered)
+        if c.structural and array.null_count == len(array):
+            dropped += 1
+            continue
         arrays.append(array)
         fields.append(pa.field(c.name, c.arrow_type, metadata=c.metadata))
-    return pa.Table.from_arrays(arrays, schema=pa.schema(fields))
+    schema = pa.schema(fields, metadata={DROPPED: str(dropped)})
+    return pa.Table.from_arrays(arrays, schema=schema)

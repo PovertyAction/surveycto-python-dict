@@ -135,11 +135,6 @@ def test_code_like_text_has_no_hits(blocks):
     }
 
 
-def test_note_column_scanned_empty(blocks):
-    assert blocks["intro"]["status"] == "no_hits"
-    assert blocks["intro"]["presidio"]["distinct_scanned"] == 0
-
-
 def test_no_value_from_the_data_in_blocks(blocks):
     dumped = json.dumps(blocks)
     for value in _FICTIONAL:

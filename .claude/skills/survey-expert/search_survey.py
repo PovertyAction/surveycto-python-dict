@@ -78,6 +78,25 @@ def _short(text: str, limit: int = 100) -> str:
     return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
+_KINDS = {
+    "note": "a note",
+    "group": "a group's own column",
+    "preload": "a preload (device or form metadata)",
+    "not_in_form": "no field of the current form, written under another version",
+}
+
+
+def _kinds_text(summary: dict) -> str:
+    kinds = summary["columns_without_question"]
+    text = ", ".join(f"{n} {_KINDS[k]}" for k, n in kinds.items()) or "none"
+    dropped = summary["n_empty_notes_and_groups_dropped"]
+    return text + (
+        f"; {dropped} note and group columns empty in every row dropped"
+        if dropped
+        else ""
+    )
+
+
 def _withheld(q: dict) -> str:
     text = (
         f"choices not listed ({', '.join(q['choices_withheld'])}); they are in the "
@@ -649,7 +668,11 @@ class SurveyStore:
             question = self.variables[name]["question"]
             if question is not None:
                 return self._render_question(self.questions[question], columns)
-            return f"{name} (column without a question)\n{self._column_line(name)}"
+            v = self.variables[name]
+            what = _KINDS[v["column_kind"]] if "column_kind" in v else "a system column"
+            return (
+                f"{name} (column without a question: {what})\n{self._column_line(name)}"
+            )
         close = difflib.get_close_matches(
             name, list(dict.fromkeys([*self.questions, *self.variables])), n=5
         )
@@ -979,6 +1002,7 @@ class SurveyStore:
                 f"pii: {s['pii']}",
                 f"columns kept as text: {s['n_cast_fallback']}; all missing: {s['n_all_missing']}; "
                 f"from another form version (ragged): {s['n_ragged']}",
+                f"columns without a question: {_kinds_text(s)}",
                 f"top-level groups: {', '.join(top_groups) or '-'}",
                 f"questions with no column, since no submission holds a value: "
                 f"{len(absent)}" + (f" ({', '.join(absent)})" if absent else ""),

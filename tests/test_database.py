@@ -439,4 +439,4 @@ def test_outputs_writes_stats_codebook_and_database(tmp_path, analyzer, monkeypa
     assert (form_dir / "farm_summary_stats.csv").exists()
     assert (form_dir / "farm_codebook.xlsx").exists()
     con = duckdb.connect(str(cfg.out_dir / "farmproject.duckdb"), read_only=True)
-    assert con.sql("SELECT count(*) FROM farm.stats").fetchone() == (29,)
+    assert con.sql("SELECT count(*) FROM farm.stats").fetchone() == (28,)
