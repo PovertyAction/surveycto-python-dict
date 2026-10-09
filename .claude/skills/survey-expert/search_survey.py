@@ -73,6 +73,14 @@ def _tokens(text: str) -> list[str]:
     return _TOKEN_RE.findall(plain_label(text).lower())
 
 
+def _name_tokens(name: str) -> list[str]:
+    """Return a field name's parts and the name itself, lowercased: ``refugeePop``
+    gives ``refugee``, ``pop`` and ``refugeepop``.
+    """
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name)
+    return [*_tokens(spaced.replace("_", " ").replace(".", " ")), name.lower()]
+
+
 def _short(text: str, limit: int = 100) -> str:
     text = plain_label(text)
     return text if len(text) <= limit else text[: limit - 3] + "..."
@@ -729,20 +737,29 @@ class SurveyStore:
         a question named exactly ``query`` comes first.
         """
         docs = {
-            n: _tokens(f"{n.replace('_', ' ')} {q['question_text']}")
+            n: set(_name_tokens(n)) | set(_tokens(q["question_text"]))
             for n, q in self.questions.items()
         }
-        df = Counter(t for toks in docs.values() for t in set(toks))
-        idf = {t: math.log(len(docs) / df[t]) + 1 for t in df}
-        # Words in more than half the questions ("de", "the") only rank when alone.
-        terms = [t for t in _tokens(query) if df.get(t, 0) <= len(docs) / 2] or _tokens(
-            query
-        )
-        # Each word counts once per question, so long texts do not win on common words.
-        scores = {
-            n: sum(idf.get(t, 0) for t in set(terms) if t in set(toks))
-            for n, toks in docs.items()
+        # One-letter words ("p" of "p-value") only count when alone.
+        words = set(_tokens(query))
+        words = {w for w in words if len(w) > 1} or words
+        # A word of four letters or more also matches the words it starts
+        # ("child" finds "children").
+        matched = {
+            w: {
+                n
+                for n, toks in docs.items()
+                if w in toks or (len(w) >= 4 and any(t.startswith(w) for t in toks))
+            }
+            for w in words
         }
+        # Words in more than half the questions ("de", "the") only rank when alone.
+        terms = [w for w in words if len(matched[w]) <= len(docs) / 2] or list(words)
+        idf = {
+            w: math.log(len(docs) / len(matched[w])) + 1 for w in terms if matched[w]
+        }
+        # Each word counts once per question, so long texts do not win on common words.
+        scores = {n: sum(s for w, s in idf.items() if n in matched[w]) for n in docs}
         if query.strip() in scores:
             scores[query.strip()] = math.inf
         return sorted(
@@ -750,9 +767,19 @@ class SurveyStore:
         )
 
     def search_line(self, name: str) -> str:
-        """Return a search hit: the question's name, type and short text."""
+        """Return a search hit: the question's name, type and short text, and its
+        columns' PII status when any is flagged.
+        """
         q = self.questions[name]
-        return f"{name} ({q['type']}): {_short(q['question_text'])}"
+        flagged = sorted(
+            {
+                self.variables[c]["pii"]["status"]
+                for c in self.columns.get(name, [])
+                if self.variables[c]["pii"]["status"] in _FLAGGED
+            }
+        )
+        tag = f"  [{', '.join(flagged)}]" if flagged else ""
+        return f"{name} ({q['type']}): {_short(q['question_text'])}{tag}"
 
     def search_questions(self, query: str, max_results: int = 20) -> str:
         """Rank the form's questions by the words of ``query`` in their name or text."""
@@ -840,21 +867,36 @@ class SurveyStore:
             return self.lookup_variable(name)
         reached, frontier = {name}, {name}
         for _ in range(depth):
+            # A group's gate reaches every question in the group: it is followed from
+            # a question to its gate, not from the gate to the group's questions.
             frontier = {
                 other
                 for e in self.graph["edges"]
-                for node, other in (
-                    (e["source"], e["target"]),
-                    (e["target"], e["source"]),
+                for node, other, way in (
+                    (e["source"], e["target"], "out"),
+                    (e["target"], e["source"], "in"),
                 )
-                if node in frontier and other not in reached
+                if node in frontier
+                and other not in reached
+                and not (e["type"] == "group_gated_by" and way == "out")
             }
             reached |= frontier
+        gated: dict[tuple[str, str], int] = {}
+        for e in self.graph["edges"]:
+            if e["type"] == "group_gated_by" and e["source"] in reached:
+                key = (e["source"], self._gated_group(e))
+                gated[key] = gated.get(key, 0) + 1
         edges = sorted(
             {
                 f"{e['source']} -> {e['target']} ({e['type']})"
                 for e in self.graph["edges"]
-                if e["source"] in reached and e["target"] in reached
+                if e["type"] != "group_gated_by"
+                and e["source"] in reached
+                and e["target"] in reached
+            }
+            | {
+                f"{source} gates group {group} ({n} questions)"
+                for (source, group), n in gated.items()
             }
         )
         lines = []
@@ -873,6 +915,13 @@ class SurveyStore:
         else:
             lines += edges or [f"{name} has no calculation, gate or constraint links."]
         return "\n".join(lines)
+
+    def _gated_group(self, edge: dict) -> str:
+        """Return the group whose condition makes ``edge``'s source gate its target."""
+        for g in self.questions[edge["target"]]["gates"]:
+            if g["group"] and edge["source"] in _REF_RE.findall(g["relevance"]):
+                return g["group"]
+        raise ValueError(f"{edge}: no group condition of the target reads the source")
 
     def get_repeat_structure(self, repeat: str | None = None) -> str:
         """Show the repeat groups, their nesting, counts and first members; with

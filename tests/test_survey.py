@@ -361,3 +361,25 @@ def test_datasets_summarise_columns_and_list_them_on_request(store, monkeypatch)
         in out
     )
     assert "  Columns:" in store.get_datasets("prev_round", columns=True)
+
+
+def test_search_matches_name_parts_and_word_starts_and_drops_one_letters(store):
+    from surveycto_python_dict.survey import _name_tokens
+
+    assert _name_tokens("refugeePop_v2") == ["refugee", "pop", "v2", "refugeepop_v2"]
+    store.questions["per_plot"]["question_text"] = "Area per plot, in hectares"
+    # "hectare" starts "hectares"; "a" alone of one letter is dropped.
+    assert store.search_questions("a hectare").splitlines()[0].startswith("per_plot")
+
+
+def test_search_tags_flagged_columns(store):
+    assert "[may_contain_pii]" in store.search_line("owner") or "[contains_pii]" in (
+        store.search_line("owner")
+    )
+    assert "[" not in store.search_line("plots")
+
+
+def test_neighborhood_collapses_a_group_gate(store):
+    out = store.get_variable_neighborhood("plots")
+    assert "plots gates group plot (2 questions)" in out
+    assert "(group_gated_by)" not in out
