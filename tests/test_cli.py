@@ -295,3 +295,10 @@ def test_install_skill_writes_the_skill_and_the_current_script(tmp_path):
     assert (target / "search_survey.py").read_bytes() == Path(
         survey.__file__
     ).read_bytes()
+
+
+def test_a_project_folder_named_like_a_form_raises(tmp_path):
+    config = tmp_path / "config.toml"
+    config.write_text('forms = ["farm"]\nout_dir = "out/farm"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="also a form's id"):
+        load_config(config)
