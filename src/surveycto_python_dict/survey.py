@@ -345,6 +345,41 @@ def _leaf(path: str) -> str:
     return path.rsplit("/", 1)[-1]
 
 
+def _field_lines(d: dict, readers: dict[str, list[str]]) -> list[str]:
+    """Return a dataset's columns one line per field that publishes them (by stem
+    for the columns no field explains), with the fields that read them.
+    """
+    groups: dict[str, list[str]] = {}
+    for column in d["columns"]:
+        field = d["publish_map"].get(column)
+        groups.setdefault(field or _STEM.sub("", column), []).append(column)
+    lines = [
+        f"  {len(d['columns'])} columns in {len(groups)} fields; "
+        f"get_flow('{d['id']}', columns=True) lists each:"
+    ]
+    for key, cols in groups.items():
+        first = cols[0]
+        what = first if len(cols) == 1 else f"{first} ... {cols[-1]} ({len(cols)})"
+        field = d["publish_map"].get(first)
+        line = f"  {what}"
+        if field:
+            origin = d["origins"][first]
+            line += f"  <- {d['published_by']}.{field} ({origin['kind']}"
+            line += f" from {', '.join(origin['from'])})" if origin["from"] else ")"
+        elif first in d["legacy_columns"]:
+            line += f"  (no field of {d['published_by']}'s current version)"
+        read = list(dict.fromkeys(r for c in cols for r in readers.get(c, [])))
+        if read:
+            line += f"  -> {_capped(read)}"
+        lines.append(line)
+    lines += [
+        f"  {column}  no such column; read by {', '.join(fields)}"
+        for column, fields in readers.items()
+        if column not in d["columns"]
+    ]
+    return lines
+
+
 def _closest(d: dict) -> str:
     """Return the form covering most of an external dataset's columns, if any."""
     c = d["closest"]
@@ -436,11 +471,12 @@ def render_mermaid(flow: dict) -> str:
     return "\n".join(lines)
 
 
-def render_flow(flow: dict, dataset: str | None = None) -> str:
+def render_flow(flow: dict, dataset: str | None = None, columns: bool = False) -> str:
     """Render ``flow.json``: forms by stage, then each dataset's publisher and readers.
 
     With ``dataset``, list its columns instead: the field each one is published from
-    and the fields that read it.
+    and the fields that read it. Past ``_LISTED`` columns, the columns of one field
+    (a repeat's ``score_1`` ... ``score_9``) share a line; ``columns`` lists each.
     """
     datasets = {d["id"]: d for d in flow["datasets"]}
     if dataset is not None:
@@ -459,6 +495,8 @@ def render_flow(flow: dict, dataset: str | None = None) -> str:
                     readers.setdefault(column, []).append(
                         f"{r['form']}.{_leaf(f['field'])} ({f['via']})"
                     )
+        if not columns and len(d["columns"]) > _LISTED:
+            return "\n".join(lines + _field_lines(d, readers))
         for column in d["columns"]:
             source = d["publish_map"].get(column)
             line = f"  {column}"
@@ -469,7 +507,7 @@ def render_flow(flow: dict, dataset: str | None = None) -> str:
             elif column in d["legacy_columns"]:
                 line += f"  (no field of {d['published_by']}'s current version)"
             if column in readers:
-                line += f"  -> {', '.join(readers[column])}"
+                line += f"  -> {', '.join(readers[column]) if columns else _capped(readers[column])}"
             lines.append(line)
         lines += [
             f"  {column}  no such column; read by {', '.join(fields)}"
@@ -897,84 +935,141 @@ class SurveyStore:
             return "a literal or expression"
         return self.repeat_of.get(match.group(1)) or "submissions"
 
-    def get_datasets(self) -> str:
-        """Describe each dataset the form reads and how its rows join to the form."""
+    def get_datasets(self, dataset: str | None = None, columns: bool = False) -> str:
+        """Describe each dataset the form reads and how its rows join to the form.
+
+        A join column's values past ``_LISTED`` and a dataset's columns past
+        ``_LISTED`` are summarised; ``dataset`` gives one dataset's joins in full and
+        ``columns`` lists each column.
+        """
         by_dataset: dict[str, list[dict]] = {}
         for column in self.dataset_columns:
             by_dataset.setdefault(column["dataset"], []).append(column)
         if not by_dataset:
             return "The form reads no datasets."
+        if dataset is not None and dataset not in by_dataset:
+            raise ValueError(f"the form reads no {dataset!r}: {list(by_dataset)}")
         id_of, read_of = {}, {}
         for r in self.flow["reads"]:
             if r["form"] == self.form_id:
                 id_of[r["name_in_form"]] = r["dataset"]
                 for f in r["fields"]:
                     read_of[r["name_in_form"], f["field"]] = f
-        project = self.project
         blocks = []
-        for dataset, columns in by_dataset.items():
-            n_rows = columns[0]["rows"]
-            statuses = dict(Counter(c["pii"]["status"] for c in columns))
-            view = f"dataset.{id_of[dataset]}"
-            lines = [
-                f"{dataset}: {n_rows} rows, {len(columns)} columns, pii {statuses}",
-                f"  In {project}.duckdb: {view} (every column, plus row) and "
-                f"{view}_safe (row plus cleared columns).",
-                "  Joins to the form (dataset column = form value):",
-            ]
-            joins: dict[tuple, list[str]] = {}
-            for q in self.questions.values():
-                source = q["data_source"]
-                if not source or source["dataset"] != dataset:
-                    continue
-                read = read_of[
-                    dataset, "/".join([*q["group_path"], q["variable_name"]])
-                ]
-                if source["kind"] == "search":
-                    what = f"{q['variable_name']} takes its choices from these rows"
-                elif read["computed"]:
-                    what = (
-                        f"{q['variable_name']} reads the column named by "
-                        f"{source['column']}"
-                    )
-                else:
-                    what = f"{q['variable_name']} reads {source['column']}"
-                    if source["column"] in read["missing"]:
-                        what += f" (no such column in {dataset})"
-                for m in source["match"] or [{"column": None, "value": None}]:
-                    joins.setdefault((m["column"], m["value"]), []).append(what)
-            by_name = {c["column"]: c for c in columns}
-            for (column, value), uses in joins.items():
-                if column is None:
-                    lines.append(f"    (no filter): {'; '.join(uses)}")
-                    continue
-                if column not in by_name:
-                    lines.append(
-                        f"    {dataset}.{column} = {value}: no such column in {dataset}"
-                    )
-                    lines += [f"      {use}" for use in uses]
-                    continue
+        for name, cols in by_dataset.items():
+            if dataset not in (None, name):
+                continue
+            lines = self._dataset_head(name, cols, id_of[name])
+            lines += self._join_lines(name, cols, read_of, full=dataset is not None)
+            lines += self._dataset_column_lines(name, cols, columns)
+            blocks.append("\n".join(lines))
+        return "\n\n".join(blocks)
+
+    def _dataset_head(self, name: str, cols: list[dict], dataset_id: str) -> list[str]:
+        statuses = dict(Counter(c["pii"]["status"] for c in cols))
+        view = f"dataset.{dataset_id}"
+        return [
+            f"{name}: {cols[0]['rows']} rows, {len(cols)} columns, pii {statuses}",
+            f"  In {self.project}.duckdb: {view} (every column, plus row) and "
+            f"{view}_safe (row plus cleared columns).",
+        ]
+
+    def _join_lines(
+        self, name: str, cols: list[dict], read_of: dict, full: bool
+    ) -> list[str]:
+        """Return how the dataset's rows join to the form: per match column, its
+        uniqueness once, then each value matched and the fields that match it.
+        """
+        joins: dict[str | None, dict[str | None, list[str]]] = {}
+        for q in self.questions.values():
+            source = q["data_source"]
+            if not source or source["dataset"] != name:
+                continue
+            read = read_of[name, _path(q)]
+            if source["kind"] == "search":
+                what = f"{q['variable_name']} (choices)"
+            elif read["computed"]:
+                what = f"{q['variable_name']} <- the column named by {source['column']}"
+            else:
+                what = f"{q['variable_name']} <- {source['column']}"
+                if source["column"] in read["missing"]:
+                    what += " (no such column)"
+            for m in source["match"] or [{"column": None, "value": None}]:
+                joins.setdefault(m["column"], {}).setdefault(m["value"], []).append(
+                    what
+                )
+        by_name = {c["column"]: c for c in cols}
+        n_rows = cols[0]["rows"]
+        lines = [
+            "  Joins to the form (dataset column = form value: fields; `<- column` "
+            "reads it, `(choices)` takes its choices from the matching rows):"
+        ]
+        for column, values in joins.items():
+            if column is None:
+                lines.append(f"    (no filter): {'; '.join(values[None])}")
+                continue
+            if column not in by_name:
+                lines.append(f"    {name}.{column}: no such column in {name}")
+            else:
                 key = by_name[column]
                 unique = (
-                    "unique in the dataset: one dataset row per match"
+                    "unique: one dataset row per match"
                     if key["distinct"] == key["non_null"] == n_rows
                     else f"not unique: {key['distinct']} distinct in {key['non_null']} rows"
                 )
-                lines.append(
-                    f"    {dataset}.{column} = {value} (in {self._table_of(value)}); "
-                    f"{unique}"
-                )
-                lines += [f"      {use}" for use in uses]
-            lines.append("  Columns:")
+                lines.append(f"    {name}.{column} ({unique}) =")
+            items = list(values.items())
+            shown = items if full else items[:_LISTED]
             lines += [
+                f"      {value}"
+                + (f" (in {self._table_of(value)})" if _REF_RE.fullmatch(value) else "")
+                + f": {_capped(uses)}"
+                for value, uses in shown
+            ]
+            if len(shown) < len(items):
+                lines.append(
+                    f"      ... {len(items) - len(shown)} more values; "
+                    f"get_datasets('{self.form_id}', '{name}') lists each"
+                )
+        return lines
+
+    def _dataset_column_lines(
+        self, name: str, cols: list[dict], every: bool
+    ) -> list[str]:
+        """Return the dataset's columns, one line each, or past ``_LISTED`` one line
+        per stem (``score`` for ``score_1`` ... ``score_9``).
+        """
+        n_rows = cols[0]["rows"]
+        if every or len(cols) <= _LISTED:
+            return ["  Columns:"] + [
                 f"    {c['column']}  non-null {c['non_null']}/{n_rows}, "
                 f"distinct {c['distinct']}, longest {c['max_length']} chars "
                 f"({c['at_max_length']} values that long)  pii: {c['pii']['status']}"
-                + (f"  read by {', '.join(c['read_by'])}" if c["read_by"] else "")
-                for c in columns
+                + (f"  read by {_capped(c['read_by'])}" if c["read_by"] else "")
+                for c in cols
             ]
-            blocks.append("\n".join(lines))
-        return "\n\n".join(blocks)
+        stems: dict[str, list[dict]] = {}
+        for c in cols:
+            stems.setdefault(_STEM.sub("", c["column"]), []).append(c)
+        lines = [
+            f"  Columns ({len(cols)} in {len(stems)} stems; "
+            f"get_datasets('{self.form_id}', '{name}', columns=True) lists each):"
+        ]
+        for stem, group in stems.items():
+            readers = list(dict.fromkeys(r for c in group for r in c["read_by"]))
+            statuses = dict(Counter(c["pii"]["status"] for c in group))
+            what = (
+                group[0]["column"]
+                if len(group) == 1
+                else f"{stem}: {len(group)} columns, {group[0]['column']} ... "
+                f"{group[-1]['column']}"
+            )
+            lines.append(
+                f"    {what}  non-null {min(c['non_null'] for c in group)}-"
+                f"{max(c['non_null'] for c in group)}/{n_rows}  pii {statuses}"
+                + (f"  read by {_capped(readers)}" if readers else "")
+            )
+        return lines
 
     def get_structure_db(
         self, schema: str | None = None, table: str | None = None
@@ -998,9 +1093,9 @@ class SurveyStore:
         """Render what the project is about: description, entities, candidate keys."""
         return render_project(self.flow)
 
-    def get_flow(self, dataset: str | None = None) -> str:
+    def get_flow(self, dataset: str | None = None, columns: bool = False) -> str:
         """Render the project's ``flow.json``, or one dataset's columns with ``dataset``."""
-        return render_flow(self.flow, dataset)
+        return render_flow(self.flow, dataset, columns)
 
     def get_survey_info(self) -> str:
         """Summarise the form and its outputs."""
@@ -1040,6 +1135,16 @@ def search_forms(stores: dict, query: str, max_results: int = 20) -> str:
     return "\n".join(
         f"{form}.{stores[form].search_line(name)}" for _, form, name in ranked
     )
+
+
+# A wide column's instance suffixes: score_2_1 -> score.
+_STEM = re.compile(r"(_[0-9]+)+$")
+
+
+def _capped(names: list[str]) -> str:
+    """Return ``names`` joined, the first ``_LISTED`` and a count of the rest."""
+    more = len(names) - _LISTED
+    return ", ".join(names[:_LISTED]) + (f", ... {more} more" if more > 0 else "")
 
 
 def _path(q: dict) -> str:
@@ -1220,7 +1325,11 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
         "repeat", nargs="?", help="one repeat's members in full"
     )
     commands.add_parser("info", help="form summary")
-    commands.add_parser("datasets", help="datasets the form reads and their joins")
+    datasets = commands.add_parser(
+        "datasets", help="datasets the form reads and their joins"
+    )
+    datasets.add_argument("dataset", nargs="?", help="one dataset's joins in full")
+    datasets.add_argument("--columns", action="store_true", help="list every column")
     db = commands.add_parser("db", help="map of <project>.duckdb: tables, keys, joins")
     db.add_argument(
         "schema", nargs="?", help="one schema in full (a form, dataset, main)"
@@ -1229,6 +1338,7 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
     commands.add_parser("project", help="what the project is about: entities, keys")
     flow = commands.add_parser("flow", help="how the project's forms chain")
     flow.add_argument("dataset", nargs="?", help="one dataset's columns, end to end")
+    flow.add_argument("--columns", action="store_true", help="list every column")
     commands.add_parser(
         "lineage", help="where a field's value comes from, across forms (--config)"
     ).add_argument("name")
@@ -1261,9 +1371,9 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
         "neighborhood": lambda: store.get_variable_neighborhood(args.name, args.depth),
         "repeats": lambda: store.get_repeat_structure(args.repeat),
         "info": store.get_survey_info,
-        "datasets": store.get_datasets,
+        "datasets": lambda: store.get_datasets(args.dataset, args.columns),
         "db": lambda: store.get_structure_db(args.schema, args.table),
-        "flow": lambda: store.get_flow(args.dataset),
+        "flow": lambda: store.get_flow(args.dataset, args.columns),
         "project": store.get_project,
     }[args.command]()
     print(answer)

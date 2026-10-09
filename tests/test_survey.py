@@ -260,11 +260,8 @@ def test_datasets_describe_the_join_to_the_form(store):
     out = store.get_datasets()
     assert out.startswith("prev_round: 2 rows, 2 columns")
     assert "In out.duckdb: dataset.farm/prev_round.csv (every column, plus row)" in out
-    assert (
-        "prev_round.phone = ${phone} (in submissions); "
-        "unique in the dataset: one dataset row per match"
-    ) in out
-    assert "prev reads owner" in out
+    assert "    prev_round.phone (unique: one dataset row per match) =" in out
+    assert "      ${phone} (in submissions): prev <- owner" in out
     assert "owner  non-null 2/2, distinct 1" in out
     assert "Fictional Owner" not in out
 
@@ -352,3 +349,15 @@ def test_search_finds_an_exact_name_first_and_across_forms(store):
     out = search_forms({"farm": store}, "plot size")
     assert out.splitlines()[0].startswith("farm.plot_size")
     assert search_forms({"farm": store}, "zzz") == "No question of farm matches 'zzz'."
+
+
+def test_datasets_summarise_columns_and_list_them_on_request(store, monkeypatch):
+    from surveycto_python_dict import survey
+
+    monkeypatch.setattr(survey, "_LISTED", 1)
+    out = store.get_datasets()
+    assert (
+        "  Columns (2 in 2 stems; get_datasets('farm', 'prev_round', columns=True)"
+        in out
+    )
+    assert "  Columns:" in store.get_datasets("prev_round", columns=True)

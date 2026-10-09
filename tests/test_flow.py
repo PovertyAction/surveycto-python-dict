@@ -478,3 +478,17 @@ def test_lineage_follows_reads_back_to_the_entered_question(flow, tmp_path):
         "    households.hhid: published by listing",
         "      listing.hhid (text): Household",
     ]
+
+
+def test_a_wide_dataset_is_summarised_one_line_per_field(flow, monkeypatch):
+    from surveycto_python_dict import survey
+
+    monkeypatch.setattr(survey, "_LISTED", 2)
+    lines = render_flow(flow, "households").splitlines()
+    assert lines[1] == (
+        "  4 columns in 3 fields; get_flow('households', columns=True) lists each:"
+    )
+    assert (
+        "  plot_size ... plot_size_1 (2)  <- listing.plot/plot_size (entered)" in lines
+    )
+    assert "plot_size_1  <-" in render_flow(flow, "households", columns=True)

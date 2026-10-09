@@ -104,9 +104,15 @@ def make_server(stores: dict[str, SurveyStore]) -> MCPServer:
         return trace_lineage(stores, form, name)
 
     @server.tool()
-    def get_datasets(form: str) -> str:
-        """Describe the datasets a form reads and how their rows join to the form."""
-        return store(form).get_datasets()
+    def get_datasets(
+        form: str, dataset: str | None = None, columns: bool = False
+    ) -> str:
+        """Describe the datasets a form reads and how their rows join to the form.
+
+        Long lists are summarised: ``dataset`` gives one dataset's joins in full,
+        ``columns`` lists each column.
+        """
+        return store(form).get_datasets(dataset, columns)
 
     @server.tool()
     def get_project() -> str:
@@ -116,13 +122,14 @@ def make_server(stores: dict[str, SurveyStore]) -> MCPServer:
         return project.get_project()
 
     @server.tool()
-    def get_flow(dataset: str | None = None) -> str:
+    def get_flow(dataset: str | None = None, columns: bool = False) -> str:
         """Show how the project's forms chain through datasets: stages, publishers, readers.
 
         With ``dataset``, list its columns: the field each is published from, with its
-        origin, and the fields that read it, across forms.
+        origin, and the fields that read it, across forms. A wide dataset is
+        summarised one line per field; ``columns`` lists each column.
         """
-        return project.get_flow(dataset)
+        return project.get_flow(dataset, columns)
 
     @server.tool()
     def get_structure_db(schema: str | None = None, table: str | None = None) -> str:
