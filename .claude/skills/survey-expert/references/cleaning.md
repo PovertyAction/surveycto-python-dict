@@ -69,7 +69,9 @@ df[["KEY", *items, "skill_avg"]].to_parquet(
   counts them per column under `sentinels`; nothing has been recoded.
 - select_multiple arrives as `<name>_<code>` binaries: `1` chosen, `0` when another
   choice of the same question was chosen in that row, null when the question was
-  skipped. There is no space-separated column.
+  skipped. There is no space-separated column. Where the question's list is read per
+  submission (`choices_per_submission`), only codes someone picked have a column, and
+  an unpicked code is null (section 6).
 - `questions.json` holds each question's `relevance`, `group_relevances`,
   `constraint` and `choices` in `${name}` syntax: the instrument, in machine form.
 - `just stats` writes `<form>_summary_stats.csv`: per column, how many rows were
@@ -134,7 +136,10 @@ harder to find.
    question's `constraint` and `choices` (the MCP lookup shows both) and recode exactly
    those codes: a question whose choices allow `-99` and `-88` needs both recoded, and
    recodes for codes the form never allows create false confidence. Comment columns with none
-   ("choices 0/1, no sentinels").
+   ("choices 0/1, no sentinels"). For a number, `sentinels_allowed` in the dictionary
+   (the lookup's "Non-response codes its constraint accepts") lists the codes its
+   constraint accepts; `sentinels` counts the codes in the data, whatever the question
+   allows.
 2. **Tabulate, assert coverage, assert tolerance, then recode in one pass.** An unknown
    or missed code otherwise passes silently.
    ```python
@@ -230,6 +235,9 @@ harder to find.
    comment.
 4. **Ordinal categories:** prefer mutually exclusive conditions and assert each row
    falls in exactly one: `assert (low.astype(int) + mid.astype(int) + high.astype(int) == 1).all()`.
+5. **A `search()` select's labels** are the form's own choices plus its list's dataset
+   rows (`choice_columns` names the value and label columns, `data_source` the
+   filter). Where a dataset row's label is empty, keep the form's label.
 5. **One-off corrections by signature, not ID:** match on a value signature, assert the
    match count, apply, comment. Five or more go in an overrides CSV (old, new, source,
    rationale), applied by the script with an assert on the rows changed; a correction
@@ -242,7 +250,11 @@ harder to find.
 ## 6. select_multiple
 
 1. **The binaries are ready:** null already means not answered and 0 unchosen, so do not
-   rebuild them from strings. If you derive a binary from another source, match tokens,
+   rebuild them from strings. The exception is a list read per submission
+   (`choices_per_submission`): an unpicked code there is null too, so fill 0 where the
+   question was answered, which is where any of its binaries is non-null:
+   `answered = df[cols].notna().any(axis=1)`, then
+   `df.loc[answered, cols] = df.loc[answered, cols].fillna(0)`. If you derive a binary from another source, match tokens,
    not substrings (`2` must not match `12`), and mask `get_dummies` output back to null
    for null rows.
 2. **`count-selected` is the row sum of the question's binaries**, null where the
@@ -331,6 +343,12 @@ harder to find.
    (`np.isclose`), not a file hash. Take a fresh "before" snapshot for each change.
 4. **Randomness:** pass one `np.random.default_rng(seed)` around; never the global seed;
    the lockfile pins numpy.
+5. **Measure coverage on the delivered data.** A target field counts as filled when the
+   output has values, not when a mapping to a question exists. List the fields that
+   are mapped but empty, each with its reason: never answered, its gate never true, or
+   a question only an older form version had.
+6. **Where several people code the same unit,** list their disagreements per field
+   rather than keeping one answer silently.
 
 ## 10. Pipeline structure
 
@@ -351,6 +369,8 @@ harder to find.
    regex (`^asset_amount_\d{1,2}$`) or an explicit list.
 5. **Drop helper columns** and assert the output columns equal the expected list before
    writing.
+6. **One grain per field:** each output field lives in one table, at that table's grain
+   (a study, an arm, a wave). Assert the table's key is unique before writing.
 
 ## 11. PII
 

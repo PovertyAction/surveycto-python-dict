@@ -250,3 +250,13 @@ def test_conditions_on_codes_a_select_lacks_are_listed(tmp_path):
     assert absent_codes(questions, contract) == [
         {"question": "area", "in": "relevance", "select": "crop", "code": "-99"}
     ]
+
+
+def test_the_codes_a_constraint_accepts():
+    from surveycto_python_dict.dictionary import allowed_codes
+
+    codes = {-99: "Don't know", -88: "Refused", -77: "N/A"}
+    assert allowed_codes(None, codes) == [-99, -88, -77]
+    assert allowed_codes(". >= 0 or . = -99", codes) == [-99]
+    assert allowed_codes(". != -88", codes) == [-99, -77]
+    assert allowed_codes(". <= ${plots}", codes) is None

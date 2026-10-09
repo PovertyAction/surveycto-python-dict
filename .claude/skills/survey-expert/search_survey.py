@@ -699,6 +699,17 @@ class SurveyStore:
                 "list per submission, or the list stays in its dataset)."
             )
         lines += self._qualifies_lines(q["variable_name"])
+        first = (self.columns.get(q["variable_name"]) or [None])[0]
+        if first and "sentinels_allowed" in self.variables[first]:
+            allowed = self.variables[first]["sentinels_allowed"]
+            lines.append(
+                "Non-response codes its constraint accepts: "
+                + (
+                    "not read (the constraint reads other fields)"
+                    if allowed is None
+                    else ", ".join(map(str, allowed)) or "none"
+                )
+            )
         if q["data_source"]:
             lines.append(f"Data source: {_source_line(q['data_source'])}")
             lines += upstream_lines(self.flow, self.form_id, q["variable_name"])

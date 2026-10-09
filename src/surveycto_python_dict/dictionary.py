@@ -20,6 +20,7 @@ import pyarrow.compute as pc
 from surveycto_python_dict.cast import DROPPED
 from surveycto_python_dict.survey import choice_labels
 from surveycto_python_dict.xml_contract import FormContract
+from surveycto_python_dict.xpath import UnsupportedExpression, compile_expression
 
 _REF_RE = re.compile(r"\$\{([^}]+)\}")
 _SURVEY_KEYS = (
@@ -124,6 +125,35 @@ def absent_codes(questions: list[dict], contract: FormContract) -> list[dict]:
                             }
                         )
     return found
+
+
+class _Own:
+    """The context of a constraint that reads only ``.``, the answer itself."""
+
+    def __init__(self, value):
+        self.value = value
+
+    def ref(self, name: str):
+        if name != ".":
+            raise UnsupportedExpression(f"${{{name}}}")
+        return self.value
+
+    def index(self) -> int:
+        raise UnsupportedExpression("index()")
+
+
+def allowed_codes(constraint: str | None, sentinels: dict) -> list[int] | None:
+    """Return the numeric sentinel codes a question's constraint accepts (every code
+    without a constraint), or None when the constraint reads more than the answer.
+    """
+    codes = sorted(c for c in sentinels if isinstance(c, int))
+    if not constraint:
+        return codes
+    try:
+        fn = compile_expression(constraint)
+        return [c for c in codes if bool(fn(_Own(c)))]
+    except UnsupportedExpression:
+        return None
 
 
 def _kind(node) -> str:
@@ -231,6 +261,10 @@ def build_dictionary(
         found = _sentinel_counts(column, sentinels, labels)
         if found:
             entry["sentinels"] = found
+        if question and question["type"] in ("integer", "decimal"):
+            entry["sentinels_allowed"] = allowed_codes(
+                question["constraint"], sentinels
+            )
         variables[field.name] = entry
 
     return {
