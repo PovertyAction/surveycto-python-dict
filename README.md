@@ -99,6 +99,14 @@ metadata is `contains_pii` under any setting and any name: device columns
 Presidio withholds is not written out, so its select_multiple has binaries only for the
 codes picked. Rebuild after changing them, and write cleaning code against that build.
 
+The `*_safe` views leave flagged columns out. A flagged column needed as an
+identifier (a coder's name that tells a resubmission from double coding, say) goes
+in `[pii] mask`: the `_safe` views then keep it under its own name as `pii_` and 12
+hex digits of a SHA-256 salted with `SCTO_MASK_SALT`, nulls kept. The same text
+gives the same mask in every form and dataset, so it still groups, counts and joins.
+Anyone with the salt can match a mask to a guessed value, so keep it out of the
+outputs and of chats.
+
 A `search()` select's choices come from its dataset, never from the XML. A list of up to
 50 choices is written into the outputs; a longer one stays in its dataset
 (`choices_withheld` gives the count). `choice_columns` names the dataset's value and
