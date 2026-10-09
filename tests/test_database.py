@@ -440,3 +440,72 @@ def test_outputs_writes_stats_codebook_and_database(tmp_path, analyzer, monkeypa
     assert (form_dir / "farm_codebook.xlsx").exists()
     con = duckdb.connect(str(cfg.out_dir / "farmproject.duckdb"), read_only=True)
     assert con.sql("SELECT count(*) FROM farm.stats").fetchone() == (28,)
+
+
+def test_masked_columns_stay_in_safe_views_as_salted_hashes(project):
+    from surveycto_python_dict.database import Mask
+
+    flow = json.loads((project.out_dir / "flow.json").read_text(encoding="utf-8"))
+    path = write_database(
+        project.out_dir,
+        project.project,
+        list(project.forms),
+        dataset_csvs(project, flow),
+        project.dataset_keys,
+        Mask(("phone", "prev_round.owner"), "salt"),
+    )
+    con = duckdb.connect(str(path), read_only=True)
+    phones = [
+        r[0] for r in con.sql("SELECT phone FROM farm.submissions_safe").fetchall()
+    ]
+    assert all(p.startswith("pii_") and len(p) == 16 for p in phones)
+    assert "3104567890" not in phones
+    (owner,) = con.sql(
+        'SELECT owner FROM dataset."farm/prev_round.csv_safe"'
+    ).fetchone()
+    assert owner.startswith("pii_")
+    # owner is flagged and not masked: still left out.
+    columns = {r[0] for r in con.sql("DESCRIBE farm.submissions_safe").fetchall()}
+    assert "owner" not in columns
+    con.close()
+
+
+def test_mask_needs_a_salt_and_names_that_exist():
+    from surveycto_python_dict.api import MissingEnvVar
+    from surveycto_python_dict.database import Mask
+
+    with pytest.raises(MissingEnvVar, match="SCTO_MASK_SALT"):
+        Mask(("phone",), None)
+
+
+def test_mask_of_an_unknown_name_raises(project):
+    from surveycto_python_dict.database import Mask
+
+    flow = json.loads((project.out_dir / "flow.json").read_text(encoding="utf-8"))
+    with pytest.raises(ValueError, match="no flagged column named nothing"):
+        write_database(
+            project.out_dir,
+            project.project,
+            list(project.forms),
+            dataset_csvs(project, flow),
+            project.dataset_keys,
+            Mask(("nothing",), "salt"),
+        )
+
+
+def test_a_project_that_reads_no_dataset(tmp_path, analyzer):
+    from farm_form import XML
+
+    config = tmp_path / "config.toml"
+    config.write_text('forms = ["farm"]\nout_dir = "plain"\n', encoding="utf-8")
+    cfg = load_config(config)
+    xml = XML.replace("pulldata('prev_round', 'owner', 'phone',  /farm/phone )", "'x'")
+    write_pull(cfg, xml=xml)
+    build(cfg, SENTINELS, analyzer)
+    form_dir = cfg.form_dir("farm")
+    write_csv(
+        summary_stats(form_dir, "farm", SENTINELS), form_dir / "farm_summary_stats.csv"
+    )
+    con = duckdb.connect(str(_write(cfg)), read_only=True)
+    assert con.sql("SELECT count(*) FROM main.datasets").fetchone() == (0,)
+    con.close()

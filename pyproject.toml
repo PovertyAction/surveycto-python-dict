@@ -32,6 +32,7 @@ scto-stats = "surveycto_python_dict.stats:main"
 scto-codebook = "surveycto_python_dict.codebook:main"
 scto-duckdb = "surveycto_python_dict.database:main"
 scto-outputs = "surveycto_python_dict.cli:outputs_main"
+scto-skill = "surveycto_python_dict.cli:skill_main"
 
 [build-system]
 requires = ["hatchling"]
@@ -39,6 +40,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/surveycto_python_dict"]
+
+# The survey-expert skill ships in the wheel; scto-skill writes it into a project.
+[tool.hatch.build.targets.wheel.force-include]
+".claude/skills/survey-expert/SKILL.md" = "surveycto_python_dict/skill/SKILL.md"
+".claude/skills/survey-expert/references" = "surveycto_python_dict/skill/references"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

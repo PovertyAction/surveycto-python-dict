@@ -61,6 +61,7 @@ _TOP_KEYS = {
     "datasets",
     "project",
     "entities",
+    "submissions",
 }
 
 
@@ -78,6 +79,9 @@ class Config:
     # [datasets.<name>] published_by: the form that publishes it, where the columns
     # don't tell.
     dataset_publishers: dict[str, str]
+    # [submissions] exclude: an SQL condition on the parquet's columns for rows the
+    # project does not use (tests, say), left out of the counts and stats.
+    exclude: str | None
     # [project] description: what the project is about, in the user's words.
     description: str | None
     # [entities.<name>]: key (the columns that identify it, together), description,
@@ -122,7 +126,7 @@ def load_config(path: Path) -> Config:
     _check_keys("[pii]", set(pii), {f.name for f in fields(PiiConfig)})
     if "entities" in pii:
         pii["entities"] = tuple(pii["entities"])
-    for key in ("whitelist", "blacklist"):
+    for key in ("whitelist", "blacklist", "mask"):
         if key in pii:
             pii[key] = tuple(pii[key])
     datasets = data.get("datasets", {})
@@ -130,6 +134,8 @@ def load_config(path: Path) -> Config:
         _check_keys(f"[datasets.{name}]", set(section), {"key", "published_by"})
     project = data.get("project", {})
     _check_keys("[project]", set(project), {"description"})
+    submissions = data.get("submissions", {})
+    _check_keys("[submissions]", set(submissions), {"exclude"})
     entities = data.get("entities", {})
     for name, section in entities.items():
         _check_keys(
@@ -138,6 +144,14 @@ def load_config(path: Path) -> Config:
         section["key"] = _columns(section["key"])
     if not data["forms"]:
         raise ValueError("forms is empty: name at least one form")
+    # <project>.duckdb holds a schema per form: a form named like the database makes
+    # every <form>.<table> ambiguous to DuckDB.
+    project_name = (Path(path).parent / data["out_dir"]).resolve().name
+    if project_name in data["forms"]:
+        raise ValueError(
+            f"out_dir's folder {project_name!r} is also a form's id; name the project "
+            f"folder differently (e.g. {project_name}_project)"
+        )
     return Config(
         forms=tuple(data["forms"]),
         server_datasets=tuple(data.get("server_datasets", ())),
@@ -153,6 +167,7 @@ def load_config(path: Path) -> Config:
             for name, section in datasets.items()
             if "published_by" in section
         },
+        exclude=submissions.get("exclude"),
         description=project.get("description"),
         entities=entities,
     )
@@ -296,7 +311,7 @@ def build_form(
     screen_search_choices(contract, datasets, cfg.pii, analyzer, rows)
     questions = build_questions(contract)
     table = cast_wide(rows, contract)
-    vardict = build_dictionary(table, questions, contract, sentinels)
+    vardict = build_dictionary(table, questions, contract, sentinels, cfg.exclude)
     blocks = classify(table, vardict, questions, cfg.pii, analyzer)
     attach(vardict, blocks)
 
@@ -443,3 +458,46 @@ def run_main(argv: list[str] | None = None) -> None:
     sentinels = env_sentinels()
     pull(cfg, Client.from_env())
     build(cfg, sentinels)
+
+
+def _skill_source() -> Path:
+    """Return the survey-expert skill's folder: in the package when installed from the
+    wheel, in the repository's ``.claude/skills`` in a clone.
+    """
+    package = Path(__file__).parent
+    for folder in (
+        package / "skill",
+        package.parents[1] / ".claude/skills/survey-expert",
+    ):
+        if (folder / "SKILL.md").exists():
+            return folder
+    raise FileNotFoundError(f"no survey-expert skill next to {package}")
+
+
+def install_skill(target: Path) -> Path:
+    """Write the survey-expert skill into ``target``: SKILL.md, its references, and
+    ``search_survey.py`` from this package's ``survey.py``, so the copy matches the
+    installed tool.
+    """
+    import shutil
+
+    source = _skill_source()
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source / "SKILL.md", target / "SKILL.md")
+    shutil.copytree(source / "references", target / "references", dirs_exist_ok=True)
+    shutil.copyfile(Path(__file__).parent / "survey.py", target / "search_survey.py")
+    return target
+
+
+def skill_main(argv: list[str] | None = None) -> None:
+    """Entry point for ``scto-skill``: write the survey-expert skill into a project."""
+    parser = argparse.ArgumentParser(prog="scto-skill")
+    parser.add_argument(
+        "target",
+        nargs="?",
+        type=Path,
+        default=Path(".claude/skills/survey-expert"),
+        help="where to write it (default: .claude/skills/survey-expert)",
+    )
+    target = install_skill(parser.parse_args(argv).target)
+    print(f"[skill] survey-expert -> {target}")

@@ -238,11 +238,12 @@ def test_withheld_choices_name_the_dataset_columns_not_choices(store):
     store.questions["crop"] = dict(
         store.questions["crop"],
         appearance="search('crops')",
-        choices=[],
+        choices=[{"value": "-88", "label": "Other"}],
         choice_columns={"value": "crop_id", "label": "crop_name"},
         choices_withheld=["presidio:PERSON"],
     )
     out = store.get_choice_list("crop")
+    assert "  The form's own choices: -88 = Other" in out
     assert "choices not listed (presidio:PERSON)" in out
     assert "value column `crop_id`, label column `crop_name`" in out
     assert "crop_id = crop_name" not in out
@@ -260,11 +261,8 @@ def test_datasets_describe_the_join_to_the_form(store):
     out = store.get_datasets()
     assert out.startswith("prev_round: 2 rows, 2 columns")
     assert "In out.duckdb: dataset.farm/prev_round.csv (every column, plus row)" in out
-    assert (
-        "prev_round.phone = ${phone} (in submissions); "
-        "unique in the dataset: one dataset row per match"
-    ) in out
-    assert "prev reads owner" in out
+    assert "    prev_round.phone (unique: one dataset row per match) =" in out
+    assert "      ${phone} (in submissions): prev <- owner" in out
     assert "owner  non-null 2/2, distinct 1" in out
     assert "Fictional Owner" not in out
 
@@ -328,8 +326,20 @@ def test_survey_info_lists_questions_with_no_column(tmp_path, analyzer):
 
 def test_group_lists_its_questions_in_order(store):
     out = store.get_group("plot")
-    assert out.splitlines()[0] == "plot: 2 questions"
+    assert out.splitlines()[0] == "plot: 2 questions, asked if ${plots} > 0"
     assert out.index("plot_crop") < out.index("plot_size")
+    # A subgroup's condition shows once, where its questions start.
+    size = store.questions["plot_size"]
+    size["group_path"] = [*size["group_path"], "measured"]
+    size["gates"] = [
+        *size["gates"],
+        {"group": "measured", "relevance": "${plot_crop} != ''", "repeat_depth": 1},
+    ]
+    lines = store.get_group("plot").splitlines()
+    assert lines[2:4] == [
+        "  -- measured: if ${plot_crop} != ''",
+        "  plot_size (decimal) [measured]",
+    ]
     assert store.get_group("plt").startswith("No group named 'plt'. Close: plot")
 
 
@@ -340,3 +350,37 @@ def test_search_finds_an_exact_name_first_and_across_forms(store):
     out = search_forms({"farm": store}, "plot size")
     assert out.splitlines()[0].startswith("farm.plot_size")
     assert search_forms({"farm": store}, "zzz") == "No question of farm matches 'zzz'."
+
+
+def test_datasets_summarise_columns_and_list_them_on_request(store, monkeypatch):
+    from surveycto_python_dict import survey
+
+    monkeypatch.setattr(survey, "_LISTED", 1)
+    out = store.get_datasets()
+    assert (
+        "  Columns (2 in 2 stems; get_datasets('farm', 'prev_round', columns=True)"
+        in out
+    )
+    assert "  Columns:" in store.get_datasets("prev_round", columns=True)
+
+
+def test_search_matches_name_parts_and_word_starts_and_drops_one_letters(store):
+    from surveycto_python_dict.survey import _name_tokens
+
+    assert _name_tokens("refugeePop_v2") == ["refugee", "pop", "v2", "refugeepop_v2"]
+    store.questions["per_plot"]["question_text"] = "Area per plot, in hectares"
+    # "hectare" starts "hectares"; "a" alone of one letter is dropped.
+    assert store.search_questions("a hectare").splitlines()[0].startswith("per_plot")
+
+
+def test_search_tags_flagged_columns(store):
+    assert "[may_contain_pii]" in store.search_line("owner") or "[contains_pii]" in (
+        store.search_line("owner")
+    )
+    assert "[" not in store.search_line("plots")
+
+
+def test_neighborhood_collapses_a_group_gate(store):
+    out = store.get_variable_neighborhood("plots")
+    assert "plots gates group plot (2 questions)" in out
+    assert "(group_gated_by)" not in out

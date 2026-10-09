@@ -14,12 +14,14 @@ import json
 import re
 from collections import Counter
 
+import duckdb
 import pyarrow as pa
 import pyarrow.compute as pc
 
 from surveycto_python_dict.cast import DROPPED
 from surveycto_python_dict.survey import choice_labels
 from surveycto_python_dict.xml_contract import FormContract
+from surveycto_python_dict.xpath import UnsupportedExpression, compile_expression
 
 _REF_RE = re.compile(r"\$\{([^}]+)\}")
 _SURVEY_KEYS = (
@@ -88,6 +90,73 @@ def _sentinel_counts(
     }
 
 
+# A select compared with a code: selected(${x}, 'c'), ${x} = 'c', ${x} != 5.
+_COMPARED = (
+    re.compile(r"selected\(\s*\$\{([^}]+)\}\s*,\s*'([^']+)'\s*\)"),
+    re.compile(r"\$\{([^}]+)\}\s*!?=\s*'([^']+)'"),
+    re.compile(r"\$\{([^}]+)\}\s*!?=\s*(-?[0-9]+)(?![\w.])"),
+)
+
+
+def absent_codes(questions: list[dict], contract: FormContract) -> list[dict]:
+    """Return each condition that compares a select with a code its list lacks: a
+    follow-up gated on it is never asked. A list read per submission or kept
+    unread has no known codes and is not checked.
+    """
+    selects = {}
+    for q in questions:
+        if q["type"] not in ("select_one", "select_multiple"):
+            continue
+        node = contract.nodes["/".join([*q["group_path"], q["variable_name"]])]
+        if node.data_source and node.choice_universe is None:
+            continue
+        selects[q["variable_name"]] = {str(c["value"]) for c in node.all_choices}
+    found = []
+    for q in questions:
+        for where in ("relevance", "constraint", "calculation"):
+            for pattern in _COMPARED:
+                for name, code in pattern.findall(q[where] or ""):
+                    if name in selects and code not in selects[name]:
+                        found.append(
+                            {
+                                "question": q["variable_name"],
+                                "in": where,
+                                "select": name,
+                                "code": code,
+                            }
+                        )
+    return found
+
+
+class _Own:
+    """The context of a constraint that reads only ``.``, the answer itself."""
+
+    def __init__(self, value):
+        self.value = value
+
+    def ref(self, name: str):
+        if name != ".":
+            raise UnsupportedExpression(f"${{{name}}}")
+        return self.value
+
+    def index(self) -> int:
+        raise UnsupportedExpression("index()")
+
+
+def allowed_codes(constraint: str | None, sentinels: dict) -> list[int] | None:
+    """Return the numeric sentinel codes a question's constraint accepts (every code
+    without a constraint), or None when the constraint reads more than the answer.
+    """
+    codes = sorted(c for c in sentinels if isinstance(c, int))
+    if not constraint:
+        return codes
+    try:
+        fn = compile_expression(constraint)
+        return [c for c in codes if bool(fn(_Own(c)))]
+    except UnsupportedExpression:
+        return None
+
+
 def _kind(node) -> str:
     """Return what a column with no question is: a note, a group, a preload, or not
     in the current form (written under another version, say).
@@ -103,14 +172,36 @@ def _kind(node) -> str:
     raise ValueError(f"{node.path}: a field with a column but no question")
 
 
+def kept(table: pa.Table, exclude: str | None) -> pa.Table:
+    """Return the rows of ``table`` that the SQL predicate ``exclude`` does not hold
+    for (the config's ``[submissions] exclude``); every row without one.
+    """
+    if exclude is None:
+        return table
+    con = duckdb.connect()
+    con.register("submissions", table)
+    try:
+        keys = con.execute(
+            f"SELECT KEY FROM submissions WHERE ({exclude}) IS NOT TRUE"
+        ).to_arrow_table()
+    except duckdb.Error as e:
+        raise ValueError(f"[submissions] exclude = {exclude!r}: {e}") from e
+    return table.filter(pc.is_in(table.column("KEY"), keys.column("KEY")))
+
+
 def build_dictionary(
     table: pa.Table,
     questions: list[dict],
     contract: FormContract,
     sentinels: dict[int, str],
+    exclude: str | None = None,
 ) -> dict:
-    """Return the variable dictionary for a cast table."""
+    """Return the variable dictionary for a cast table; counts leave out the rows
+    ``exclude`` holds for.
+    """
     by_name = {q["variable_name"]: q for q in questions}
+    n_all = table.num_rows
+    table = kept(table, exclude)
     n_rows = table.num_rows
     variables = {}
     for order, field in enumerate(table.schema):
@@ -193,6 +284,10 @@ def build_dictionary(
         found = _sentinel_counts(column, sentinels, labels)
         if found:
             entry["sentinels"] = found
+        if question and question["type"] in ("integer", "decimal"):
+            entry["sentinels_allowed"] = allowed_codes(
+                question["constraint"], sentinels
+            )
         variables[field.name] = entry
 
     return {
@@ -201,6 +296,9 @@ def build_dictionary(
             "form_version": contract.formdef_version,
             "n_observations": n_rows,
             "n_variables": table.num_columns,
+            # [submissions] exclude: rows the project does not use, left out of counts.
+            "exclude": exclude,
+            "n_excluded": n_all - n_rows,
         },
         "summary": {
             "n_questions": len(questions),
@@ -217,6 +315,7 @@ def build_dictionary(
                     v["column_kind"] for v in variables.values() if "column_kind" in v
                 )
             ),
+            "conditions_on_absent_codes": absent_codes(questions, contract),
             "n_empty_notes_and_groups_dropped": int(
                 table.schema.metadata[DROPPED.encode()]
             ),

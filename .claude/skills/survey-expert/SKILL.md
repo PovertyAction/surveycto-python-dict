@@ -17,7 +17,7 @@ writes: one folder per form, `<out_dir>/<form>/`, and the project's `<out_dir>/f
 | `<form>_variable_graph.json` | Questions linked by calculation, relevance, constraint and repeat |
 | `<form>.parquet` | The submissions. **Do not read it** unless the columns you need are cleared (below) |
 | `<form>_pii_review.xlsx` | Every value of a flagged column, for the people cleaning the data. **Never read it** |
-| `<out_dir>/<project>.duckdb` | `just duckdb`: one database for the project. A schema per form (`<form>.submissions` with the columns outside repeats, `<form>.<repeat>` long with `KEY` and one `<repeat>_index` per enclosing repeat, and the descriptions as tables; `<form>.dictionary.table` names each column's view), `dataset.<id>` for each dataset once, and `main.forms`, `datasets`, `publishes`, `reads`, `joins` for the chain. **Read values only through the `*_safe` views.** `<form>.dataset_links` gives each `pulldata()`/`search()` match; `main.joins` connects a reader's field to the publisher's field across forms. `get_structure_db` summarises it; `get_structure_db(<form>)` maps one schema |
+| `<out_dir>/<project>.duckdb` | `just duckdb`: one database for the project. A schema per form (`<form>.submissions` with the columns outside repeats, `<form>.<repeat>` long with `KEY` and one `<repeat>_index` per enclosing repeat, and the descriptions as tables; `<form>.dictionary.table` names each column's view), `dataset.<id>` for each dataset once, and `main.forms`, `datasets`, `publishes`, `reads`, `joins` for the chain. **Read values only through the `*_safe` views.** A column on `[pii] mask` appears there as `pii_<hash>`: use it to group, count and join, never to recover the value. `<form>.dataset_links` gives each `pulldata()`/`search()` match; `main.joins` connects a reader's field to the publisher's field across forms. `get_structure_db` summarises it; `get_structure_db(<form>)` maps one schema |
 | `<out_dir>/flow.json`, `flow.md` | The project: which form publishes each dataset, which forms read it (fields and columns), each published column's origin, each form's stage; `flow.md` draws it |
 | `<form>_summary_stats.csv` | `just stats`: per column, eligible rows under skip logic, sentinels apart, then stats; flagged PII columns get counts only |
 
@@ -70,10 +70,10 @@ uv run scto-survey --config config.toml --form <form> <command>
 | A group's questions in order | `get_group(form, group)` | `group <group>` |
 | Repeat groups, then one repeat's members and what sets its instances (the fields its count reads, the calculates that read `index()`) | `get_repeat_structure(form)` / `get_repeat_structure(form, repeat)` | `repeats [<repeat>]` |
 | Form overview | `get_survey_info(form)` | `info` |
-| The datasets a form reads and their joins | `get_datasets(form)` | `datasets` |
+| The datasets a form reads and their joins (long lists summarised; one dataset in full, every column on request) | `get_datasets(form)` / `get_datasets(form, dataset, columns=True)` | `datasets [<dataset>] [--columns]` |
 | What the project is about: description, entities, candidate keys | `get_project()` | `project` |
 | How the forms chain: stages, publishers, readers | `get_flow()` | `flow` |
-| Where a dataset's columns come from and who reads them | `get_flow(dataset)` | `flow <dataset>` |
+| Where a dataset's columns come from and who reads them (a wide one by field; every column on request) | `get_flow(dataset)` / `get_flow(dataset, columns=True)` | `flow <dataset> [--columns]` |
 | Where a field's value comes from, hop by hop across forms, back to the question someone answered | `trace_lineage(form, name)` | `lineage <name>` (with `--config` and `--form`) |
 | The project database: a summary, one schema, one table's columns | `get_structure_db()` / `get_structure_db(schema)` / `get_structure_db(schema, table)` | `db` / `db <schema>` / `db <schema> <table>` |
 

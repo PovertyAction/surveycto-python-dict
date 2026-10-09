@@ -22,6 +22,20 @@ just mcp                             # survey-expert MCP server over stdio, one 
 Each recipe takes another config as an argument (`just build path/to/config.toml`);
 `just` lists them all.
 
+### Use from another project
+
+```sh
+uv add git+https://github.com/PovertyAction/surveycto-python-dict
+uv run scto-skill          # the survey-expert skill -> .claude/skills/survey-expert
+```
+
+Copy `config.example.toml`, `.env.example` and `.mcp.json.example` from this repository
+into the project and fill them in as below. The commands are the recipes' own:
+`scto-pull`, `scto-build`, `scto-outputs`, `scto-flow`, `scto-mcp` and `scto-survey`,
+each with `--config config.toml` (the `justfile` recipes from `pull` to `mcp` can be
+copied as they are). Rerun `scto-skill` after updating the package, so the skill's
+`search_survey.py` matches it.
+
 The repo follows IPA's `ipa-python-template`: `just lint` runs the pre-commit hooks
 (ruff, codespell, markdownlint) that CI runs on every pull request to `main`.
 
@@ -33,6 +47,11 @@ codes as a choice keeps its own label for it. Dates the team types into a date q
 to code the same answers go in the optional `SCTO_DATE_SENTINELS`
 (`"1900-01-01=Don't know"`): date columns count them apart, as numbers count the
 codes. Never commit `.env`, the `.pem` key, `config.toml` or `data/`.
+
+Submissions the project does not use (tests, say) can be left out of the counts:
+`[submissions] exclude` takes an SQL condition on the parquet's columns
+(`"username = 'test'"`). The dictionary's counts and the stats then cover the other
+rows, `get_survey_info` says how many were left out, and the parquet keeps every row.
 
 A project is one connected study: one or more forms on one server that chain through
 the server datasets they publish and read (any number of datasets, none included). It
@@ -79,6 +98,14 @@ metadata is `contains_pii` under any setting and any name: device columns
 `enumerator-id()`, `enumerator-name()` or `username()`. The `[pii]` settings also change the parquet's columns: a `search()` list
 Presidio withholds is not written out, so its select_multiple has binaries only for the
 codes picked. Rebuild after changing them, and write cleaning code against that build.
+
+The `*_safe` views leave flagged columns out. A flagged column needed as an
+identifier (a coder's name that tells a resubmission from double coding, say) goes
+in `[pii] mask`: the `_safe` views then keep it under its own name as `pii_` and 12
+hex digits of a SHA-256 salted with `SCTO_MASK_SALT`, nulls kept. The same text
+gives the same mask in every form and dataset, so it still groups, counts and joins.
+Anyone with the salt can match a mask to a guessed value, so keep it out of the
+outputs and of chats.
 
 A `search()` select's choices come from its dataset, never from the XML. A list of up to
 50 choices is written into the outputs; a longer one stays in its dataset
