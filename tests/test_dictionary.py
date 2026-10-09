@@ -34,6 +34,8 @@ def test_top_level_shape(built):
         "form_version": "3",
         "n_observations": 2,
         "n_variables": table.num_columns,
+        "exclude": None,
+        "n_excluded": 0,
     }
     assert list(vardict["variables"]) == table.schema.names
 

@@ -256,3 +256,37 @@ def test_a_ragged_column_is_not_evaluated_and_not_mistaken_for_its_instance(
     assert ragged["missing_when_eligible"] == ""
     # Row 2 still has no plot instance: the ragged value is not plot_size_1's.
     assert stats["plot_size_1"]["eligible"] == 1
+
+
+def test_excluded_submissions_are_left_out_of_counts_and_stats(tmp_path, analyzer):
+    config = tmp_path / "config.toml"
+    config.write_text(
+        'forms = ["farm"]\nout_dir = "out"\n[submissions]\n'
+        "exclude = \"KEY = 'uuid:bbb'\"\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(config)
+    write_pull(cfg)
+    build(cfg, SENTINELS, analyzer)
+    dictionary = cfg.form_dir("farm") / "farm_variable_dictionary.json"
+    data = json.loads(dictionary.read_text(encoding="utf-8"))
+    assert (data["dataset"]["n_observations"], data["dataset"]["n_excluded"]) == (1, 1)
+    stats = _by_name(cfg)
+    assert stats["plots"]["rows"] == 1
+    assert stats["plots"]["sentinel"] == 0  # the -99 was on the excluded row
+    # The parquet keeps every submission.
+    import pyarrow.parquet as pq
+
+    assert pq.read_table(cfg.form_dir("farm") / "farm.parquet").num_rows == 2
+
+
+def test_an_exclude_that_does_not_parse_raises(tmp_path, analyzer):
+    config = tmp_path / "config.toml"
+    config.write_text(
+        'forms = ["farm"]\nout_dir = "out"\n[submissions]\nexclude = "KEY = ="\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(config)
+    write_pull(cfg)
+    with pytest.raises(ValueError, match=r"\[submissions\] exclude"):
+        build(cfg, SENTINELS, analyzer)

@@ -48,6 +48,11 @@ to code the same answers go in the optional `SCTO_DATE_SENTINELS`
 (`"1900-01-01=Don't know"`): date columns count them apart, as numbers count the
 codes. Never commit `.env`, the `.pem` key, `config.toml` or `data/`.
 
+Submissions the project does not use (tests, say) can be left out of the counts:
+`[submissions] exclude` takes an SQL condition on the parquet's columns
+(`"username = 'test'"`). The dictionary's counts and the stats then cover the other
+rows, `get_survey_info` says how many were left out, and the parquet keeps every row.
+
 A project is one connected study: one or more forms on one server that chain through
 the server datasets they publish and read (any number of datasets, none included). It
 gets one `out_dir`, one `flow.json` and one database. Surveys that are not connected

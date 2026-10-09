@@ -1226,6 +1226,15 @@ class SurveyStore:
                 f"{d['name']} (version {d['form_version']}): submissions: {d['n_observations']}, "
                 f"columns: {d['n_variables']}, questions: {s['n_questions']}",
                 f"pii: {s['pii']}",
+                *(
+                    [
+                        f"left out of every count and stat: {d['n_excluded']} "
+                        f"submissions where {d['exclude']} ([submissions] exclude); "
+                        "the parquet keeps them"
+                    ]
+                    if d["exclude"]
+                    else []
+                ),
                 f"columns kept as text: {s['n_cast_fallback']}; all missing: {s['n_all_missing']}; "
                 f"from another form version (ragged): {s['n_ragged']}",
                 f"columns without a question: {_kinds_text(s)}",

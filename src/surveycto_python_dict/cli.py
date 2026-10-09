@@ -61,6 +61,7 @@ _TOP_KEYS = {
     "datasets",
     "project",
     "entities",
+    "submissions",
 }
 
 
@@ -78,6 +79,9 @@ class Config:
     # [datasets.<name>] published_by: the form that publishes it, where the columns
     # don't tell.
     dataset_publishers: dict[str, str]
+    # [submissions] exclude: an SQL condition on the parquet's columns for rows the
+    # project does not use (tests, say), left out of the counts and stats.
+    exclude: str | None
     # [project] description: what the project is about, in the user's words.
     description: str | None
     # [entities.<name>]: key (the columns that identify it, together), description,
@@ -130,6 +134,8 @@ def load_config(path: Path) -> Config:
         _check_keys(f"[datasets.{name}]", set(section), {"key", "published_by"})
     project = data.get("project", {})
     _check_keys("[project]", set(project), {"description"})
+    submissions = data.get("submissions", {})
+    _check_keys("[submissions]", set(submissions), {"exclude"})
     entities = data.get("entities", {})
     for name, section in entities.items():
         _check_keys(
@@ -153,6 +159,7 @@ def load_config(path: Path) -> Config:
             for name, section in datasets.items()
             if "published_by" in section
         },
+        exclude=submissions.get("exclude"),
         description=project.get("description"),
         entities=entities,
     )
@@ -296,7 +303,7 @@ def build_form(
     screen_search_choices(contract, datasets, cfg.pii, analyzer, rows)
     questions = build_questions(contract)
     table = cast_wide(rows, contract)
-    vardict = build_dictionary(table, questions, contract, sentinels)
+    vardict = build_dictionary(table, questions, contract, sentinels, cfg.exclude)
     blocks = classify(table, vardict, questions, cfg.pii, analyzer)
     attach(vardict, blocks)
 

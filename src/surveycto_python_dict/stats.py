@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
+from surveycto_python_dict.dictionary import kept
 from surveycto_python_dict.pii import FLAGGED
 from surveycto_python_dict.survey import choice_labels, gates, rule
 from surveycto_python_dict.xpath import (
@@ -290,7 +291,6 @@ def summary_stats(
 ) -> list[dict]:
     """Return one stats row per parquet column, in column order."""
     form_dir = Path(form_dir)
-    table = pq.read_table(form_dir / f"{form_id}.parquet")
     questions = {
         q["variable_name"]: q
         for q in json.loads(
@@ -301,6 +301,10 @@ def summary_stats(
         (form_dir / f"{form_id}_variable_dictionary.json").read_text(encoding="utf-8")
     )
     variables = dictionary["variables"]
+    # The rows the build counted: [submissions] exclude leaves some out.
+    table = kept(
+        pq.read_table(form_dir / f"{form_id}.parquet"), dictionary["dataset"]["exclude"]
+    )
     data = _Data(table, questions, variables)
     n_rows = table.num_rows
     # Numeric codes as numbers and as text; date codes as ISO text, as dates are read.

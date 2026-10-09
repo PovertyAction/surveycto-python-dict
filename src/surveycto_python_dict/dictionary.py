@@ -14,6 +14,7 @@ import json
 import re
 from collections import Counter
 
+import duckdb
 import pyarrow as pa
 import pyarrow.compute as pc
 
@@ -171,14 +172,36 @@ def _kind(node) -> str:
     raise ValueError(f"{node.path}: a field with a column but no question")
 
 
+def kept(table: pa.Table, exclude: str | None) -> pa.Table:
+    """Return the rows of ``table`` that the SQL predicate ``exclude`` does not hold
+    for (the config's ``[submissions] exclude``); every row without one.
+    """
+    if exclude is None:
+        return table
+    con = duckdb.connect()
+    con.register("submissions", table)
+    try:
+        keys = con.execute(
+            f"SELECT KEY FROM submissions WHERE ({exclude}) IS NOT TRUE"
+        ).to_arrow_table()
+    except duckdb.Error as e:
+        raise ValueError(f"[submissions] exclude = {exclude!r}: {e}") from e
+    return table.filter(pc.is_in(table.column("KEY"), keys.column("KEY")))
+
+
 def build_dictionary(
     table: pa.Table,
     questions: list[dict],
     contract: FormContract,
     sentinels: dict[int, str],
+    exclude: str | None = None,
 ) -> dict:
-    """Return the variable dictionary for a cast table."""
+    """Return the variable dictionary for a cast table; counts leave out the rows
+    ``exclude`` holds for.
+    """
     by_name = {q["variable_name"]: q for q in questions}
+    n_all = table.num_rows
+    table = kept(table, exclude)
     n_rows = table.num_rows
     variables = {}
     for order, field in enumerate(table.schema):
@@ -273,6 +296,9 @@ def build_dictionary(
             "form_version": contract.formdef_version,
             "n_observations": n_rows,
             "n_variables": table.num_columns,
+            # [submissions] exclude: rows the project does not use, left out of counts.
+            "exclude": exclude,
+            "n_excluded": n_all - n_rows,
         },
         "summary": {
             "n_questions": len(questions),

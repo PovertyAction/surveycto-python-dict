@@ -26,6 +26,12 @@ blacklist = []
 # key = ["hhid", "round"]
 # published_by = "my_form"
 
+# Submissions the project does not use (tests, say), as an SQL condition on the
+# parquet's columns: left out of the dictionary's counts and the stats; the parquet
+# keeps them.
+# [submissions]
+# exclude = "username = 'test'"
+
 # What the project is about, in your words, and the entities its rows are about.
 # The survey-expert skill helps fill these from a pre-analysis plan or paper.
 # [project]
