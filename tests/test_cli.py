@@ -241,7 +241,9 @@ def test_load_config_project_and_entities(tmp_path):
         )
     )
     assert cfg.description == "A farm census."
-    assert cfg.entities == {"household": {"key": "hhid", "description": "A household"}}
+    assert cfg.entities == {
+        "household": {"key": ["hhid"], "description": "A household"}
+    }
 
 
 def test_load_config_entity_typo_raises(tmp_path):

@@ -254,14 +254,16 @@ def render_project(flow: dict) -> str:
         lines.append("Entities (named by the user):")
         for e in project["entities"]:
             parent = f"; part of {e['parent']}" if e["parent"] else ""
-            lines.append(f"  {e['name']} ({e['key']}): {e['description']}{parent}")
+            key = ", ".join(e["key"])
+            lines.append(f"  {e['name']} ({key}): {e['description']}{parent}")
             lines.append(f"    {_places(e)}")
     else:
         lines.append(
             "Entities: none named yet. Each goes in the config as [entities.<name>] "
-            "with its key, a description and an optional parent."
+            "with its key (one column, or a list of the columns that identify it "
+            "together), a description and an optional parent."
         )
-    named = {e["key"] for e in project["entities"]}
+    named = {c for e in project["entities"] for c in e["key"]}
     candidates = [k for k in flow["keys"] if k["column"] not in named]
     if candidates:
         lines += ["", "Candidate keys (from the outputs, most widely carried first):"]
@@ -289,10 +291,22 @@ def upstream_lines(flow: dict, form: str, name: str) -> list[str]:
             if not d["published_by"]:
                 what = "an attached file" if d["kind"] == "form_file" else "external"
                 lines.append(
-                    f"Comes from: {d['id']} ({what}: no project form fills it)"
+                    f"Comes from: {d['id']} ({what}: no project form fills it"
+                    f"{_closest(d)})"
                 )
                 continue
+            if f["computed"]:
+                lines.append(
+                    f"Comes from: {d['id']}, the column named by {f['computed']}"
+                )
             for column in f["columns"]:
+                if column in f["missing"]:
+                    lines.append(f"Comes from: {d['id']}.{column} (no such column)")
+                if column in d["legacy_columns"]:
+                    lines.append(
+                        f"Comes from: {d['id']}.{column} (no field of "
+                        f"{d['published_by']}'s current version)"
+                    )
                 if column not in d["publish_map"]:
                     continue
                 origin = d["origins"][column]
@@ -306,6 +320,22 @@ def upstream_lines(flow: dict, form: str, name: str) -> list[str]:
 
 def _leaf(path: str) -> str:
     return path.rsplit("/", 1)[-1]
+
+
+def _closest(d: dict) -> str:
+    """Return the form covering most of an external dataset's columns, if any."""
+    c = d["closest"]
+    if not c:
+        return ""
+    return (
+        f"; {c['columns']} of its {len(d['columns'])} columns are fields of "
+        f"{c['form']}: set [datasets.{d['id']}] published_by if it publishes it"
+    )
+
+
+def _legacy(d: dict) -> str:
+    n = len(d["legacy_columns"])
+    return f"; {n} columns no field of its current version" if n else ""
 
 
 _ORIGINS = ("entered", "calculated", "carried", "metadata")
@@ -395,6 +425,7 @@ def render_flow(flow: dict, dataset: str | None = None) -> str:
         lines = [
             f"{d['id']} ({d['title']}): {d['rows']} rows, key {d['key'] or '-'}, "
             f"published by {d['published_by'] or 'no project form (external)'}"
+            f"{_legacy(d) if d['published_by'] else _closest(d)}"
         ]
         readers: dict[str, list[str]] = {}
         for r in flow["reads"]:
@@ -412,9 +443,16 @@ def render_flow(flow: dict, dataset: str | None = None) -> str:
                 origin = d["origins"][column]
                 line += f"  <- {d['published_by']}.{source} ({origin['kind']}"
                 line += f" from {', '.join(origin['from'])})" if origin["from"] else ")"
+            elif column in d["legacy_columns"]:
+                line += f"  (no field of {d['published_by']}'s current version)"
             if column in readers:
                 line += f"  -> {', '.join(readers[column])}"
             lines.append(line)
+        lines += [
+            f"  {column}  no such column; read by {', '.join(fields)}"
+            for column, fields in readers.items()
+            if column not in d["columns"]
+        ]
         return "\n".join(lines)
 
     lines = []
@@ -432,9 +470,10 @@ def render_flow(flow: dict, dataset: str | None = None) -> str:
     lines += ["", "Datasets:"]
     for d in flow["datasets"]:
         source = (
-            f"published by {d['published_by']} ({_origin_text(d)})"
+            f"published by {d['published_by']} ({_origin_text(d)}){_legacy(d)}"
             if d["published_by"]
             else ("attached file" if d["kind"] == "form_file" else "external")
+            + _closest(d)
         )
         readers = ", ".join(d["read_by"]) or "no project form"
         lines.append(
@@ -478,6 +517,18 @@ class SurveyStore:
         self.flow = json.loads(
             (self.form_dir.parent / "flow.json").read_text(encoding="utf-8")
         )
+
+    def read(self, dataset: str, path: str) -> tuple[dict, dict]:
+        """Return the ``flow.json`` dataset this form names ``dataset`` and the read of
+        it by field ``path``.
+        """
+        datasets = {d["id"]: d for d in self.flow["datasets"]}
+        for r in self.flow["reads"]:
+            if r["form"] == self.form_id and r["name_in_form"] == dataset:
+                for f in r["fields"]:
+                    if f["field"] == path:
+                        return datasets[r["dataset"]], f
+        raise KeyError(f"{self.form_id}: {path} does not read {dataset}")
 
     # -- lookups -------------------------------------------------------------------
 
@@ -763,7 +814,35 @@ class SurveyStore:
                     f", ... {more} more; get_repeat_structure('{name}')" if more else ""
                 ),
             ]
+            if repeat is not None:
+                lines += self._instance_lines(g)
         return "\n".join(lines)
+
+    def _instance_lines(self, g: dict) -> list[str]:
+        """Return what sets a repeat's instances: the fields its count reads and the
+        member calculates that read ``index()``, as the form writes them.
+        """
+        lines = []
+        for ref in dict.fromkeys(_REF_RE.findall(g["count"] or "")):
+            q = self.questions.get(ref)
+            if q is None:
+                continue
+            what = (
+                f"= {_short(q['calculation'], 160)}"
+                if q["calculation"]
+                else f"({q['type']}) {_short(q['question_text'])}"
+            )
+            lines.append(f"  count reads {ref} {what}")
+        indexed = [
+            (m, self.questions[m]["calculation"])
+            for m in g["members"]
+            if m in self.questions
+            and "index()" in (self.questions[m]["calculation"] or "")
+        ]
+        if indexed:
+            lines.append("  set per instance (calculates that read index()):")
+            lines += [f"    {m} = {_short(c, 160)}" for m, c in indexed]
+        return lines
 
     def _table_of(self, value: str | None) -> str:
         """Return the table a ``${field}`` lives in: submissions or its repeat view."""
@@ -779,11 +858,12 @@ class SurveyStore:
             by_dataset.setdefault(column["dataset"], []).append(column)
         if not by_dataset:
             return "The form reads no datasets."
-        id_of = {
-            r["name_in_form"]: r["dataset"]
-            for r in self.flow["reads"]
-            if r["form"] == self.form_id
-        }
+        id_of, read_of = {}, {}
+        for r in self.flow["reads"]:
+            if r["form"] == self.form_id:
+                id_of[r["name_in_form"]] = r["dataset"]
+                for f in r["fields"]:
+                    read_of[r["name_in_form"], f["field"]] = f
         project = self.project
         blocks = []
         for dataset, columns in by_dataset.items():
@@ -801,17 +881,32 @@ class SurveyStore:
                 source = q["data_source"]
                 if not source or source["dataset"] != dataset:
                     continue
-                for m in source["match"] or [{"column": None, "value": None}]:
+                read = read_of[
+                    dataset, "/".join([*q["group_path"], q["variable_name"]])
+                ]
+                if source["kind"] == "search":
+                    what = f"{q['variable_name']} takes its choices from these rows"
+                elif read["computed"]:
                     what = (
-                        f"{q['variable_name']} reads {source['column']}"
-                        if source["kind"] == "pulldata"
-                        else f"{q['variable_name']} takes its choices from these rows"
+                        f"{q['variable_name']} reads the column named by "
+                        f"{source['column']}"
                     )
+                else:
+                    what = f"{q['variable_name']} reads {source['column']}"
+                    if source["column"] in read["missing"]:
+                        what += f" (no such column in {dataset})"
+                for m in source["match"] or [{"column": None, "value": None}]:
                     joins.setdefault((m["column"], m["value"]), []).append(what)
             by_name = {c["column"]: c for c in columns}
             for (column, value), uses in joins.items():
                 if column is None:
                     lines.append(f"    (no filter): {'; '.join(uses)}")
+                    continue
+                if column not in by_name:
+                    lines.append(
+                        f"    {dataset}.{column} = {value}: no such column in {dataset}"
+                    )
+                    lines += [f"      {use}" for use in uses]
                     continue
                 key = by_name[column]
                 unique = (
@@ -899,6 +994,118 @@ def search_forms(stores: dict, query: str, max_results: int = 20) -> str:
     )
 
 
+def _path(q: dict) -> str:
+    return "/".join([*q["group_path"], q["variable_name"]])
+
+
+def trace_lineage(stores: dict, form: str, name: str) -> str:
+    """Trace where ``form``'s field ``name`` gets its value, back to the questions
+    someone answered.
+
+    One line per hop, indented by depth: a calculate to the fields it reads; a
+    ``pulldata()`` to the dataset column and the field another form publishes it
+    from; a ``search()`` select to the dataset columns its choices come from. A hop
+    that goes no further says why (an external dataset, a column the dataset lacks).
+    """
+    lines: list[str] = []
+    seen: set[tuple[str, str]] = set()
+
+    def column(d: dict, col: str, depth: int) -> None:
+        pad = "  " * depth
+        if not d["published_by"]:
+            what = "an attached file" if d["kind"] == "form_file" else "external"
+            lines.append(f"{pad}{d['id']}.{col}: {what}, no project form fills it")
+        elif col in d["publish_map"]:
+            field = _leaf(d["publish_map"][col])
+            lines.append(f"{pad}{d['id']}.{col}: published by {d['published_by']}")
+            walk(d["published_by"], field, depth + 1)
+        elif col in d["legacy_columns"]:
+            lines.append(
+                f"{pad}{d['id']}.{col}: no field of {d['published_by']}'s current "
+                "version"
+            )
+        else:
+            lines.append(f"{pad}{d['id']}.{col}: no such column")
+
+    def walk(form: str, name: str, depth: int) -> None:
+        pad = "  " * depth
+        if (form, name) in seen:
+            lines.append(f"{pad}{form}.{name}: traced above")
+            return
+        seen.add((form, name))
+        store = stores[form]
+        q = store.questions.get(name)
+        if q is None:
+            lines.append(f"{pad}{form}.{name}: no question of {form}")
+            return
+        source, calculation = q["data_source"], q["calculation"]
+        refs = list(dict.fromkeys(_REF_RE.findall(calculation or "")))
+        if source and source["kind"] == "pulldata":
+            match = " and ".join(
+                f"{m['column']} = {m['value']}" for m in source["match"]
+            )
+            lines.append(
+                f"{pad}{form}.{name} <- pulldata {source['dataset']}.{source['column']}"
+                f" where {match}"
+            )
+            d, read = store.read(source["dataset"], _path(q))
+            if read["computed"]:
+                lines.append(f"{pad}  {d['id']}: the column is named per row")
+            else:
+                column(d, source["column"], depth + 1)
+            keys = {r for m in source["match"] for r in _REF_RE.findall(m["value"])}
+            refs = [r for r in refs if r not in keys]
+        elif calculation:
+            lines.append(f"{pad}{form}.{name} = {_short(calculation, 160)}")
+        else:
+            lines.append(
+                f"{pad}{form}.{name} ({q['type']}): {_short(q['question_text'])}"
+                + ("" if source else _choices_text(q))
+            )
+        if source and source["kind"] == "search":
+            d, read = store.read(source["dataset"], _path(q))
+            where = " and ".join(
+                f"{m['column']} = {m['value']}" for m in source["match"]
+            )
+            line = f"{pad}  choices: rows of {d['id']}" + (
+                f" where {where}" if where else ""
+            )
+            if not d["published_by"]:
+                what = "an attached file" if d["kind"] == "form_file" else "external"
+                lines.append(f"{line} ({what}, no project form fills it)")
+            else:
+                lines.append(line)
+                for col in read["columns"]:
+                    if col not in read["match"]:
+                        column(d, col, depth + 2)
+        for ref in refs:
+            walk(form, ref, depth + 1)
+
+    walk(form, name, 0)
+    return "\n".join(lines)
+
+
+def _choices_text(q: dict) -> str:
+    if q["choices_withheld"]:
+        return f"; choices in its dataset ({', '.join(q['choices_withheld'])})"
+    if not q["choices"]:
+        return ""
+    labels = list(choice_labels(q["choices"]).items())
+    shown = ", ".join(f"{v} = {plain_label(lab)}" for v, lab in labels[:_LISTED])
+    more = f", ... {len(labels) - _LISTED} more" if len(labels) > _LISTED else ""
+    return f"; choices {shown}{more}"
+
+
+def project_stores(config: Path) -> dict[str, SurveyStore]:
+    """Open every form of the project ``config`` names."""
+    import tomllib
+
+    data = tomllib.loads(config.read_text(encoding="utf-8"))
+    return {
+        f: SurveyStore(config.parent / data["out_dir"] / f, f) for f in data["forms"]
+    }
+
+
 def _open(
     config: Path | None, directory: Path, form: str | None, project: bool = False
 ) -> SurveyStore:
@@ -974,21 +1181,23 @@ def main(argv: list[str] | None = None, store: SurveyStore | None = None) -> Non
     commands.add_parser("project", help="what the project is about: entities, keys")
     flow = commands.add_parser("flow", help="how the project's forms chain")
     flow.add_argument("dataset", nargs="?", help="one dataset's columns, end to end")
+    commands.add_parser(
+        "lineage", help="where a field's value comes from, across forms (--config)"
+    ).add_argument("name")
     args = parser.parse_args(argv)
 
+    if args.command == "lineage":
+        if args.config is None or args.form is None:
+            raise ValueError("lineage reads every form: pass --config and --form")
+        print(trace_lineage(project_stores(args.config), args.form, args.name))
+        return
     if (
         store is None
         and args.command == "search"
         and args.form is None
         and args.config is not None
     ):
-        import tomllib
-
-        data = tomllib.loads(args.config.read_text(encoding="utf-8"))
-        stores = {
-            f: SurveyStore(args.config.parent / data["out_dir"] / f, f)
-            for f in data["forms"]
-        }
+        stores = project_stores(args.config)
         print(search_forms(stores, " ".join(args.query), args.max))
         return
     if store is None:

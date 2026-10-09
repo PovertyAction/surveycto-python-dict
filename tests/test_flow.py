@@ -6,10 +6,13 @@ import pytest
 
 from surveycto_python_dict.contract import form_entry, resolve_datasets
 from surveycto_python_dict.flow import build_flow, describe_project
+from surveycto_python_dict.questions import build_questions
 from surveycto_python_dict.survey import (
+    SurveyStore,
     render_flow,
     render_mermaid,
     render_project,
+    trace_lineage,
     upstream_lines,
 )
 from surveycto_python_dict.xml_contract import parse_contract
@@ -78,10 +81,10 @@ _CSVS = {
 }
 
 
-def _flow(tmp_path, xmls, listed=()):
+def _flow(tmp_path, xmls, listed=(), csvs=None, published_by=None):
     datasets = tmp_path / "datasets"
-    datasets.mkdir()
-    for name, text in _CSVS.items():
+    datasets.mkdir(parents=True)
+    for name, text in {**_CSVS, **(csvs or {})}.items():
         (datasets / f"{name}.csv").write_text(text, encoding="utf-8")
     forms = {}
     for form, xml in xmls.items():
@@ -90,7 +93,7 @@ def _flow(tmp_path, xmls, listed=()):
         entry = form_entry(_FORM_LIST, form)
         sources = resolve_datasets(contract, entry, {d["id"] for d in _SERVER})
         forms[form] = (contract, sources)
-    return build_flow(forms, _SERVER, listed, datasets, {})
+    return build_flow(forms, _SERVER, listed, datasets, {}, published_by)
 
 
 @pytest.fixture
@@ -131,15 +134,47 @@ def test_reads_name_the_fields_and_columns(flow):
     assert visit["households"]["name_in_form"] == "Households"
     assert visit["households"]["attached"] is True
     assert visit["households"]["fields"] == [
-        {"field": "hh", "via": "search", "columns": ["hhid", "village"], "match": []},
+        {
+            "field": "hh",
+            "via": "search",
+            "columns": ["hhid", "village"],
+            "match": [],
+            "missing": [],
+            "computed": None,
+        },
         {
             "field": "where",
             "via": "pulldata",
             "columns": ["village", "hhid"],
             "match": ["hhid"],
+            "missing": [],
+            "computed": None,
         },
     ]
     assert visit["zones"]["attached"] is False
+
+
+def test_a_read_of_a_column_the_dataset_lacks_is_flagged(tmp_path):
+    visit = _VISIT.replace("'village', 'hhid'", "'villages', 'hhid'").replace(
+        "pulldata('zones', 'zone_name', 'zone_id', '1')",
+        "pulldata('zones', concat('zone_', 'name'), 'zone_id', '1')",
+    )
+    flow = _flow(tmp_path, {"listing": _LISTING, "visit": visit})
+    reads = {
+        (r["dataset"], f["field"]): f
+        for r in flow["reads"]
+        if r["form"] == "visit"
+        for f in r["fields"]
+    }
+    assert reads["households", "where"]["missing"] == ["villages"]
+    assert reads["zones", "area"]["computed"] == "concat('zone_', 'name')"
+    assert reads["zones", "area"]["columns"] == ["zone_id"]
+    assert "Comes from: households.villages (no such column)" in upstream_lines(
+        flow, "visit", "where"
+    )
+    assert "  villages  no such column; read by visit.where (pulldata)" in render_flow(
+        flow, "households"
+    )
 
 
 def test_two_forms_covering_a_dataset_raise(tmp_path):
@@ -147,8 +182,71 @@ def test_two_forms_covering_a_dataset_raise(tmp_path):
         "/listing/", "/visit/"
     )
     twin = twin.replace("<listing ", "<visit ").replace("</listing>", "</visit>")
-    with pytest.raises(ValueError, match="households"):
+    with pytest.raises(ValueError, match=r"\[datasets.households\] published_by"):
         _flow(tmp_path, {"listing": _LISTING, "visit": twin}, ("households",))
+
+
+def test_a_reader_that_reasks_the_fields_does_not_publish(tmp_path):
+    # visit reads households and has fields named like all its columns.
+    visit = _VISIT.replace(
+        "<hh/><where/><area/>",
+        "<hh/><where/><area/><hhid/><village/><plot><plot_size/></plot>",
+    )
+    flow = _flow(tmp_path, {"listing": _LISTING, "visit": visit})
+    households = next(d for d in flow["datasets"] if d["id"] == "households")
+    assert households["published_by"] == "listing"
+
+
+# households with every plot instance and one column no current field explains.
+_WIDE = (
+    "hhid,village,zone,plot_size,"
+    + ",".join(f"plot_size_{i}" for i in range(1, 8))
+    + ",{extra}\n"
+)
+
+
+def test_a_column_no_field_explains_is_legacy(tmp_path):
+    csvs = {"households": _WIDE.format(extra="retired")}
+    flow = _flow(tmp_path, {"listing": _LISTING, "visit": _VISIT}, csvs=csvs)
+    households = next(d for d in flow["datasets"] if d["id"] == "households")
+    assert households["published_by"] == "listing"
+    assert households["legacy_columns"] == ["retired"]
+    assert "retired" not in households["publish_map"]
+    assert "; 1 columns no field of its current version" in render_flow(flow)
+    assert "  retired  (no field of listing's current version)" in render_flow(
+        flow, "households"
+    )
+
+
+def test_a_dataset_mostly_unexplained_is_external_unless_named(tmp_path):
+    extra = ",".join(f"old_{i}" for i in range(4))
+    csvs = {"households": _WIDE.format(extra=extra)}
+    flow = _flow(tmp_path, {"listing": _LISTING, "visit": _VISIT}, csvs=csvs)
+    households = next(d for d in flow["datasets"] if d["id"] == "households")
+    assert households["published_by"] is None
+    assert households["closest"] == {"form": "listing", "columns": 11}
+    assert upstream_lines(flow, "visit", "where") == [
+        "Comes from: households (external: no project form fills it; 11 of its 15 "
+        "columns are fields of listing: set [datasets.households] published_by if "
+        "it publishes it)"
+    ]
+    named = _flow(
+        tmp_path / "named",
+        {"listing": _LISTING, "visit": _VISIT},
+        csvs=csvs,
+        published_by={"households": "listing"},
+    )
+    households = next(d for d in named["datasets"] if d["id"] == "households")
+    assert households["published_by"] == "listing"
+    assert households["legacy_columns"] == [f"old_{i}" for i in range(4)]
+
+
+def test_published_by_must_name_a_covering_form_and_a_read_dataset(tmp_path):
+    xmls = {"listing": _LISTING, "visit": _VISIT}
+    with pytest.raises(ValueError, match="no column is a field of visit"):
+        _flow(tmp_path, xmls, published_by={"households": "visit"})
+    with pytest.raises(ValueError, match="no server dataset nowhere"):
+        _flow(tmp_path / "b", xmls, published_by={"nowhere": "listing"})
 
 
 def test_render_flow_shows_stages_and_column_lineage(flow):
@@ -284,8 +382,12 @@ def _contracts(tmp_path):
 def test_project_entities_are_the_users_and_checked(flow, tmp_path):
     contracts = _contracts(tmp_path)
     entities = {
-        "household": {"key": "hhid", "description": "A listed household"},
-        "plot": {"key": "plot_size", "description": "A plot", "parent": "household"},
+        "household": {"key": ["hhid"], "description": "A listed household"},
+        "plot": {
+            "key": ["plot_size"],
+            "description": "A plot",
+            "parent": "household",
+        },
     }
     project = describe_project(flow, contracts, "A farm census.", entities)
     assert project["description"] == "A farm census."
@@ -308,14 +410,14 @@ def test_project_entity_on_a_missing_column_or_parent_raises(flow, tmp_path):
     contracts = _contracts(tmp_path)
     with pytest.raises(ValueError, match="no form or dataset has a column 'nope'"):
         describe_project(
-            flow, contracts, None, {"x": {"key": "nope", "description": ""}}
+            flow, contracts, None, {"x": {"key": ["nope"], "description": ""}}
         )
     with pytest.raises(ValueError, match="parent 'ghost' is not an entity"):
         describe_project(
             flow,
             contracts,
             None,
-            {"x": {"key": "hhid", "description": "", "parent": "ghost"}},
+            {"x": {"key": ["hhid"], "description": "", "parent": "ghost"}},
         )
 
 
@@ -323,3 +425,56 @@ def test_project_without_description_asks_for_one(flow):
     text = render_project({**flow, "project": {"description": None, "entities": []}})
     assert text.startswith("About: not described yet. Ask the user")
     assert "Entities: none named yet." in text
+
+
+def test_an_entity_keyed_by_two_columns_lives_where_both_are(flow, tmp_path):
+    contracts = _contracts(tmp_path)
+    entities = {"stay": {"key": ["hhid", "village"], "description": "A stay"}}
+    stay = describe_project(flow, contracts, None, entities)["entities"][0]
+    assert stay["forms"] == {"listing": ["submissions"]}
+    assert stay["datasets"] == ["households"]
+    text = render_project(
+        {**flow, "project": {"description": None, "entities": [stay]}}
+    )
+    assert "  stay (hhid, village): A stay" in text
+    with pytest.raises(ValueError, match="no form or dataset has all of hhid, zone_id"):
+        describe_project(
+            flow,
+            contracts,
+            None,
+            {"x": {"key": ["hhid", "zone_id"], "description": ""}},
+        )
+
+
+def _stores(tmp_path, flow, xmls):
+    stores = {}
+    for form, xml in xmls.items():
+        path = tmp_path / f"{form}-s.xml"
+        path.write_text(xml, encoding="utf-8")
+        store = SurveyStore.__new__(SurveyStore)
+        store.form_id, store.flow = form, flow
+        store.questions = {
+            q["variable_name"]: q for q in build_questions(parse_contract(path))
+        }
+        stores[form] = store
+    return stores
+
+
+def test_lineage_follows_reads_back_to_the_entered_question(flow, tmp_path):
+    stores = _stores(tmp_path, flow, {"listing": _LISTING, "visit": _VISIT})
+    assert trace_lineage(stores, "visit", "where").splitlines() == [
+        "visit.where <- pulldata Households.village where hhid = ${hh}",
+        "  households.village: published by listing",
+        "    listing.village (text): Village",
+    ]
+    assert trace_lineage(stores, "visit", "area").splitlines() == [
+        "visit.area <- pulldata zones.zone_name where zone_id = '1'",
+        "  zones.zone_name: external, no project form fills it",
+    ]
+    hh = trace_lineage(stores, "visit", "hh").splitlines()
+    assert hh[:4] == [
+        "visit.hh (select_one): Household",
+        "  choices: rows of households",
+        "    households.hhid: published by listing",
+        "      listing.hhid (text): Household",
+    ]

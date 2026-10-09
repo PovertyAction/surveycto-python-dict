@@ -734,3 +734,31 @@ def test_itemset_choices_with_static_and_field_filters(tmp_path):
         {"label": "North", "value": "11"},
         {"label": "South", "value": "21"},
     ]
+
+
+# A calculate on a body control (a prefilled or hidden field), not on its bind.
+_XML_BODY_CALCULATE = """<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml">
+  <h:head><model>
+    <instance><f id="f" version="1"><hh/><village/><seen/></f></instance>
+    <bind nodeset="/f/hh" type="string"/>
+    <bind nodeset="/f/village" type="string"/>
+    <bind nodeset="/f/seen" type="string"/>
+  </model></h:head>
+  <h:body>
+    <input ref="/f/hh"><label>Household</label></input>
+    <input ref="/f/village" calculate="pulldata('households', 'village', 'hhid',  /f/hh )"><label>Village</label></input>
+    <input ref="/f/seen" appearance="invisible" calculate="concat( /f/hh , ',')"/>
+  </h:body>
+</h:html>
+"""
+
+
+def test_a_body_control_calculate_is_read(tmp_path):
+    path = tmp_path / "f.xml"
+    path.write_text(_XML_BODY_CALCULATE, encoding="utf-8")
+    nodes = parse_contract(path).nodes
+    assert nodes["seen"].calculate == "concat( /f/hh , ',')"
+    assert nodes["seen"].control == "input"
+    assert nodes["village"].pulldata["dataset"] == "households"
+    assert nodes["village"].data_source["kind"] == "pulldata"

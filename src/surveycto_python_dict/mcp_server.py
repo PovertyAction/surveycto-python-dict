@@ -6,7 +6,7 @@ from pathlib import Path
 from mcp.server.mcpserver import MCPServer
 
 from surveycto_python_dict.cli import load_config
-from surveycto_python_dict.survey import SurveyStore, search_forms
+from surveycto_python_dict.survey import SurveyStore, search_forms, trace_lineage
 
 _INSTRUCTIONS = (
     "Answers questions about one SurveyCTO project: what it is about and its entities "
@@ -93,6 +93,15 @@ def make_server(stores: dict[str, SurveyStore]) -> MCPServer:
         ``repeat``, that repeat's members in full.
         """
         return store(form).get_repeat_structure(repeat)
+
+    @server.tool(name="trace_lineage")
+    def lineage(form: str, name: str) -> str:
+        """Trace where a field's value comes from, hop by hop across forms: a
+        calculate to the fields it reads, a pulldata() or search() to the field
+        another form publishes the dataset column from, back to the questions
+        someone answered.
+        """
+        return trace_lineage(stores, form, name)
 
     @server.tool()
     def get_datasets(form: str) -> str:

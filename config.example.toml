@@ -20,9 +20,11 @@ blacklist = []
 # seed = 0
 # id_patterns = { NATIONAL_ID = '\b\d{8,10}\b' }
 
-# The columns that identify a dataset's rows (checked unique), by its flow.json id.
+# The columns that identify a dataset's rows (checked unique), by its flow.json id,
+# and the form that publishes it when the build cannot tell from the columns.
 # [datasets.my_dataset]
 # key = ["hhid", "round"]
+# published_by = "my_form"
 
 # What the project is about, in your words, and the entities its rows are about.
 # The survey-expert skill helps fill these from a pre-analysis plan or paper.

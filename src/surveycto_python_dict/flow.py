@@ -2,11 +2,15 @@
 
 The XML says which datasets a form reads (``pulldata()``, ``search()``), and the form
 list which ones it attaches. Neither says which form publishes to a dataset, so that
-is read off the columns: a form publishes a dataset when every dataset column is one
-of the form's fields, by the field's own name or by its wide column (``score_2``). A
-field published from a repeat gives one dataset row per instance, under its own name.
-Two forms that both cover a dataset raise; a dataset no form covers is external
-(uploaded, or published by a form outside the project).
+is read off the columns: a form publishes a dataset when nearly every dataset column
+(``NEAR``) is one of the form's fields, by the field's own name or by its wide column
+(``score_2``). The columns no field explains are ``legacy_columns``: fields the form's
+current version no longer has, or columns added on the server. A field published from
+a repeat gives one dataset row per instance, under its own name. When several forms
+cover a dataset, its readers drop out (a form that re-asks the fields it reads); two
+left raise, and the config's ``[datasets.<id>] published_by`` settles it. A dataset no
+form covers is external (uploaded, or published by a form outside the project);
+``closest`` names the form covering most of its columns.
 
 A form's stage is 1 when it reads nothing another project form publishes, else one
 more than the latest stage it reads from; a form reading its own dataset doesn't count.
@@ -19,7 +23,7 @@ another dataset) or ``calculated`` (any other calculate).
 ``keys`` lists the columns that can identify an entity: each dataset's key and each
 column a ``pulldata()``/``search()`` matches on, with the forms (and the table in each)
 and datasets that carry it. ``project`` holds what the user says the project is about:
-a description and named entities, each on one of those columns (``describe_project``).
+a description and named entities, each on one or more columns (``describe_project``).
 """
 
 import csv
@@ -29,6 +33,11 @@ from pathlib import Path
 
 from surveycto_python_dict.contract import DatasetSource
 from surveycto_python_dict.xml_contract import FormContract
+
+_QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
+
+# The share of a dataset's columns a form's fields must cover to publish it.
+NEAR = 0.9
 
 
 def _header(path: Path) -> tuple[list[str], int]:
@@ -88,25 +97,37 @@ def _origins(contract: FormContract) -> dict[str, tuple[str, set[str]]]:
 
 
 def _reads(contract: FormContract, name: str, columns: list[str]) -> list[dict]:
-    """Return each field of ``contract`` that reads dataset ``name``, with its columns."""
+    """Return each field of ``contract`` that reads dataset ``name``, with its columns.
+
+    ``missing`` lists the columns it names that the dataset lacks; ``computed`` is a
+    ``pulldata()`` column given as an expression (``concat('score_', index())``).
+    """
     fields = []
     for node in contract.nodes.values():
         source = node.data_source
         if not source or source["dataset"] != name:
             continue
+        computed = None
         if source["kind"] == "pulldata":
             match = [source["key"]]
-            used = [source["value"].strip("'\""), source["key"]]
+            value = source["value"]
+            if _QUOTED.fullmatch(value):
+                used = [value[1:-1], source["key"]]
+            else:
+                computed, used = value, [source["key"]]
         else:
             match = list(source["filter"])
             items = [v for i in node.choice_items for v in (i["value"], i["label"])]
             used = [*source["filter"], *(c for c in items if c in columns)]
+        used = list(dict.fromkeys(used))
         fields.append(
             {
                 "field": node.path,
                 "via": source["kind"],
-                "columns": list(dict.fromkeys(used)),
+                "columns": used,
                 "match": match,
+                "missing": [c for c in used if c not in columns],
+                "computed": computed,
             }
         )
     return fields
@@ -164,15 +185,38 @@ def describe_project(
 ) -> dict:
     """Return the ``project`` section: the user's description and their entities.
 
-    Each entity names the column that identifies it; a column no form or dataset
-    carries raises, and so does a parent that is not another entity.
+    Each entity names the columns that identify it, together; a column no form or
+    dataset carries raises, and so do columns no form or dataset carries together and
+    a parent that is not another entity. ``forms`` and ``datasets`` are where the
+    columns are carried together, with each form's tables.
     """
     described = []
     for name, entity in entities.items():
-        where = _where(contracts, flow["datasets"], entity["key"])
+        wheres = []
+        for column in entity["key"]:
+            where = _where(contracts, flow["datasets"], column)
+            if not where["forms"] and not where["datasets"]:
+                raise ValueError(
+                    f"entity {name!r}: no form or dataset has a column {column!r}"
+                )
+            wheres.append(where)
+        forms = set.intersection(*(set(w["forms"]) for w in wheres))
+        where = {
+            "forms": {
+                form: sorted({t for w in wheres for t in w["forms"][form]})
+                for form in wheres[0]["forms"]
+                if form in forms
+            },
+            "datasets": [
+                d
+                for d in wheres[0]["datasets"]
+                if all(d in w["datasets"] for w in wheres)
+            ],
+        }
         if not where["forms"] and not where["datasets"]:
             raise ValueError(
-                f"entity {name!r}: no form or dataset has a column {entity['key']!r}"
+                f"entity {name!r}: no form or dataset has all of "
+                f"{', '.join(entity['key'])}"
             )
         parent = entity.get("parent")
         if parent is not None and parent not in entities:
@@ -189,19 +233,56 @@ def describe_project(
     return {"description": description, "entities": described}
 
 
+def _publisher(node: dict, share: dict[str, int], named: str | None) -> str | None:
+    """Return the form that publishes dataset ``node``, or None when none does.
+
+    ``share`` counts the dataset columns that are fields of each form; ``named`` is
+    the config's ``[datasets.<id>] published_by``. Without it, the forms covering at
+    least ``NEAR`` of the columns are candidates; when several are, the dataset's
+    readers drop out (a form that re-asks the fields it reads), unless that leaves
+    none. The candidate covering the most columns publishes; a tie raises.
+    """
+    dataset = node["id"]
+    if named is not None:
+        if named not in share:
+            raise ValueError(f"[datasets.{dataset}] published_by: no form {named!r}")
+        if not share[named]:
+            raise ValueError(
+                f"[datasets.{dataset}] published_by: no column is a field of {named}"
+            )
+        return named
+    n = len(node["columns"])
+    near = [f for f in share if share[f] >= NEAR * n]
+    if len(near) > 1:
+        near = [f for f in near if f not in node["read_by"]] or near
+    if not near:
+        return None
+    top = max(share[f] for f in near)
+    best = [f for f in near if share[f] == top]
+    if len(best) > 1:
+        raise ValueError(
+            f"dataset {dataset!r}: {top} of its {n} columns are fields of each of "
+            f"{', '.join(best)}; name the publisher in [datasets.{dataset}] published_by"
+        )
+    return best[0]
+
+
 def build_flow(
     forms: dict[str, tuple[FormContract, dict[str, DatasetSource]]],
     server: list[dict],
     listed: tuple[str, ...],
     datasets_dir: Path,
     files_dirs: dict[str, Path],
+    published_by: dict[str, str] | None = None,
 ) -> dict:
     """Return the project's forms, datasets and the edges between them.
 
     ``forms`` maps each form to its contract and resolved sources; ``server`` is the
     server's dataset list; ``listed`` are the datasets the config names. Server datasets
     are read from ``datasets_dir/<id>.csv``, attached files from ``files_dirs[form]``.
+    ``published_by`` names a dataset's publisher where the columns don't tell.
     """
+    published_by = published_by or {}
     meta = {d["id"]: d for d in server}
     datasets: dict[str, dict] = {}
     reads = []
@@ -221,6 +302,8 @@ def build_flow(
                 "publish_map": {},
                 "origins": {},
                 "origin_counts": {},
+                "legacy_columns": [],
+                "closest": None,
                 "read_by": [],
             }
         return datasets[dataset_id]
@@ -246,6 +329,8 @@ def build_flow(
                         "publish_map": {},
                         "origins": {},
                         "origin_counts": {},
+                        "legacy_columns": [],
+                        "closest": None,
                         "read_by": [],
                     },
                 )
@@ -268,25 +353,35 @@ def build_flow(
             form: {c: _field(contract, c) for c in node["columns"]}
             for form, (contract, _) in forms.items()
         }
-        publishers = [f for f, m in covering.items() if all(m.values())]
-        if len(publishers) > 1:
-            raise ValueError(
-                f"dataset {node['id']!r}: every column is a field of each of "
-                f"{', '.join(publishers)}; which one publishes it cannot be told"
-            )
-        if publishers:
-            form = publishers[0]
-            node["published_by"] = form
-            node["publish_map"] = covering[form]
-            origins = origin_of[form]
-            node["origins"] = {
-                column: {"kind": origins[path][0], "from": sorted(origins[path][1])}
-                for column, path in covering[form].items()
-            }
-            node["origin_counts"] = dict(
-                Counter(o["kind"] for o in node["origins"].values())
-            )
+        share = {f: sum(1 for p in m.values() if p) for f, m in covering.items()}
+        form = _publisher(node, share, published_by.get(node["id"]))
+        if form is None:
+            closest = max(share, key=share.get, default=None)
+            if closest is not None and share[closest]:
+                node["closest"] = {"form": closest, "columns": share[closest]}
+            continue
+        mapped = {c: p for c, p in covering[form].items() if p}
+        node["published_by"] = form
+        node["publish_map"] = mapped
+        node["legacy_columns"] = [c for c in node["columns"] if c not in mapped]
+        origins = origin_of[form]
+        node["origins"] = {
+            column: {"kind": origins[path][0], "from": sorted(origins[path][1])}
+            for column, path in mapped.items()
+        }
+        node["origin_counts"] = dict(
+            Counter(o["kind"] for o in node["origins"].values())
+        )
 
+    unknown = sorted(
+        set(published_by)
+        - {d["id"] for d in datasets.values() if d["kind"] == "server_dataset"}
+    )
+    if unknown:
+        raise ValueError(
+            f"[datasets.<id>] published_by: no server dataset {', '.join(unknown)} "
+            "is read or listed"
+        )
     publisher = {d["id"]: d["published_by"] for d in datasets.values()}
     upstream = {
         form: sorted(

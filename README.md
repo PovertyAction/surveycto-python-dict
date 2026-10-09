@@ -94,11 +94,15 @@ gets its list unscanned; a blacklisted one never has its dataset read.
   a server dataset id or an attached CSV regardless of case. Each read lists the
   fields and the dataset columns they use. A server dataset the form reads without
   attaching it on the server is kept and marked `attached: false`.
-- **Publishes.** A form publishes a dataset when every dataset column is one of its
-  fields: by the field's name, or by a repeat field's wide column (`score_2`).
-  `publish_map` gives the field behind each column. When two forms cover a dataset the
-  build stops; a dataset no form covers is external (uploaded, or published from
-  outside the project).
+- **Publishes.** A form publishes a dataset when at least 90% of the dataset's columns
+  are its fields: by the field's name, or by a repeat field's wide column (`score_2`).
+  `publish_map` gives the field behind each column; `legacy_columns` lists the rest,
+  fields the form's current version no longer has or columns added on the server.
+  When several forms cover a dataset, the forms that read it drop out; when two are
+  left, the build stops and asks for `[datasets.<id>] published_by`, which also names
+  the publisher of a dataset under 90%. A dataset no form covers is external
+  (uploaded, or published from outside the project); `closest` names the form covering
+  most of its columns.
 - **Stages.** A form is stage 1 when it reads nothing another project form publishes,
   else one more than the latest stage it reads from.
 - **Origins.** Each published column takes the origin of the field behind it:
@@ -134,6 +138,11 @@ description = "A household listed at baseline"
 key = "member_id"
 description = "A household member"
 parent = "household"
+
+[entities.visit]
+key = ["hhid", "round"]              # several columns that identify one together
+description = "One round's visit to a household"
+parent = "household"
 ```
 
 The survey-expert skill fills them with you. Give it what describes the study: a
@@ -145,8 +154,9 @@ skill asks for it rather than writing one from the questions. Share only documen
 are allowed to share with the agent: an embargoed plan or unpublished results may not
 be.
 
-`just flow` (seconds) rewrites `flow.json` and `flow.md` with them; a key no form or
-dataset carries is an error. `get_project` then opens an agent's work on the project:
+`just flow` (seconds) rewrites `flow.json` and `flow.md` with them; a key column no
+form or dataset carries is an error, and so are key columns no form or dataset carries
+together. `get_project` then opens an agent's work on the project:
 the description, the entities with where each lives, and the keys not yet named.
 
 ## Querying with DuckDB: one database per project
@@ -204,8 +214,11 @@ rebuilding lets it in.
 `just mcp` (`uv run scto-mcp --config config.toml`) serves a project's outputs over
 stdio to a local agent. The form tools take the form's id: `lookup_variable(s)`,
 `search_questions` (every form when no id is given), `get_group`, `get_choice_list`, `get_gate_chain`, `get_survey_info`,
-`get_variable_neighborhood`, `get_repeat_structure`, `get_datasets`. The project tools
-take none: `get_project` (the description, entities and candidate keys), `get_flow`
+`get_variable_neighborhood`, `get_repeat_structure` (with a repeat, what sets its
+instances), `get_datasets`, and `trace_lineage`, which follows a field's value across
+forms: a calculate to the fields it reads, a `pulldata()` or `search()` to the field
+another form publishes the dataset column from, back to the questions someone answered.
+The project tools take none: `get_project` (the description, entities and candidate keys), `get_flow`
 (the chain, or one dataset's columns end to end) and `get_structure_db` (a summary of
 `<project>.duckdb`, one schema: a form's tables with the datasets and cross-form joins it
 uses, or one table's columns). Long lists are summarised with the argument that lists
@@ -218,6 +231,6 @@ point `--config` at your config. The `survey-expert` skill
 (`.claude/skills/survey-expert/SKILL.md`) teaches an agent to read the outputs and to
 check `pii.status` first; without MCP it uses the same answers from
 `uv run scto-survey --config config.toml --form <form>
-<var|search|choices|gates|neighborhood|repeats|info|datasets|flow|db>`.
+<var|search|choices|gates|neighborhood|repeats|info|datasets|flow|db|lineage>`.
 
 Design: `surveycto-api-extractor-PROMPT.md`; API notes: `docs/`.
