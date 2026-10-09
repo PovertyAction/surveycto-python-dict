@@ -1357,9 +1357,8 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
                 lines.append(f"{line} ({what}, no project form fills it)")
             else:
                 lines.append(line)
-                for col in read["columns"]:
-                    if col not in read["match"]:
-                        column(d, col, depth + 2)
+                for col in read["choices"]:
+                    column(d, col, depth + 2)
         for ref in refs:
             walk(form, ref, depth + 1)
 
