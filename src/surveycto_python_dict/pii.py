@@ -9,8 +9,8 @@ Each column gets ``{"status", "basis"[, "presidio"]}``; the first matching rule 
 2. ``contains_pii``: device metadata columns; geo and attachment question types;
    whatever the name, a field that preloads device or user metadata (``username``,
    ``deviceid``, ...), a calculate that calls ``enumerator-id()``,
-   ``enumerator-name()`` or ``username()``, and a calculate reading one of these.
-   This rule holds under ``no_personal_data`` too.
+   ``enumerator-name()`` or ``username()``. This rule holds under
+   ``no_personal_data`` too.
 3. ``whitelisted``: system columns; integer, decimal, date, datetime and time
    questions; selects with inline choices; calculates whose every reference is
    cleared or whitelisted and that do not ``pulldata()``.
@@ -199,22 +199,19 @@ class _Rules:
                 return {"status": "whitelisted", "basis": [f"lineage:{','.join(refs)}"]}
         return None
 
-    def personal(self, name: str | None, seen: frozenset = frozenset()) -> str | None:
-        """Return why question ``name`` holds collection metadata, else None: its
-        type, a function it calls, or a field its calculation reads.
+    def personal(self, name: str | None) -> str | None:
+        """Return why question ``name`` captures collection metadata, else None: its
+        type, or a function its calculation calls. A calculate reading such a field
+        is not cleared by lineage, so it is scanned like any other text.
         """
         q = self.by_name.get(name)
-        if q is None or name in seen:
+        if q is None:
             return None
         if q["type"] in _METADATA_TYPES:
             return f"metadata:{q['type']}"
         calls = _METADATA_CALLS.search(q["calculation"] or "")
         if calls:
             return f"calls:{calls.group(1)}()"
-        if q["calculation"]:
-            for ref in q["references"] or []:
-                if self.personal(ref, seen | {name}):
-                    return f"lineage:{ref}"
         return None
 
     def _safe(self, name: str) -> bool:

@@ -76,7 +76,7 @@ column, dataset column and `search()` list that is not blacklisted or collection
 metadata is `whitelisted` with basis `project`, and Presidio never runs. Collection
 metadata is `contains_pii` under any setting and any name: device columns
 (`username`, `deviceid`, ...), a field that preloads them, a calculate that calls
-`enumerator-id()`, `enumerator-name()` or `username()`, and a calculate reading one. The `[pii]` settings also change the parquet's columns: a `search()` list
+`enumerator-id()`, `enumerator-name()` or `username()`. The `[pii]` settings also change the parquet's columns: a `search()` list
 Presidio withholds is not written out, so its select_multiple has binaries only for the
 codes picked. Rebuild after changing them, and write cleaning code against that build.
 

@@ -258,7 +258,7 @@ _METADATA_XML = XML.replace("<photo/>", "<photo/><my_user/><coder/><tagged/>").r
 )
 
 
-def test_collection_metadata_is_personal_whatever_its_name(tmp_path):
+def test_collection_metadata_is_personal_whatever_its_name(tmp_path, analyzer):
     path = tmp_path / "farm.xml"
     path.write_text(_METADATA_XML, encoding="utf-8")
     contract = parse_contract(path)
@@ -279,4 +279,8 @@ def test_collection_metadata_is_personal_whatever_its_name(tmp_path):
         "status": "contains_pii",
         "basis": ["calls:enumerator-name()"],
     }
-    assert blocks["tagged"] == {"status": "contains_pii", "basis": ["lineage:my_user"]}
+    # A calculate reading it is not cleared by lineage: without no_personal_data it
+    # is scanned.
+    assert blocks["tagged"] == {"status": "whitelisted", "basis": ["project"]}
+    rules_blocks, _ = _classify(form, analyzer)
+    assert rules_blocks["tagged"]["basis"] == ["type:calculate"]

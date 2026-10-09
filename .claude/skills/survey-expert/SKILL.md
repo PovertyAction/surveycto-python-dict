@@ -89,7 +89,7 @@ Every column carries `pii.status` with the `basis` for it:
 |---|---|---|
 | `cleared_by_form` | The form marks the field `publishable` | May be read |
 | `whitelisted` | Reviewed by the team (`reviewed`), a system column, a number/date, an inline-choice select, or a calculate whose inputs are all cleared (`lineage:...`) | May be read |
-| `contains_pii` | Blacklisted by the team (`reviewed`), collection metadata (device or user, under any name, and calculates reading it), GPS, or an attachment | Do not read |
+| `contains_pii` | Blacklisted by the team (`reviewed`), collection metadata (device or user, under any name), GPS, or an attachment | Do not read |
 | `may_contain_pii` | Presidio found names, phones, emails or places (`presidio:PERSON`, ...) in its values | Do not read |
 | `no_hits` | Free text where Presidio found nothing | Treat as unreviewed; ask before reading |
 
