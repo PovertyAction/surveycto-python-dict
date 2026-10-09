@@ -16,7 +16,7 @@ writes: one folder per form, `<out_dir>/<form>/`, and the project's `<out_dir>/f
 | `<form>_variable_dictionary.json` | One entry per parquet column: stats, types, sentinels, `pii` |
 | `<form>_variable_graph.json` | Questions linked by calculation, relevance, constraint and repeat |
 | `<form>.parquet` | The submissions. **Do not read it** unless the columns you need are cleared (below) |
-| `<form>_pii_review.xlsx` | `KEY` plus every flagged column, for the people cleaning the data. **Never read it** |
+| `<form>_pii_review.xlsx` | Every value of a flagged column, for the people cleaning the data. **Never read it** |
 | `<out_dir>/<project>.duckdb` | `just duckdb`: one database for the project. A schema per form (`<form>.submissions` with the columns outside repeats, `<form>.<repeat>` long with `KEY` and one `<repeat>_index` per enclosing repeat, and the descriptions as tables; `<form>.dictionary.table` names each column's view), `dataset.<id>` for each dataset once, and `main.forms`, `datasets`, `publishes`, `reads`, `joins` for the chain. **Read values only through the `*_safe` views.** `<form>.dataset_links` gives each `pulldata()`/`search()` match; `main.joins` connects a reader's field to the publisher's field across forms. `get_structure_db` summarises it; `get_structure_db(<form>)` maps one schema |
 | `<out_dir>/flow.json`, `flow.md` | The project: which form publishes each dataset, which forms read it (fields and columns), each published column's origin, each form's stage; `flow.md` draws it |
 | `<form>_summary_stats.csv` | `just stats`: per column, eligible rows under skip logic, sentinels apart, then stats; flagged PII columns get counts only |
@@ -89,7 +89,7 @@ Every column carries `pii.status` with the `basis` for it:
 |---|---|---|
 | `cleared_by_form` | The form marks the field `publishable` | May be read |
 | `whitelisted` | Reviewed by the team (`reviewed`), a system column, a number/date, an inline-choice select, or a calculate whose inputs are all cleared (`lineage:...`) | May be read |
-| `contains_pii` | Blacklisted by the team (`reviewed`), device metadata, GPS, or an attachment | Do not read |
+| `contains_pii` | Blacklisted by the team (`reviewed`), collection metadata (device or user, under any name), GPS, or an attachment | Do not read |
 | `may_contain_pii` | Presidio found names, phones, emails or places (`presidio:PERSON`, ...) in its values | Do not read |
 | `no_hits` | Free text where Presidio found nothing | Treat as unreviewed; ask before reading |
 

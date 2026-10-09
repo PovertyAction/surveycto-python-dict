@@ -135,11 +135,6 @@ def test_code_like_text_has_no_hits(blocks):
     }
 
 
-def test_note_column_scanned_empty(blocks):
-    assert blocks["intro"]["status"] == "no_hits"
-    assert blocks["intro"]["presidio"]["distinct_scanned"] == 0
-
-
 def test_no_value_from_the_data_in_blocks(blocks):
     dumped = json.dumps(blocks)
     for value in _FICTIONAL:
@@ -247,3 +242,45 @@ def test_blacklist_and_whitelist_still_rank_above_untrusted_publishable(form, an
     config = PiiConfig(trust_publishable=False, whitelist=("village",))
     blocks, _ = _classify(form, analyzer, config)
     assert blocks["village"] == {"status": "whitelisted", "basis": ["reviewed"]}
+
+
+# Collection metadata under names of the form's own: a preload, a calculate calling
+# enumerator-name(), and a calculate reading the preload.
+_METADATA_XML = XML.replace("<photo/>", "<photo/><my_user/><coder/><tagged/>").replace(
+    '<bind nodeset="/farm/photo" type="binary"/>',
+    '<bind nodeset="/farm/photo" type="binary"/>'
+    '<bind nodeset="/farm/my_user" type="string" jr:preload="property" '
+    'jr:preloadParams="username"/>'
+    '<bind nodeset="/farm/coder" type="string" calculate="concat(\'by \', '
+    'enumerator-name())"/>'
+    '<bind nodeset="/farm/tagged" type="string" '
+    "calculate=\"concat( /farm/my_user , '-')\"/>",
+)
+
+
+def test_collection_metadata_is_personal_whatever_its_name(tmp_path, analyzer):
+    path = tmp_path / "farm.xml"
+    path.write_text(_METADATA_XML, encoding="utf-8")
+    contract = parse_contract(path)
+    questions = build_questions(contract)
+    assert next(q for q in questions if q["variable_name"] == "my_user")["type"] == (
+        "username"
+    )
+    rows = [dict(ROWS[0], my_user="u1", coder="by A", tagged="u1-")]
+    table = cast_wide(rows, contract)
+    vardict = build_dictionary(table, questions, contract, SENTINELS)
+    form = (table, questions, vardict)
+    blocks, _ = _classify(form, None, PiiConfig(no_personal_data=True))
+    assert blocks["my_user"] == {
+        "status": "contains_pii",
+        "basis": ["metadata:username"],
+    }
+    assert blocks["coder"] == {
+        "status": "contains_pii",
+        "basis": ["calls:enumerator-name()"],
+    }
+    # A calculate reading it is not cleared by lineage: without no_personal_data it
+    # is scanned.
+    assert blocks["tagged"] == {"status": "whitelisted", "basis": ["project"]}
+    rules_blocks, _ = _classify(form, analyzer)
+    assert rules_blocks["tagged"]["basis"] == ["type:calculate"]

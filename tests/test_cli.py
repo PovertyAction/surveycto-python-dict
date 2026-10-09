@@ -220,9 +220,34 @@ def test_build_outputs_agree(built):
     assert columns[0] == tuple(REVIEW_COLUMNS)
     assert [row[0] for row in columns[1:]] == flagged
     values = list(review["Values"].iter_rows(values_only=True))
-    assert values[0] == ("KEY", *flagged)
-    assert len(values) == 1 + len(ROWS)
-    assert [row[0] for row in values[1:]] == table.column("KEY").to_pylist()
+    assert values[0] == ("KEY", "column", "value")
+    expected = [
+        (key, c)
+        for c in flagged
+        for key, v in zip(
+            table.column("KEY").to_pylist(), table.column(c).to_pylist(), strict=True
+        )
+        if v is not None
+    ]
+    assert [row[:2] for row in values[1:]] == expected
+
+
+def test_review_values_past_a_sheet_raise(monkeypatch, tmp_path):
+    import pyarrow as pa
+
+    from surveycto_python_dict import codebook
+
+    monkeypatch.setattr(codebook, "_EXCEL_ROWS", 3)
+    table = pa.table({"KEY": ["a", "b", "c"], "name": ["x", "y", "z"]})
+    pii = {"status": "contains_pii", "basis": []}
+    vardict = {
+        "variables": {
+            "KEY": {"pii": {"status": "whitelisted", "basis": []}},
+            "name": {"pii": pii, "survey": None, "non_null_count": 3},
+        }
+    }
+    with pytest.raises(ValueError, match="3 flagged values"):
+        codebook.write_pii_review(table, vardict, tmp_path / "r.xlsx")
 
 
 def test_build_dictionary_holds_no_flagged_value(built):

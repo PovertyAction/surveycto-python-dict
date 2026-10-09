@@ -87,12 +87,23 @@ def test_system_column_that_is_also_a_form_field_links_its_question(variables):
     assert duration["survey"]["calculation"] == "duration()"
 
 
-def test_entry_for_a_column_whose_field_is_not_a_question(variables):
-    """Notes are exported as (empty) columns but are not questions."""
-    intro = variables["intro"]
-    assert intro["question"] is None
-    assert intro["survey"] is None
-    assert intro["parquet"] == {"arrow_type": "string", "xml_type": "string"}
+def test_columns_with_no_question_say_what_they_are(tmp_path):
+    path = tmp_path / "farm.xml"
+    path.write_text(XML, encoding="utf-8")
+    contract = parse_contract(path)
+    # intro is a note, empty in every row: dropped. old_field is no field of the form.
+    table = cast_wide([dict(ROWS[0], old_field="x")], contract)
+    assert "intro" not in table.schema.names
+    vardict = build_dictionary(table, build_questions(contract), contract, SENTINELS)
+    old = vardict["variables"]["old_field"]
+    assert (old["question"], old["survey"], old["column_kind"]) == (
+        None,
+        None,
+        "not_in_form",
+    )
+    summary = vardict["summary"]
+    assert summary["columns_without_question"] == {"not_in_form": 1}
+    assert summary["n_empty_notes_and_groups_dropped"] == 1
 
 
 def test_strings_get_no_min_max(variables):

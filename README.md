@@ -50,10 +50,10 @@ list and every server dataset pulled (`raw/datasets/<id>.csv`): the ones in
 |---|---|
 | `<form>_questions.json` | One entry per question, keyed by its XLSForm name |
 | `sections/` | One slice of `questions.json` per group level |
-| `<form>.parquet` | Submissions, typed from the XML |
-| `<form>_variable_dictionary.json` | One entry per column: stats, types, sentinels, `pii` |
+| `<form>.parquet` | Submissions, typed from the XML; a note's or a group's column empty in every row is left out |
+| `<form>_variable_dictionary.json` | One entry per column: stats, types, sentinels, `pii`; a column with no question says what it is (`column_kind`: note, group, preload, `not_in_form`) |
 | `<form>_variable_graph.json` | Questions linked by calculation, relevance, constraint, repeat |
-| `<form>_pii_review.xlsx` | For the people cleaning the data: a Columns sheet (each flagged column's label, status, basis and Presidio hit rows) and a Values sheet (`KEY` plus every column flagged `contains_pii` / `may_contain_pii`) |
+| `<form>_pii_review.xlsx` | For the people cleaning the data: a Columns sheet (each flagged column's label, status, basis and Presidio hit rows) and a Values sheet, one row per value of a column flagged `contains_pii` / `may_contain_pii` (`KEY`, column, value) |
 | `<form>_summary_stats.csv` | `just stats`: per column, counts over the rows where it was asked (skip logic evaluated per row), sentinels apart, then mean/quartiles, frequencies or shares; flagged PII columns get counts only |
 | `<form>_codebook.xlsx` | `just codebook` (which writes `<form>_summary_stats.csv` too): for PIs. Variables (label, type, group, relevance, value labels, missing, sentinels, PII status) and Summary stats; no values of flagged PII columns |
 | `<form>_dataset_codebook.json` | One row per column of each dataset the form reads: counts, the questions that read it, and a `pii` block (Presidio, or `dataset.column` on the whitelist/blacklist) |
@@ -72,17 +72,21 @@ lists is an error. Set `trust_publishable = false` when the form marks personal 
 publishable (to publish them to a dataset, say): publishable then clears nothing, and
 those columns go through the type rules and Presidio like any other. Set
 `no_personal_data = true` for a project that holds none (study metadata, say): every
-column, dataset column and `search()` list that is not blacklisted or device metadata
-(`username`, `deviceid`, ...) is `whitelisted` with basis `project`, and Presidio
-never runs. The `[pii]` settings also change the parquet's columns: a `search()` list
+column, dataset column and `search()` list that is not blacklisted or collection
+metadata is `whitelisted` with basis `project`, and Presidio never runs. Collection
+metadata is `contains_pii` under any setting and any name: device columns
+(`username`, `deviceid`, ...), a field that preloads them, a calculate that calls
+`enumerator-id()`, `enumerator-name()` or `username()`. The `[pii]` settings also change the parquet's columns: a `search()` list
 Presidio withholds is not written out, so its select_multiple has binaries only for the
 codes picked. Rebuild after changing them, and write cleaning code against that build.
 
 A `search()` select's choices come from its dataset, never from the XML. A list of up to
-50 choices is written into the outputs; a longer one stays in its dataset, and the
-question names the dataset's value and label columns (`choices_withheld` gives the
-count). The build scans each list with Presidio and adds it whole when nothing is found;
-any hit withholds the whole list (`choices_withheld` gives the entities). A
+50 choices is written into the outputs; a longer one stays in its dataset
+(`choices_withheld` gives the count). `choice_columns` names the dataset's value and
+label columns, and a list left in its dataset keeps in `choices` only the form's own
+literal choices (an "Other", say). The build scans each list with Presidio and adds it
+whole when nothing is found; any hit withholds the whole list (`choices_withheld` gives
+the entities). A
 select_multiple whose list is not written out has binaries only for the codes picked. A whitelisted select
 gets its list unscanned; a blacklisted one never has its dataset read.
 

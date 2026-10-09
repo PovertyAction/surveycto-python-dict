@@ -29,6 +29,7 @@ COLUMNS = [
     "variable",
     "question",
     "type",
+    "required",
     "pii_status",
     "relevance",
     "eligibility_evaluated",
@@ -54,6 +55,30 @@ COLUMNS = [
     "distinct",
     "frequencies",
 ]
+RAGGED_NOTE = "layout from another form version; not evaluated"
+# Each column's type when the CSV is read back: min, median and max hold a number or
+# a date, so text.
+SQL_TYPES = {
+    **dict.fromkeys(COLUMNS, "VARCHAR"),
+    "eligibility_evaluated": "BOOLEAN",
+    "required": "BOOLEAN",
+    **dict.fromkeys(
+        (
+            "rows",
+            "eligible",
+            "skipped_by_logic",
+            "answered",
+            "sentinel",
+            "missing_when_eligible",
+            "answered_when_skipped",
+            "n_valid",
+            "selected",
+            "distinct",
+        ),
+        "BIGINT",
+    ),
+    **dict.fromkeys(("mean", "sd", "p25", "p75", "selected_share"), "DOUBLE"),
+}
 
 
 def _plain(value):
@@ -91,7 +116,9 @@ class _Data:
         self.instance_columns: dict[tuple, dict[int, list[str]]] = {}
         self.binaries: dict[tuple, list[tuple[str, str]]] = {}
         for column, entry in variables.items():
-            if entry["question"] is None:
+            # A ragged column (another form version's layout) would take the place
+            # of the real column of the same instance.
+            if entry["question"] is None or entry.get("ragged"):
                 continue
             key = (entry["question"], tuple(entry.get("repeat_iteration", [])))
             if "choice_value" in entry:
@@ -209,13 +236,22 @@ def _within(data: _Data, repeat: str, parent: tuple, n_rows: int) -> list:
 
 
 def _eligibility(
-    data: _Data, q: dict | None, column: str, iterations: tuple, n_rows: int
+    data: _Data,
+    q: dict | None,
+    column: str,
+    iterations: tuple,
+    n_rows: int,
+    ragged: bool = False,
 ):
     """Return (per-row eligibility, composed rule, evaluated, note)."""
     if q is None:
         return [True] * n_rows, "", True, ""
     conditions = gates(q)
     composed = rule(conditions)
+    if ragged:
+        # Its repeat indices do not fit the form's nesting, so the conditions
+        # cannot be read at the right level.
+        return [True] * n_rows, composed, False, RAGGED_NOTE
     if q["disabled"]:
         return [False] * n_rows, composed, True, "disabled"
     own = data.values[column]
@@ -277,8 +313,9 @@ def summary_stats(
     for column, entry in variables.items():
         q = questions.get(entry["question"]) if entry["question"] else None
         iterations = tuple(entry.get("repeat_iteration", []))
+        ragged = bool(entry.get("ragged"))
         eligible, rule, evaluated, note = _eligibility(
-            data, q, column, iterations, n_rows
+            data, q, column, iterations, n_rows, ragged
         )
         values = data.values[column]
         is_binary = "choice_value" in entry
@@ -308,6 +345,8 @@ def summary_stats(
             variable=column,
             question=entry["question"] or "",
             type=q["type"] if q else ("system" if entry.get("system") else ""),
+            # missing_when_eligible on a required question is a gap the form forbids.
+            required=q["required"] if q else "",
             pii_status=pii,
             relevance=rule,
             eligibility_evaluated=evaluated,
@@ -322,9 +361,12 @@ def summary_stats(
                 for c, n in sorted(sentinel_hits.items(), key=str)
             ),
             # A column with no question (a note, a group, a field from another form
-            # version) has no rule saying when it should hold a value.
-            missing_when_eligible=missing if q or entry.get("system") else "",
-            answered_when_skipped=outside,
+            # version) has no rule saying when it should hold a value, and a ragged
+            # one no rule that can be read.
+            missing_when_eligible=(
+                missing if (q or entry.get("system")) and not ragged else ""
+            ),
+            answered_when_skipped="" if ragged else outside,
             n_valid=len(valid),
         )
         if pii not in FLAGGED and valid:

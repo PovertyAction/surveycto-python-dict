@@ -247,3 +247,12 @@ def test_list_filtered_per_submission_gets_only_picked_binaries(tmp_path):
         "pick_21",
     ]
     assert table.column("pick_11").to_pylist() == [1, 0]
+
+
+def test_a_select_multiple_exported_raw_is_split_into_binaries(contract):
+    row = {k: v for k, v in _ROWS[0].items() if k not in ("tools_2", "plot_crop_1_1")}
+    table = cast_wide([{**row, "tools": "2", "plot_crop_1": "1 2"}], contract)
+    assert "tools" not in table.schema.names
+    assert "plot_crop_1" not in table.schema.names
+    assert (_col(table, "tools_1"), _col(table, "tools_2")) == ([0], [1])
+    assert (_col(table, "plot_crop_1_1"), _col(table, "plot_crop_2_1")) == ([1], [1])

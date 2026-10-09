@@ -11,18 +11,11 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-from surveycto_python_dict.xml_contract import FormContract, Node
+from surveycto_python_dict.xml_contract import FormContract, Node, is_system_column
 
-# XLSForm types that are not questions, and names reserved for submission metadata.
-_EXCLUDED_TYPES = {
-    "note",
-    "start",
-    "end",
-    "deviceid",
-    "username",
-    "simserial",
-    "phonenumber",
-}
+# Metadata the export writes as a system column when the field has its reserved name
+# (starttime, deviceid, ...); under any other name the field is a question.
+_METADATA_TYPES = {"start", "end", "deviceid", "username", "simserial", "phonenumber"}
 _EXCLUDED_PREFIXES = ("instanceID", "instanceName", "KEY", "SET-OF-")
 
 _INPUT_TYPES = {
@@ -132,7 +125,11 @@ def _data_source(node: Node, refs: "_Refs") -> dict | None:
 
 
 def _excluded(name: str, qtype: str) -> bool:
-    return qtype in _EXCLUDED_TYPES or name.startswith(_EXCLUDED_PREFIXES)
+    if qtype == "note":
+        return True
+    if qtype in _METADATA_TYPES:
+        return is_system_column(name)
+    return name.startswith(_EXCLUDED_PREFIXES)
 
 
 def build_questions(contract: FormContract) -> list[dict]:
@@ -208,6 +205,9 @@ def build_questions(contract: FormContract) -> list[dict]:
                     "group_path": node.group_path,
                     "publishable": count.publishable if count else False,
                     "choices_withheld": None,
+                    "choice_columns": None,
+                    "hint": None,
+                    "constraint_message": None,
                     "data_source": None,
                     "repeat_group_name": node.name,
                 }
@@ -243,6 +243,8 @@ def build_questions(contract: FormContract) -> list[dict]:
                 "variable_name": node.name,
                 "question_text": label(node)
                 or (calculation if qtype == "calculate" else ""),
+                "hint": refs(node.hint),
+                "constraint_message": refs(node.constraint_message),
                 "disabled": parent_disabled or relevance == "0",
                 "constraint": constraint,
                 "relevance": relevance,
@@ -255,6 +257,7 @@ def build_questions(contract: FormContract) -> list[dict]:
                 "group_path": node.group_path,
                 "publishable": node.publishable,
                 "choices_withheld": node.choices_withheld,
+                "choice_columns": node.choice_columns,
                 "data_source": _data_source(node, refs),
             }
         )

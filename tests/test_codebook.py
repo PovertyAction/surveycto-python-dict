@@ -34,8 +34,8 @@ def test_two_sheets(workbook):
 
 def test_variables_sheet(workbook):
     header, rows = _rows(workbook["Variables"])
-    assert header[:4] == ["variable", "question", "label", "type"]
-    assert len(rows) == 29  # every parquet column of the farm form
+    assert header[:5] == ["variable", "question", "label", "hint", "type"]
+    assert len(rows) == 28  # every parquet column of the farm form
     area = rows["area"]
     assert (area["label"], area["type"], area["relevance"]) == (
         "Area",

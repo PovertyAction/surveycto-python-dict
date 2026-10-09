@@ -1,12 +1,15 @@
 """Cast all-string wide JSON rows into a typed Arrow table through the form contract.
 
 Empty strings and absent keys are null. A select_multiple comes as per-choice
-binaries present only when chosen: within one field (and one repeat instance), an
+binaries present only when chosen (one the export leaves as a single column of codes
+is split into them): within one field (and one repeat instance), an
 unchosen binary is 0 when any sibling was chosen, else null; every choice gets its
 column, except where the form filters the list per submission: there only the choices
 someone picked at that instance do, since an unoffered choice is not unchosen. A column that cannot be typed (a value that does not parse, a column the
 form does not define) is kept as text, with the reason in its ``cast_fallback``
-field metadata; the reason never quotes a value.
+field metadata; the reason never quotes a value. A note's or a group's column empty
+in every row is dropped (the export writes field-list groups once per repeat
+instance), and the table's metadata counts them.
 """
 
 import datetime as dt
@@ -24,6 +27,8 @@ from surveycto_python_dict.xml_contract import (
 )
 
 _TIMESTAMP = pa.timestamp("ms", tz="UTC")
+# Table metadata: how many note and group columns, empty in every row, were dropped.
+DROPPED = "empty_notes_and_groups_dropped"
 _SYSTEM_TIMESTAMPS = {"SubmissionDate", "CompletionDate", "starttime", "endtime"}
 _SYSTEM_INTS = {"duration"}
 
@@ -48,6 +53,8 @@ class _Column:
     binary_group: tuple | None = (
         None  # (node path, repeat iterations) of a choice binary
     )
+    # A note's or a group's column, which holds no answer: dropped when empty.
+    structural: bool = False
 
 
 def _parse_timestamp(value: str) -> dt.datetime:
@@ -138,7 +145,9 @@ def _columns(names: list[str], contract: FormContract) -> list[_Column]:
         iterations = tuple(i for _, i in m["repeat_iterations"])
         key = (1, order[node.path], iterations, 0)
         if not node.is_leaf:
-            columns[name] = _text(name, f"maps to group {node.path!r}", {}, key)
+            columns[name] = _text(
+                name, f"maps to group {node.path!r}", {}, key, structural=True
+            )
             continue
         if node.is_select_multiple and m["choice_code"] is not None:
             multi_instances.setdefault(node.path, set()).add(iterations)
@@ -168,7 +177,13 @@ def _columns(names: list[str], contract: FormContract) -> list[_Column]:
             if node.xml_type == "select1"
             else _XML_TYPES[node.xml_type]
         )
-        columns[name] = _Column(name, arrow_type, _node_metadata(node), key)
+        columns[name] = _Column(
+            name,
+            arrow_type,
+            _node_metadata(node),
+            key,
+            structural=node.original == "note",
+        )
 
     for path, instances in multi_instances.items():
         node = contract.nodes[path]
@@ -219,8 +234,42 @@ def _cast(
     return pa.array([v or None for v in raw], type=pa.string()), text
 
 
+_INSTANCES = re.compile(r"(_[0-9]+)*$")
+
+
+def _split_raw_multiples(rows: list[dict], contract: FormContract) -> list[dict]:
+    """Return ``rows`` with each select_multiple exported raw (one column, the codes
+    separated by spaces) rewritten as its per-choice binaries, as the export writes
+    the others.
+    """
+    multiples = {
+        n.name for n in contract.nodes.values() if n.is_select_multiple and n.is_leaf
+    }
+    raw: dict[str, tuple[Node, tuple[int, ...]]] = {}
+    for name in dict.fromkeys(name for row in rows for name in row):
+        if _INSTANCES.sub("", name) not in multiples or is_system_column(name):
+            continue
+        m = contract.map_column(name)
+        if m["kind"] != "matched" or m["choice_code"] is not None or m.get("ragged"):
+            continue
+        node = contract.nodes[m["node_path"]]
+        if node.is_select_multiple and node.is_leaf:
+            raw[name] = (node, tuple(i for _, i in m["repeat_iterations"]))
+    if not raw:
+        return rows
+    split = []
+    for row in rows:
+        row = dict(row)
+        for name, (node, iterations) in raw.items():
+            for code in row.pop(name, "").split():
+                row[_binary_name(node, code, iterations)] = "1"
+        split.append(row)
+    return split
+
+
 def cast_wide(rows: list[dict], contract: FormContract) -> pa.Table:
     """Return the submissions as a typed table, system columns first, then form order."""
+    rows = _split_raw_multiples(rows, contract)
     names = list(dict.fromkeys(name for row in rows for name in row))
     columns = _columns(names, contract)
     groups: dict[tuple, list[str]] = {}
@@ -235,10 +284,15 @@ def cast_wide(rows: list[dict], contract: FormContract) -> pa.Table:
     }
     unanswered = [False] * len(rows)
     arrays, fields = [], []
+    dropped = 0
     for c in columns:
         raw = [row.get(c.name, "") for row in rows]
         answered = answered_by_group.get(c.binary_group, unanswered)
         array, c = _cast(c, raw, answered)
+        if c.structural and array.null_count == len(array):
+            dropped += 1
+            continue
         arrays.append(array)
         fields.append(pa.field(c.name, c.arrow_type, metadata=c.metadata))
-    return pa.Table.from_arrays(arrays, schema=pa.schema(fields))
+    schema = pa.schema(fields, metadata={DROPPED: str(dropped)})
+    return pa.Table.from_arrays(arrays, schema=schema)

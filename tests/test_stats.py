@@ -43,6 +43,7 @@ def test_sentinels_are_counted_apart_and_left_out_of_stats(stats):
 def test_skip_logic_sets_the_denominator(stats):
     area = stats["area"]
     assert area["relevance"] == "${plots} > 0"
+    assert (area["required"], stats["KEY"]["required"]) == (False, "")
     assert area["eligibility_evaluated"] is True
     # plots is -99 in row 2, so area is not asked there.
     assert (area["eligible"], area["skipped_by_logic"], area["answered"]) == (1, 1, 1)
@@ -213,8 +214,10 @@ def test_a_group_condition_uses_its_own_repeat_index(tmp_path, analyzer):
     )
 
 
-def test_a_column_with_no_question_has_no_missing_count(stats):
-    assert stats["intro"]["missing_when_eligible"] == ""  # a note
+def test_a_column_with_no_question_has_no_missing_count(tmp_path, analyzer):
+    rows = [dict(ROWS[0], old_field="x"), ROWS[1]]
+    stats = _by_name(_build(tmp_path, analyzer, rows=rows))
+    assert stats["old_field"]["missing_when_eligible"] == ""
 
 
 def test_a_date_sentinel_is_counted_apart(tmp_path, analyzer):
@@ -230,3 +233,26 @@ def test_a_date_sentinel_is_counted_apart(tmp_path, analyzer):
         "2025-03-06 Not reported: 1",
         "",
     )
+
+
+def test_a_ragged_column_is_not_evaluated_and_not_mistaken_for_its_instance(
+    tmp_path, analyzer
+):
+    # plot_size_1_3 has two indices for a depth-1 repeat: another form version.
+    xml = XML.replace(' jr:count=" /farm/plots "', "")
+    rows = [ROWS[0], {**ROWS[1], "plot_size_1_3": "4"}]
+    cfg = _build(tmp_path, analyzer, xml=xml, rows=rows)
+    stats = _by_name(cfg)
+    dictionary = cfg.form_dir("farm") / "farm_variable_dictionary.json"
+    assert (
+        json.loads(dictionary.read_text(encoding="utf-8"))["summary"]["n_ragged"] == 1
+    )
+    ragged = stats["plot_size_1_3"]
+    assert ragged["eligibility_evaluated"] is False
+    assert (
+        ragged["eligibility_note"] == "layout from another form version; not evaluated"
+    )
+    assert ragged["answered_when_skipped"] == ""
+    assert ragged["missing_when_eligible"] == ""
+    # Row 2 still has no plot instance: the ragged value is not plot_size_1's.
+    assert stats["plot_size_1"]["eligible"] == 1

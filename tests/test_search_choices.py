@@ -164,9 +164,12 @@ def test_clean_list_is_added(form):
 
 def test_any_hit_withholds_the_whole_list(form, analyzer):
     questions, _ = _screen(form, analyzer)
-    assert questions["buyer"]["choices"] == [
-        {"value": "buyer_id", "label": "buyer_name"}
-    ]
+    # Only the literal items stay; the item naming the columns is recorded apart.
+    assert questions["buyer"]["choices"] == []
+    assert questions["buyer"]["choice_columns"] == {
+        "value": "buyer_id",
+        "label": "buyer_name",
+    }
     assert questions["buyer"]["choices_withheld"] == ["presidio:PERSON"]
 
 

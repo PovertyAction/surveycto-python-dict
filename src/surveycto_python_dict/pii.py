@@ -6,7 +6,11 @@ Each column gets ``{"status", "basis"[, "presidio"]}``; the first matching rule 
    blacklist; ``whitelisted`` / ``reviewed``: on the whitelist.
 1. ``cleared_by_form``: the question is ``publishable``. With ``trust_publishable =
    false`` this rule is skipped and ``publishable`` is only noted in the basis.
-2. ``contains_pii``: device metadata columns; geo and attachment question types.
+2. ``contains_pii``: device metadata columns; geo and attachment question types;
+   whatever the name, a field that preloads device or user metadata (``username``,
+   ``deviceid``, ...), a calculate that calls ``enumerator-id()``,
+   ``enumerator-name()`` or ``username()``. This rule holds under
+   ``no_personal_data`` too.
 3. ``whitelisted``: system columns; integer, decimal, date, datetime and time
    questions; selects with inline choices; calculates whose every reference is
    cleared or whitelisted and that do not ``pulldata()``.
@@ -23,6 +27,7 @@ rows and up to five of their KEYs, never matched text.
 
 import csv
 import random
+import re
 import warnings
 from collections import Counter
 from dataclasses import dataclass, field
@@ -34,6 +39,7 @@ import pyarrow as pa
 from surveycto_python_dict.contract import (
     DatasetTable,
     SubmissionValues,
+    dataset_header,
     search_universe,
 )
 from surveycto_python_dict.xml_contract import FormContract
@@ -60,6 +66,9 @@ _CONTAINS_TYPES = {
     "file",
 }
 _TYPED_SAFE = {"integer", "decimal", "date", "datetime", "time"}
+# Fields that capture who or which device collected the submission, whatever their name.
+_METADATA_TYPES = {"deviceid", "subscriberid", "simserial", "phonenumber", "username"}
+_METADATA_CALLS = re.compile(r"(?<![\w-])(enumerator-id|enumerator-name|username)\(\)")
 _SELECT_TYPES = {"select_one", "select_multiple"}
 # The statuses whose values may be read, and those that hold or may hold PII.
 SAFE = {"cleared_by_form", "whitelisted"}
@@ -176,6 +185,8 @@ class _Rules:
             return {"status": "whitelisted", "basis": ["reviewed"]}
         if q["publishable"] and self.trust_publishable:
             return {"status": "cleared_by_form", "basis": ["publishable"]}
+        if basis := self.personal(q["variable_name"]):
+            return {"status": "contains_pii", "basis": [basis]}
         if qtype in _CONTAINS_TYPES:
             return {"status": "contains_pii", "basis": [f"type:{qtype}"]}
         if qtype in _TYPED_SAFE:
@@ -186,6 +197,21 @@ class _Rules:
             refs = q["references"]
             if all(r in self.by_name and self._safe(r) for r in refs):
                 return {"status": "whitelisted", "basis": [f"lineage:{','.join(refs)}"]}
+        return None
+
+    def personal(self, name: str | None) -> str | None:
+        """Return why question ``name`` captures collection metadata, else None: its
+        type, or a function its calculation calls. A calculate reading such a field
+        is not cleared by lineage, so it is scanned like any other text.
+        """
+        q = self.by_name.get(name)
+        if q is None:
+            return None
+        if q["type"] in _METADATA_TYPES:
+            return f"metadata:{q['type']}"
+        calls = _METADATA_CALLS.search(q["calculation"] or "")
+        if calls:
+            return f"calls:{calls.group(1)}()"
         return None
 
     def _safe(self, name: str) -> bool:
@@ -238,10 +264,12 @@ def screen_search_choices(
 
     All or nothing: a blacklisted question, a list over ``MAX_INLINE_CHOICES``, or any
     Presidio hit among the choices' values and labels withholds the whole list
-    (``node.choices_withheld`` says why) and the select keeps the items naming the
-    dataset's columns. A whitelisted question gets its list unscanned. A filter on a
-    field keeps the rows matching the values the field takes in ``rows`` (the
-    submissions); a filter on anything but a plain field withholds the list.
+    (``node.choices_withheld`` says why) and the select keeps only its literal items;
+    a blacklisted one keeps none, as its dataset is never read. The others record the
+    value and label columns their item names (``node.choice_columns``). A
+    whitelisted question gets its list unscanned. A filter on a field keeps the rows
+    matching the values the field takes in ``rows`` (the submissions); a filter on
+    anything but a plain field withholds the list.
     """
     submitted = SubmissionValues(contract, rows)
     tables: dict[str, DatasetTable] = {}
@@ -251,7 +279,16 @@ def screen_search_choices(
             continue
         if node.name in config.blacklist:
             node.choices_withheld = ["reviewed"]
+            node.choice_items = []
             continue
+        header = dataset_header(datasets[source["dataset"]])
+        named = [i for i in node.choice_items if i["value"] in header]
+        if named:
+            node.choice_columns = {
+                "value": named[0]["value"],
+                "label": named[0]["label"],
+            }
+        literals = [i for i in node.choice_items if i not in named]
         fields = {
             column: submitted.of(source["match"][column])
             for column, value in source["filter"].items()
@@ -260,6 +297,7 @@ def screen_search_choices(
         unread = [source["match"][c] for c, v in fields.items() if v is None]
         if unread:
             node.choices_withheld = [f"filtered by {e}" for e in unread]
+            node.choice_items = literals
             continue
         dataset = source["dataset"]
         if dataset not in tables:
@@ -269,12 +307,14 @@ def screen_search_choices(
         if len(universe) > MAX_INLINE_CHOICES:
             node.choices_withheld = [f"{len(universe)} choices"]
             node.choices_per_submission = True
+            node.choice_items = literals
             continue
         if node.name not in config.whitelist and not config.no_personal_data:
             texts = sorted({t for c in universe for t in (c["value"], c["label"]) if t})
             found = sorted(set().union(*_entities(texts, config, analyzer)))
             if found:
                 node.choices_withheld = [f"presidio:{e}" for e in found]
+                node.choice_items = literals
                 continue
         node.choice_items = universe
 
@@ -366,6 +406,8 @@ def classify(
             block = {"status": "cleared_by_form", "basis": ["publishable"]}
         elif column in _DEVICE_COLUMNS and entry.get("system"):
             block = {"status": "contains_pii", "basis": [f"device:{column}"]}
+        elif basis := rules.personal(question):
+            block = {"status": "contains_pii", "basis": [basis]}
         elif entry.get("system"):
             block = {"status": "whitelisted", "basis": ["system"]}
         elif config.no_personal_data:
