@@ -116,6 +116,9 @@ def _long_table(
     return long.sort_by([(k, "ascending") for k in keys])
 
 
+_ORIGIN_KINDS = ("entered", "calculated", "carried", "metadata")
+
+
 def _table(con, schema: str, name: str, frame: pd.DataFrame) -> None:
     con.register("frame", frame)
     con.execute(f"CREATE TABLE {_q(schema, name)} AS SELECT * FROM frame")
@@ -654,13 +657,21 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
                     "rows": d["rows"],
                     "published_by": d["published_by"],
                     "read_by": d["read_by"],
-                    **{
-                        k: d["origin_counts"].get(k, 0)
-                        for k in ("entered", "calculated", "carried", "metadata")
-                    },
+                    **{k: d["origin_counts"].get(k, 0) for k in _ORIGIN_KINDS},
                 }
                 for d in flow["datasets"]
-            ]
+            ],
+            # A project can read no dataset.
+            columns=[
+                "dataset",
+                "kind",
+                "title",
+                "key",
+                "rows",
+                "published_by",
+                "read_by",
+                *_ORIGIN_KINDS,
+            ],
         ),
         "publishes": pd.DataFrame(
             [

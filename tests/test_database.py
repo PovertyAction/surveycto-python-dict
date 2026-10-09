@@ -491,3 +491,21 @@ def test_mask_of_an_unknown_name_raises(project):
             project.dataset_keys,
             Mask(("nothing",), "salt"),
         )
+
+
+def test_a_project_that_reads_no_dataset(tmp_path, analyzer):
+    from farm_form import XML
+
+    config = tmp_path / "config.toml"
+    config.write_text('forms = ["farm"]\nout_dir = "plain"\n', encoding="utf-8")
+    cfg = load_config(config)
+    xml = XML.replace("pulldata('prev_round', 'owner', 'phone',  /farm/phone )", "'x'")
+    write_pull(cfg, xml=xml)
+    build(cfg, SENTINELS, analyzer)
+    form_dir = cfg.form_dir("farm")
+    write_csv(
+        summary_stats(form_dir, "farm", SENTINELS), form_dir / "farm_summary_stats.csv"
+    )
+    con = duckdb.connect(str(_write(cfg)), read_only=True)
+    assert con.sql("SELECT count(*) FROM main.datasets").fetchone() == (0,)
+    con.close()
