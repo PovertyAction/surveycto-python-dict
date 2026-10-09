@@ -824,7 +824,7 @@ class SurveyStore:
         if q is None:
             return self.lookup_variable(name)
         if q["choices_withheld"]:
-            return f"{name} ({q['type']}): {_withheld(q)}"
+            return "\n".join(self._withheld_lines(q))
         if not q["choices"]:
             return f"{name} ({q['type']}) is not a select question."
         lists: dict[str, list[dict]] = {}
@@ -838,6 +838,30 @@ class SurveyStore:
                 pad = "    "
             lines += [f"{pad}{c['value']} = {c['label']}" for c in choices]
         return "\n".join(lines)
+
+    def _withheld_lines(self, q: dict) -> list[str]:
+        """Return why a list is left out, the form's own choices, and where a script
+        reads the rest.
+        """
+        lines = [f"{q['variable_name']} ({q['type']}): {_withheld(q)}"]
+        if q["choices"]:
+            lines.append(
+                "  The form's own choices: "
+                + "; ".join(f"{c['value']} = {c['label']}" for c in q["choices"])
+            )
+        source, columns = q["data_source"], q["choice_columns"]
+        if source and columns:
+            d, _ = self.read(source["dataset"], _path(q))
+            where = " and ".join(
+                f"{m['column']} = {m['value']}" for m in source["match"]
+            )
+            lines.append(
+                f"  The rest: {columns['value']} and {columns['label']} of "
+                f"{self.project}.duckdb dataset.{d['id']}_safe"
+                + (f" where {where}" if where else "")
+                + ", read in a script"
+            )
+        return lines
 
     def get_gate_chain(self, name: str, depth: int = 3) -> str:
         """Show the conditions that must hold for ``name`` to be asked, and their gates."""
