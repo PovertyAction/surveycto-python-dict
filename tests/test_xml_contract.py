@@ -762,3 +762,32 @@ def test_a_body_control_calculate_is_read(tmp_path):
     assert nodes["seen"].control == "input"
     assert nodes["village"].pulldata["dataset"] == "households"
     assert nodes["village"].data_source["kind"] == "pulldata"
+
+
+_XML_HINT = """<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml"
+        xmlns:jr="http://openrosa.org/javarosa">
+  <h:head><model>
+    <itext><translation lang="English" default="true()">
+      <text id="/f/year:constraintMsg"><value>Use 1900 when not reported</value></text>
+    </translation></itext>
+    <instance><f id="f" version="1"><year/><age/></f></instance>
+    <bind nodeset="/f/year" type="int" constraint=". &gt; 1800"
+          jr:constraintMsg="jr:itext('/f/year:constraintMsg')"/>
+    <bind nodeset="/f/age" type="int" jr:constraintMsg="Too old"/>
+  </model></h:head>
+  <h:body>
+    <input ref="/f/year"><label>Year</label><hint>The year the paper came out</hint></input>
+    <input ref="/f/age"><label>Age</label></input>
+  </h:body>
+</h:html>
+"""
+
+
+def test_hint_and_constraint_message_are_read(tmp_path):
+    path = tmp_path / "f.xml"
+    path.write_text(_XML_HINT, encoding="utf-8")
+    nodes = parse_contract(path).nodes
+    assert nodes["year"].hint == "The year the paper came out"
+    assert nodes["year"].constraint_message == "Use 1900 when not reported"
+    assert (nodes["age"].hint, nodes["age"].constraint_message) == (None, "Too old")

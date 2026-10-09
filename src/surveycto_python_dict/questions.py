@@ -206,6 +206,8 @@ def build_questions(contract: FormContract) -> list[dict]:
                     "publishable": count.publishable if count else False,
                     "choices_withheld": None,
                     "choice_columns": None,
+                    "hint": None,
+                    "constraint_message": None,
                     "data_source": None,
                     "repeat_group_name": node.name,
                 }
@@ -241,6 +243,8 @@ def build_questions(contract: FormContract) -> list[dict]:
                 "variable_name": node.name,
                 "question_text": label(node)
                 or (calculation if qtype == "calculate" else ""),
+                "hint": refs(node.hint),
+                "constraint_message": refs(node.constraint_message),
                 "disabled": parent_disabled or relevance == "0",
                 "constraint": constraint,
                 "relevance": relevance,

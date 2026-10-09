@@ -315,6 +315,8 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                     "relevance": q["relevance"],
                     "group_relevances": q["group_relevances"],
                     "constraint": q["constraint"],
+                    "constraint_message": q["constraint_message"],
+                    "hint": q["hint"],
                     "calculation": q["calculation"],
                     "required": q["required"],
                     "publishable": q["publishable"],

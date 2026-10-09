@@ -608,11 +608,14 @@ class SurveyStore:
         lines = [f"{q['variable_name']} ({q['type']})"]
         if q["question_text"]:
             lines.append(f"Text: {q['question_text']}")
+        if q["hint"]:
+            lines.append(f"Hint: {q['hint']}")
         if q["group_path"]:
             lines.append(f"Group: {'/'.join(q['group_path'])}")
         for label, key in (
             ("Relevance", "relevance"),
             ("Constraint", "constraint"),
+            ("Constraint message", "constraint_message"),
             ("Calculation", "calculation"),
         ):
             if q[key]:

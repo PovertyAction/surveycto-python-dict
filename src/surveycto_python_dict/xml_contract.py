@@ -163,6 +163,9 @@ class Node:
     # A `search()` select's value and label columns in its dataset, from the item
     # that names them.
     choice_columns: dict | None = None
+    # The question's hint and constraint message, from the default translation.
+    hint: str | None = None
+    constraint_message: str | None = None
     # A `search()` select's choices as read from its dataset, also when they are left
     # out of the outputs: they decode column names and type the data. Never exported.
     choice_universe: list[dict] | None = None
@@ -711,6 +714,13 @@ def parse_contract(xml_path) -> FormContract:
         ref = label.get("ref")
         return itext[_ITEXT_REF.match(ref).group(1)] if ref else _label_text(label)
 
+    def message_text(message: str | None) -> str | None:
+        """Return a bind's message, itself or the text its ``jr:itext()`` names."""
+        if message is None:
+            return None
+        ref = _ITEXT_REF.match(message)
+        return itext[ref.group(1)] if ref else message
+
     formid = primary.get("id") or _ln(primary.tag)
     formdef_version = primary.get("version")
 
@@ -761,6 +771,7 @@ def parse_contract(xml_path) -> FormContract:
     items: dict[str, list[dict]] = {}
     filtered: set[str] = set()  # selects whose list is filtered per submission
     labels: dict[str, str] = {}
+    hints: dict[str, str] = {}
     mediatypes: dict[str, str] = {}
     counts: dict[str, str] = {}
     # SurveyCTO lets a body control carry the calculate: a field prefilled or hidden.
@@ -778,6 +789,9 @@ def parse_contract(xml_path) -> FormContract:
             label = next((c for c in el if _ln(c.tag) == "label"), None)
             if label is not None:
                 labels[rel] = label_text(label)
+            hint = next((c for c in el if _ln(c.tag) == "hint"), None)
+            if hint is not None:
+                hints[rel] = label_text(hint)
             if el.get("mediatype"):
                 mediatypes[rel] = el.get("mediatype")
             if el.get("calculate"):
@@ -860,6 +874,8 @@ def parse_contract(xml_path) -> FormContract:
             choices_per_submission=path in filtered or searched_by_field,
             original=b.get("original"),
             label=labels.get(path),
+            hint=hints.get(path),
+            constraint_message=message_text(b.get("constraintMsg")),
             mediatype=mediatypes.get(path),
             appearance=ap,
             repeat_count=counts.get(path),

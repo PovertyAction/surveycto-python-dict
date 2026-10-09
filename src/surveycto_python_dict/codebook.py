@@ -25,6 +25,7 @@ VARIABLE_COLUMNS = [
     "variable",
     "question",
     "label",
+    "hint",
     "type",
     "group",
     "relevance",
@@ -36,7 +37,14 @@ VARIABLE_COLUMNS = [
     "pii_status",
     "pii_basis",
 ]
-_WRAPPED = {"label", "relevance", "value_labels", "frequencies", "sentinel_detail"}
+_WRAPPED = {
+    "label",
+    "hint",
+    "relevance",
+    "value_labels",
+    "frequencies",
+    "sentinel_detail",
+}
 _PERCENT = {"missing_rate", "selected_share"}
 # One style object each: openpyxl hashes every cell's style into the workbook.
 _HEADER_FONT = Font(bold=True)
@@ -54,6 +62,7 @@ def _variable_rows(variables: dict) -> list[list]:
                 name,
                 v["question"] or "",
                 plain_label(survey.get("question_text") or ""),
+                plain_label(survey.get("hint") or ""),
                 survey.get("type") or ("system" if v.get("system") else ""),
                 survey.get("group_path", ""),
                 relevance,

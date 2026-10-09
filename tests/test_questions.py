@@ -93,6 +93,8 @@ _KEYS = [
     "choices_per_submission",
     "variable_name",
     "question_text",
+    "hint",
+    "constraint_message",
     "disabled",
     "constraint",
     "relevance",

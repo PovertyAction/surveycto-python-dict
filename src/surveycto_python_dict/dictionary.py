@@ -24,6 +24,7 @@ from surveycto_python_dict.xml_contract import FormContract
 _REF_RE = re.compile(r"\$\{([^}]+)\}")
 _SURVEY_KEYS = (
     "question_text",
+    "hint",
     "type",
     "choice_list",
     "choices",
@@ -32,6 +33,7 @@ _SURVEY_KEYS = (
     "relevance",
     "group_relevances",
     "constraint",
+    "constraint_message",
     "calculation",
     "references",
     "disabled",
