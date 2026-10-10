@@ -477,6 +477,17 @@ def test_search_matches_name_parts_and_word_starts_and_drops_one_letters(store):
     assert store.search_questions("a hectare").splitlines()[0].startswith("per_plot")
 
 
+def test_search_skips_formulas_and_repeat_count_text_and_weighs_hints_half(store):
+    q = store.questions["per_plot"]
+    q.update(type="calculate", calculation="${area} * 2", question_text="${area} * 2")
+    assert "per_plot" not in store.search_questions("area")
+    assert "plot_count" not in store.search_questions("iterations group")
+    store.questions["owner"]["hint"] = "The crop owner"
+    hits = [line.split()[0] for line in store.search_questions("crop").splitlines()]
+    assert hits[-1] == "owner"
+    assert {"crop", "plot_crop"} <= set(hits[:-1])
+
+
 def test_search_tags_flagged_columns(store):
     assert "[may_contain_pii]" in store.search_line("owner") or "[contains_pii]" in (
         store.search_line("owner")

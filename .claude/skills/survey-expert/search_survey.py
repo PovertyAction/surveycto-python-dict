@@ -75,6 +75,20 @@ def _tokens(text: str) -> list[str]:
     return _TOKEN_RE.findall(plain_label(text).lower())
 
 
+_REPEAT_COUNT_TEXT = re.compile(r"Number of iterations in '(.*)' repeat group")
+
+
+def _label(q: dict) -> str:
+    """Return the words a question is searched by besides its name: its label, the
+    repeat's label for a repeat count, nothing for a calculate's formula.
+    """
+    if q["type"] == "repeat_count":
+        return _REPEAT_COUNT_TEXT.fullmatch(q["question_text"]).group(1)
+    if q["question_text"] == q["calculation"]:
+        return ""
+    return q["question_text"]
+
+
 def _name_tokens(name: str) -> list[str]:
     """Return a field name's parts and the name itself, lowercased: ``refugeePop``
     gives ``refugee``, ``pop`` and ``refugeepop``.
@@ -758,38 +772,56 @@ class SurveyStore:
         listed = None if len(names) == 1 else 1
         return "\n\n".join(self.lookup_variable(n, columns, listed) for n in names)
 
-    def search_scored(self, query: str) -> list[tuple[float, str]]:
-        """Score questions by the IDF of the query words their name or text contains;
-        a question named exactly ``query`` comes first.
+    def search_scored(self, query: str) -> list[tuple[tuple[float, float], str]]:
+        """Rank questions by how many query words their name, label or hint holds,
+        then by those words' IDF; a hint counts half. A question named exactly
+        ``query`` comes first.
         """
         docs = {
-            n: set(_name_tokens(n)) | set(_tokens(q["question_text"]))
+            n: set(_name_tokens(n)) | set(_tokens(_label(q)))
             for n, q in self.questions.items()
         }
+        hints = {n: set(_tokens(q["hint"] or "")) for n, q in self.questions.items()}
         # One-letter words ("p" of "p-value") only count when alone.
         words = set(_tokens(query))
         words = {w for w in words if len(w) > 1} or words
-        # A word of four letters or more also matches the words it starts
-        # ("child" finds "children").
-        matched = {
-            w: {
+
+        def holding(w: str, texts: dict[str, set[str]]) -> set[str]:
+            # A word of four letters or more also matches the words it starts
+            # ("child" finds "children").
+            return {
                 n
-                for n, toks in docs.items()
+                for n, toks in texts.items()
                 if w in toks or (len(w) >= 4 and any(t.startswith(w) for t in toks))
             }
-            for w in words
-        }
+
+        matched = {w: holding(w, docs) for w in words}
+        hinted = {w: holding(w, hints) - matched[w] for w in words}
         # Words in more than half the questions ("de", "the") only rank when alone.
-        terms = [w for w in words if len(matched[w]) <= len(docs) / 2] or list(words)
+        terms = [
+            w for w in words if len(matched[w] | hinted[w]) <= len(docs) / 2
+        ] or list(words)
         idf = {
-            w: math.log(len(docs) / len(matched[w])) + 1 for w in terms if matched[w]
+            w: math.log(len(docs) / len(matched[w] | hinted[w])) + 1
+            for w in terms
+            if matched[w] | hinted[w]
         }
         # Each word counts once per question, so long texts do not win on common words.
-        scores = {n: sum(s for w, s in idf.items() if n in matched[w]) for n in docs}
+        scores = {}
+        for n in docs:
+            weights = {
+                w: 1.0 if n in matched[w] else 0.5 if n in hinted[w] else 0.0
+                for w in idf
+            }
+            scores[n] = (
+                sum(weights.values()),
+                sum(idf[w] * weight for w, weight in weights.items()),
+            )
         if query.strip() in scores:
-            scores[query.strip()] = math.inf
+            scores[query.strip()] = (math.inf, math.inf)
         return sorted(
-            ((s, n) for n, s in scores.items() if s > 0), key=lambda x: (-x[0], x[1])
+            ((s, n) for n, s in scores.items() if s[0] > 0),
+            key=lambda x: (-x[0][0], -x[0][1], x[1]),
         )
 
     def search_line(self, name: str) -> str:
@@ -1291,7 +1323,7 @@ def search_forms(stores: dict, query: str, max_results: int = 20) -> str:
             for form, store in stores.items()
             for score, name in store.search_scored(query)
         ),
-        key=lambda x: (-x[0], x[1], x[2]),
+        key=lambda x: (-x[0][0], -x[0][1], x[1], x[2]),
     )[:max_results]
     if not ranked:
         return f"No question of {', '.join(stores)} matches {query!r}."
