@@ -203,7 +203,7 @@ class _Rules:
             calls = set(_CALL.findall(q["calculation"] or ""))
             if not refs and calls <= _GENERATED_CALLS:
                 return {"status": "whitelisted", "basis": ["generated"]}
-            if all(r in self.by_name and self._safe(r) for r in refs):
+            if refs and all(r in self.by_name and self._safe(r) for r in refs):
                 return {"status": "whitelisted", "basis": [f"lineage:{','.join(refs)}"]}
         return None
 
