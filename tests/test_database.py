@@ -436,6 +436,7 @@ def test_joins_connect_a_reader_field_to_the_publisher_field():
             "visit_hh",
             "hh",
             "hhid",
+            "pulldata",
             "listing",
             "submissions",
             "hhid",
@@ -447,6 +448,13 @@ def test_joins_connect_a_reader_field_to_the_publisher_field():
     assert structure["joins"]["joins"] == [
         "visit.submissions.visit_hh = listing.submissions.hhid  (through dataset.hh.hhid; "
         "not unique: 1 distinct values in 2 rows, so a match can return another row)"
+    ]
+    # A search() filter takes every matching row: no warning.
+    forms["visit"]["questions"][0]["data_source"]["kind"] = "search"
+    _write_project(duckdb.connect(), flow, forms, structure)
+    assert structure["joins"]["joins"] == [
+        "visit.submissions.visit_hh = listing.submissions.hhid  (through dataset.hh.hhid; "
+        "a search() filter: the choices are every matching row)"
     ]
 
 

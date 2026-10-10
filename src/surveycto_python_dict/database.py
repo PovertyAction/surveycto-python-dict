@@ -186,7 +186,8 @@ _PROJECT = {
     },
     "joins": {
         "grain": "one row per reader field matched to the publisher field it comes "
-        "from; unique: the dataset column identifies one row",
+        "from; via: pulldata or search; unique: the dataset column identifies one "
+        "row, which a pulldata() needs and a search() filter does not",
         "key": ["reader_form", "reader_field", "dataset", "dataset_column"],
         "joins": [
             "<reader_form>.<reader_table>.<reader_field> = "
@@ -498,7 +499,9 @@ def _write_datasets(
                             column["distinct"] == column["non_null"] == column["rows"]
                         )
                         line = f"{name}.{m['column']} = {table}.{field}  " + (
-                            "(many to one: the column is unique in the dataset)"
+                            "(a search() filter: the choices are every matching row)"
+                            if source["kind"] == "search"
+                            else "(many to one: the column is unique in the dataset)"
                             if unique
                             else f"(not unique: {column['distinct']} distinct "
                             f"values in {column['non_null']} rows)"
@@ -540,12 +543,14 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
                     "reader_field": field,
                     "dataset": d["id"],
                     "dataset_column": m["column"],
+                    "via": source["kind"],
                     "publisher_form": publisher,
                     "publisher_table": forms[publisher]["repeat_of"].get(published)
                     or "submissions",
                     "publisher_field": published,
-                    # Unique: each value matches one dataset row. Otherwise the
-                    # reader's pulldata()/search() can return another row's value.
+                    # Unique: each value matches one dataset row. Otherwise a
+                    # pulldata() can return another row's value; a search() takes
+                    # every matching row by design.
                     "unique": column["distinct"]
                     == column["non_null"]
                     == column["rows"],
@@ -630,6 +635,7 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
                 "reader_field",
                 "dataset",
                 "dataset_column",
+                "via",
                 "publisher_form",
                 "publisher_table",
                 "publisher_field",
@@ -649,7 +655,9 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
             f"{j['publisher_form']}.{j['publisher_table']}.{j['publisher_field']}  "
             f"(through dataset.{j['dataset']}.{j['dataset_column']}"
             + (
-                ")"
+                "; a search() filter: the choices are every matching row)"
+                if j["via"] == "search"
+                else ")"
                 if j["unique"]
                 else f"; not unique: {j['distinct_values']} distinct values in "
                 f"{j['dataset_rows']} rows, so a match can return another row)"
