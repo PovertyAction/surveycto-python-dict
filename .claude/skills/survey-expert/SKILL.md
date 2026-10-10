@@ -180,6 +180,12 @@ aggregation, verification, PII) in pandas terms. They are guidelines: propose th
 decide what applies. For a column's eligible rows, sentinel counts and answered-while-skipped flags,
 run `just stats` and read `<form>_summary_stats.csv`.
 
+When the user decides how to handle something (a code, a gate that never fired, a
+field the instrument mislabels), write the decision into the analysis project's
+`CLAUDE.md` as a ruling, in their words, as soon as it is made: a decision left in the
+conversation is reopened on the next run. Rulings come from the user and the study's
+documents; propose one only from those.
+
 ## Answering
 
 Cite the field and file you used, state the logic in the form's own `${}` syntax, and
