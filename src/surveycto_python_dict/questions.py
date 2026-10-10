@@ -32,6 +32,7 @@ _INPUT_TYPES = {
 _PRELOAD_TYPES = {
     ("timestamp", "start"): "start",
     ("timestamp", "end"): "end",
+    ("date", "today"): "today",
     ("property", "deviceid"): "deviceid",
     ("property", "subscriberid"): "subscriberid",
     ("property", "simserial"): "simserial",

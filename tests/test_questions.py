@@ -172,6 +172,18 @@ def test_types(by_name):
     }
 
 
+def test_today_is_a_question_of_its_own_type(tmp_path):
+    xml = _XML.replace("<deviceid/>", "<deviceid/><today/>").replace(
+        '<bind nodeset="/shop/intro"',
+        '<bind nodeset="/shop/today" type="date" jr:preload="date" '
+        'jr:preloadParams="today"/>\n      <bind nodeset="/shop/intro"',
+    )
+    questions = build_questions(parse_contract(_write(tmp_path, xml)))
+    assert [(q["variable_name"], q["type"]) for q in questions][:1] == [
+        ("today", "today")
+    ]
+
+
 def test_select_choices_inline_with_own_list_name(by_name):
     consent = by_name["consent"]
     assert consent["choice_list"] == "consent"
