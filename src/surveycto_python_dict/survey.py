@@ -21,6 +21,8 @@ from pathlib import Path
 _FLAGGED = {"contains_pii", "may_contain_pii"}
 # Longer lists are summarised, with an argument that lists them in full.
 _LISTED = 20
+# The pii statuses whose values an agent may see.
+_SEEN = {"cleared_by_form", "whitelisted"}
 _TOKEN_RE = re.compile(r"\w+")
 _TAG_RE = re.compile(r"<[^>]+>")
 _REF_RE = re.compile(r"\$\{([^}]+)\}")
@@ -865,28 +867,55 @@ class SurveyStore:
         return lines
 
     def _withheld_lines(self, q: dict) -> list[str]:
-        """Return why a list is left out, the form's own choices, and where a script
-        reads the rest.
+        """Return why a list is left out, the form's own choices, where a script reads
+        the rest and how, and the codes the submissions picked.
         """
-        lines = [f"{q['variable_name']} ({q['type']}): {_withheld(q)}"]
+        name = q["variable_name"]
+        lines = [f"{name} ({q['type']}): {_withheld(q)}"]
         if q["choices"]:
             lines.append(
                 "  The form's own choices: "
                 + "; ".join(f"{c['value']} = {c['label']}" for c in q["choices"])
             )
         source, columns = q["data_source"], q["choice_columns"]
-        if source and columns:
-            d, _ = self.read(source["dataset"], _path(q))
-            where = " and ".join(
-                f"{m['column']} = {m['value']}" for m in source["match"]
+        if not (source and columns):
+            return lines
+        d, _ = self.read(source["dataset"], _path(q))
+        value, label = columns["value"], columns["label"]
+        status = {
+            c["column"]: c["pii"]["status"]
+            for c in self.dataset_columns
+            if c["dataset"] == source["dataset"]
+        }
+        where = " AND ".join(
+            f"{m['column']} = <the submission's {m['value']}>"
+            if m["value"].startswith("${")
+            else f"{m['column']} = {m['value']}"
+            for m in source["match"]
+        )
+        lines += [
+            f"  The rest: in {self.project}.duckdb dataset.{d['id']}; value column "
+            f"{value} ({status[value]}), label column {label} ({status[label]})",
+            f'  A script decodes them: SELECT {value}, {label} FROM dataset."{d["id"]}"'
+            + (f" WHERE {where}" if where else ""),
+        ]
+        picked = self.summary["withheld_choices"].get(name)
+        if picked is None:
+            lines.append("  In the data: no submission picked a code")
+            return lines
+        missing = picked["codes_not_in_list"]
+        n = picked["n_codes_picked"]
+        line = f"  In the data: {n} code{'s' if n > 1 else ''} picked"
+        if not missing:
+            line += ", all in the list"
+        elif status[value] in _SEEN:
+            line += f"; {len(missing)} not in the list: {', '.join(missing)}"
+        else:
+            line += (
+                f"; {len(missing)} not in the list (codes not shown: {value} is "
+                f"{status[value]})"
             )
-            lines.append(
-                f"  The rest: {columns['value']} and {columns['label']} of "
-                f"{self.project}.duckdb dataset.{d['id']}"
-                + (f" where {where}" if where else "")
-                + ", read in a script"
-            )
-        return lines
+        return [*lines, line]
 
     def get_gate_chain(self, name: str, depth: int = 3) -> str:
         """Show the conditions that must hold for ``name`` to be asked, and their gates."""

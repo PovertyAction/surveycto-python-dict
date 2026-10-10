@@ -249,6 +249,52 @@ def test_withheld_choices_name_the_dataset_columns_not_choices(store):
     assert "crop_id = crop_name" not in out
 
 
+def test_withheld_choices_say_how_to_decode_them_and_what_was_picked(
+    store, monkeypatch
+):
+    store.questions["crop"] = dict(
+        store.questions["crop"],
+        choices=[],
+        choice_columns={"value": "crop_id", "label": "crop_name"},
+        choices_withheld=["presidio:PERSON"],
+        data_source={
+            "kind": "search",
+            "dataset": "crops",
+            "match": [{"column": "zone", "value": "${area}"}],
+        },
+    )
+    monkeypatch.setattr(store, "read", lambda dataset, path: ({"id": "crops"}, {}))
+    store.dataset_columns = [
+        {"dataset": "crops", "column": "crop_id", "pii": {"status": "whitelisted"}},
+        {
+            "dataset": "crops",
+            "column": "crop_name",
+            "pii": {"status": "may_contain_pii"},
+        },
+    ]
+    store.summary["withheld_choices"] = {
+        "crop": {"n_codes_picked": 3, "codes_not_in_list": ["9"]}
+    }
+    lines = store.get_choice_list("crop").splitlines()
+    assert lines[1:] == [
+        "  The rest: in out.duckdb dataset.crops; value column crop_id (whitelisted), "
+        "label column crop_name (may_contain_pii)",
+        '  A script decodes them: SELECT crop_id, crop_name FROM dataset."crops" '
+        "WHERE zone = <the submission's ${area}>",
+        "  In the data: 3 codes picked; 1 not in the list: 9",
+    ]
+    # Codes a flagged value column holds are counted, not shown.
+    store.dataset_columns[0]["pii"]["status"] = "may_contain_pii"
+    assert store.get_choice_list("crop").splitlines()[-1] == (
+        "  In the data: 3 codes picked; 1 not in the list (codes not shown: crop_id is "
+        "may_contain_pii)"
+    )
+    store.summary["withheld_choices"] = {}
+    assert store.get_choice_list("crop").splitlines()[-1] == (
+        "  In the data: no submission picked a code"
+    )
+
+
 def test_lookup_shows_where_a_value_comes_from(store):
     out = store.lookup_variable("prev")
     assert (
