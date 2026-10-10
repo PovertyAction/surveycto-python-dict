@@ -268,6 +268,7 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                     "table": table_of[c],
                     "variable_order": v["variable_order"],
                     "question": v["question"],
+                    "column_kind": v.get("column_kind"),
                     "repeat_group": repeat_of.get(v["question"]),
                     "repeat_iteration": v.get("repeat_iteration"),
                     "ragged": v.get("ragged", False),

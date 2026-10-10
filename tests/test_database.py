@@ -6,7 +6,7 @@ import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from farm_form import SENTINELS, write_pull
+from farm_form import ROWS, SENTINELS, write_pull
 
 from surveycto_python_dict.cli import (
     SEARCH_CHOICES,
@@ -152,6 +152,25 @@ def test_choices_and_edges(database):
         "SELECT value, label FROM farm.choices WHERE question = 'crop' ORDER BY value"
     ).fetchall()
     assert con.sql("SELECT count(*) FROM farm.edges").fetchone()[0] > 0
+
+
+def test_dictionary_says_what_a_column_without_a_question_is(tmp_path, analyzer):
+    config = tmp_path / "config.toml"
+    config.write_text('forms = ["farm"]\nout_dir = "out"\n', encoding="utf-8")
+    cfg = load_config(config)
+    # A column written under another version of the form.
+    write_pull(cfg, rows=[{**r, "old_field": "x"} for r in ROWS])
+    build(cfg, SENTINELS, analyzer)
+    form_dir = cfg.form_dir("farm")
+    write_csv(
+        summary_stats(form_dir, "farm", SENTINELS), form_dir / "farm_summary_stats.csv"
+    )
+    con = duckdb.connect(str(_write(cfg)), read_only=True)
+    assert con.sql(
+        """SELECT "column", column_kind FROM farm.dictionary
+        WHERE question IS NULL AND NOT system"""
+    ).fetchall() == [("old_field", "not_in_form")]
+    con.close()
 
 
 def test_withheld_choices_are_in_the_choices_table(project):
