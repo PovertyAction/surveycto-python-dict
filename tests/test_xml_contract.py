@@ -762,9 +762,17 @@ def test_a_body_control_calculate_is_read(tmp_path):
     assert nodes["seen"].control == "input"
     assert nodes["village"].pulldata["dataset"] == "households"
     assert nodes["village"].data_source["kind"] == "pulldata"
-    # On the body control, the calculate is a default the user can change.
+    # On the body control, the calculate is a default the user can change, unless
+    # the field is never shown.
     assert nodes["seen"].calculation_is_default
     assert not nodes["hh"].calculation_is_default
+    from surveycto_python_dict.questions import build_questions
+
+    defaults = {
+        q["variable_name"]: q["calculation_is_default"]
+        for q in build_questions(parse_contract(path))
+    }
+    assert defaults == {"hh": False, "village": True, "seen": False}
 
 
 _XML_HINT = """<?xml version="1.0"?>
