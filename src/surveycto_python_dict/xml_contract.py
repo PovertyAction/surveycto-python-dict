@@ -145,6 +145,9 @@ class Node:
     preload: str | None = None  # jr:preload (system source, e.g. property)
     preload_params: str | None = None  # jr:preloadParams (e.g. username, deviceid)
     original: str | None = None  # SurveyCTO bind `original` (XLSForm type, e.g. "note")
+    # SurveyCTO bind `fieldType`: "enumerator" picks a row of the form's enumerator
+    # dataset and stores "name (id)".
+    field_type: str | None = None
     # Body label text, from the default translation when the label is itext; each
     # <output value="..."/> is inlined as its expression.
     label: str | None = None
@@ -613,6 +616,10 @@ def _label_text(label) -> str:
     return "".join(parts).strip()
 
 
+# The columns of a SurveyCTO enumerator dataset an enumerator field stores, as
+# "name (id)".
+ENUMERATOR_COLUMNS = ("name", "id")
+
 _ITEXT_REF = re.compile(r"^jr:itext\('([^']+)'\)$")
 _ITEMSET = re.compile(r"^instance\('([^']+)'\)/root/item(?:\[(.*)\])?$", re.DOTALL)
 # A choice filter that reads the submission: current() or a path to a field.
@@ -884,6 +891,7 @@ def parse_contract(xml_path) -> FormContract:
             data_source=source,
             choices_per_submission=path in filtered or searched_by_field,
             original=b.get("original"),
+            field_type=b.get("fieldType"),
             label=labels.get(path),
             hint=hints.get(path),
             constraint_message=message_text(b.get("constraintMsg")),

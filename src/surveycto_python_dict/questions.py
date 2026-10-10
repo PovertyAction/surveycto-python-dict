@@ -11,7 +11,12 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-from surveycto_python_dict.xml_contract import FormContract, Node, is_system_column
+from surveycto_python_dict.xml_contract import (
+    ENUMERATOR_COLUMNS,
+    FormContract,
+    Node,
+    is_system_column,
+)
 
 # Metadata the export writes as a system column when the field has its reserved name
 # (starttime, deviceid, ...); under any other name the field is a question.
@@ -46,6 +51,8 @@ _REF_RE = re.compile(r"\$\{([^}]+)\}")
 
 def _xlsform_type(node: Node) -> str:
     """Return the XLSForm base type a node was compiled from."""
+    if node.field_type == "enumerator":
+        return "enumerator"
     if node.original is not None:
         return node.original
     if node.control in ("select_one", "select_multiple"):
@@ -108,6 +115,13 @@ def _data_source(node: Node, refs: "_Refs") -> dict | None:
     source = node.data_source
     if source is None:
         return None
+    if source["kind"] == "enumerator":
+        return {
+            "kind": "enumerator",
+            "dataset": source["dataset"],
+            "columns": list(ENUMERATOR_COLUMNS),
+            "match": [],
+        }
     if source["kind"] == "pulldata":
         return {
             "kind": "pulldata",
