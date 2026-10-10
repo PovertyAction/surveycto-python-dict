@@ -180,11 +180,17 @@ def test_whitelisted_list_is_added_unscanned(form, analyzer):
     assert "Jorge Perez" not in spy.texts
 
 
-def test_blacklisted_list_is_withheld_and_never_read(form, analyzer):
+def test_blacklisted_list_is_withheld_unscanned_and_keeps_every_choice(form, analyzer):
     xml, datasets = form
-    (datasets / "sizes.csv").unlink()
-    questions, spy = _screen(form, analyzer, PiiConfig(blacklist=("size",)))
-    assert questions["size"]["choices_withheld"] == ["reviewed"]
+    contract = parse_contract(xml)
+    spy = Spy(analyzer)
+    files = {p.stem: p for p in datasets.glob("*.csv")}
+    screen_search_choices(contract, files, PiiConfig(blacklist=("size",)), spy, _ROWS)
+    node = contract.nodes["size"]
+    assert node.choices_withheld == ["reviewed"]
+    assert node.choice_items == [{"value": "-66", "label": "Other"}]
+    # The parquet's binaries come from every choice, withheld or not.
+    assert [c["value"] for c in node.all_choices] == ["1", "2", "-66"]
     assert "small" not in spy.texts
 
 
