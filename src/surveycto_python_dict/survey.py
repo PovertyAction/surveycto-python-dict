@@ -124,7 +124,7 @@ def _kinds_text(summary: dict) -> str:
 def _absent_text(found: list[dict]) -> str:
     text = f"conditions comparing a select with a code it lacks: {len(found)}"
     shown = "; ".join(
-        f"{f['question']} ({f['in']}): {f['select']} has no {f['code']}"
+        f"{f['name']} ({f['in']}): {f['select']} has no {f['code']}"
         for f in found[:_LISTED]
     )
     more = f"; ... {len(found) - _LISTED} more" if len(found) > _LISTED else ""
