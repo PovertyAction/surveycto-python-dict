@@ -772,10 +772,13 @@ class SurveyStore:
         listed = None if len(names) == 1 else 1
         return "\n\n".join(self.lookup_variable(n, columns, listed) for n in names)
 
-    def search_scored(self, query: str) -> list[tuple[tuple[float, float], str]]:
+    def search_scored(
+        self, query: str
+    ) -> tuple[list[tuple[tuple[float, bool, float], str]], set[str]]:
         """Rank questions by how many query words their name, label or hint holds,
-        then by those words' IDF; a hint counts half. A question named exactly
-        ``query`` comes first.
+        then questions someone answers above calculates and repeat counts, then by
+        the words' IDF; a hint counts half. A question named exactly ``query`` comes
+        first. Also return the query words no question holds.
         """
         docs = {
             n: set(_name_tokens(n)) | set(_tokens(_label(q)))
@@ -815,14 +818,16 @@ class SurveyStore:
             }
             scores[n] = (
                 sum(weights.values()),
+                self.questions[n]["type"] not in ("calculate", "repeat_count"),
                 sum(idf[w] * weight for w, weight in weights.items()),
             )
         if query.strip() in scores:
-            scores[query.strip()] = (math.inf, math.inf)
-        return sorted(
+            scores[query.strip()] = (math.inf, True, math.inf)
+        ranked = sorted(
             ((s, n) for n, s in scores.items() if s[0] > 0),
-            key=lambda x: (-x[0][0], -x[0][1], x[1]),
+            key=lambda x: (-x[0][0], -x[0][1], -x[0][2], x[1]),
         )
+        return ranked, {w for w in words if not matched[w] | hinted[w]}
 
     def search_line(self, name: str) -> str:
         """Return a search hit: the question's name, type and short text, and its
@@ -841,10 +846,13 @@ class SurveyStore:
 
     def search_questions(self, query: str, max_results: int = 20) -> str:
         """Rank the form's questions by the words of ``query`` in their name or text."""
-        ranked = self.search_scored(query)[:max_results]
+        ranked, unmatched = self.search_scored(query)
         if not ranked:
             return f"No question of {self.form_id} matches {query!r}."
-        return "\n".join(self.search_line(n) for _, n in ranked)
+        return "\n".join(
+            _unmatched_lines(unmatched)
+            + [self.search_line(n) for _, n in ranked[:max_results]]
+        )
 
     def get_group(self, group: str) -> str:
         """List a group's questions in form order, with their type and condition."""
@@ -1321,20 +1329,30 @@ class SurveyStore:
         )
 
 
+def _unmatched_lines(words: set[str]) -> list[str]:
+    """Return a line naming the query words no question holds, when there are any."""
+    if not words:
+        return []
+    return [f"No question holds: {', '.join(sorted(words))}; ranked on the rest."]
+
+
 def search_forms(stores: dict, query: str, max_results: int = 20) -> str:
     """Search every form's questions; each form ranks its own, best first."""
+    scored = {form: store.search_scored(query) for form, store in stores.items()}
     ranked = sorted(
         (
             (score, form, name)
-            for form, store in stores.items()
-            for score, name in store.search_scored(query)
+            for form, (hits, _) in scored.items()
+            for score, name in hits
         ),
-        key=lambda x: (-x[0][0], -x[0][1], x[1], x[2]),
+        key=lambda x: (-x[0][0], -x[0][1], -x[0][2], x[1], x[2]),
     )[:max_results]
     if not ranked:
         return f"No question of {', '.join(stores)} matches {query!r}."
+    unmatched = set.intersection(*(words for _, words in scored.values()))
     return "\n".join(
-        f"{form}.{stores[form].search_line(name)}" for _, form, name in ranked
+        _unmatched_lines(unmatched)
+        + [f"{form}.{stores[form].search_line(name)}" for _, form, name in ranked]
     )
 
 

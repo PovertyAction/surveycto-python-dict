@@ -490,6 +490,18 @@ def test_search_skips_formulas_and_repeat_count_text_and_weighs_hints_half(store
     assert {"crop", "plot_crop"} <= set(hits[:-1])
 
 
+def test_search_ranks_answered_questions_first_and_names_unmatched_words(store):
+    from surveycto_python_dict.survey import search_forms
+
+    lines = store.search_questions("plot zzz").splitlines()
+    assert lines[0] == "No question holds: zzz; ranked on the rest."
+    types = [store.questions[line.split()[0]]["type"] for line in lines[1:]]
+    computed = [t in ("calculate", "repeat_count") for t in types]
+    # per_plot (a calculate) and plot_count follow every question someone answers.
+    assert any(computed) and computed == sorted(computed)
+    assert search_forms({"farm": store}, "plot zzz").splitlines()[0] == lines[0]
+
+
 def test_search_tags_flagged_columns(store):
     assert "[may_contain_pii]" in store.search_line("owner") or "[contains_pii]" in (
         store.search_line("owner")
