@@ -63,7 +63,6 @@ _SYS_EXACT = {
     "instanceName",
     "SubmitterID",
     "SubmitterName",
-    "X_searchText",
 }
 _SYS_PREFIX = ("meta-", "SET-OF-")
 
