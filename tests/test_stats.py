@@ -3,10 +3,12 @@
 import csv
 import json
 
+import pyarrow as pa
 import pytest
 from farm_form import ROWS, SENTINELS, XML, write_pull
 
 from surveycto_python_dict.cli import build, load_config
+from surveycto_python_dict.dictionary import kept
 from surveycto_python_dict.stats import COLUMNS, summary_stats, write_csv
 
 
@@ -278,6 +280,21 @@ def test_excluded_submissions_are_left_out_of_counts_and_stats(tmp_path, analyze
     import pyarrow.parquet as pq
 
     assert pq.read_table(cfg.form_dir("farm") / "farm.parquet").num_rows == 2
+
+
+def test_an_exclude_can_keep_the_latest_submission_of_each_entity():
+    table = pa.table(
+        {
+            "KEY": ["a", "b", "c"],
+            "hhid": ["1", "1", "2"],
+            "SubmissionDate": [1, 2, 1],
+        }
+    )
+    latest = kept(
+        table,
+        "row_number() OVER (PARTITION BY hhid ORDER BY SubmissionDate DESC) > 1",
+    )
+    assert latest.column("KEY").to_pylist() == ["b", "c"]
 
 
 def test_an_exclude_that_does_not_parse_raises(tmp_path, analyzer):

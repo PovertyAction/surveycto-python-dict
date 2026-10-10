@@ -50,8 +50,12 @@ codes. Never commit `.env`, the `.pem` key, `config.toml` or `data/`.
 
 Submissions the project does not use (tests, say) can be left out of the counts:
 `[submissions] exclude` takes an SQL condition on the parquet's columns
-(`"username = 'test'"`). The dictionary's counts and the stats then cover the other
-rows, `get_survey_info` says how many were left out, and the parquet keeps every row.
+(`"username = 'test'"`), evaluated over every row of the table `submissions`, so a
+window can leave out the submissions a resubmission replaced
+(`"row_number() OVER (PARTITION BY hhid ORDER BY SubmissionDate DESC) > 1"`) and a
+subquery can read a file of `KEY`s by its absolute path. The dictionary's counts and
+the stats then cover the other rows, `get_survey_info` says how many were left out,
+and the parquet keeps every row.
 
 A project is one connected study: one or more forms on one server that chain through
 the server datasets they publish and read (any number of datasets, none included). It
