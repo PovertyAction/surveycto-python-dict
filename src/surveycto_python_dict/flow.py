@@ -102,23 +102,28 @@ def _reads(contract: FormContract, name: str, columns: list[str]) -> list[dict]:
     ``missing`` lists the columns it names that the dataset lacks; ``computed`` is a
     ``pulldata()`` column given as an expression (``concat('score_', index())``);
     ``choices`` are the columns a ``search()`` select takes its values and labels from,
-    a filter column among them.
+    a filter column among them. ``value`` is the column whose value the field stores:
+    the column a ``pulldata()`` returns, or the value column a ``search()`` item names
+    (its labels are only shown); None for a computed ``pulldata()`` column.
     """
     fields = []
     for node in contract.nodes.values():
         source = node.data_source
         if not source or source["dataset"] != name:
             continue
-        computed, choices = None, []
+        computed, choices, stored = None, [], None
         if source["kind"] == "pulldata":
             match = [source["key"]]
             value = source["value"]
             if _QUOTED.fullmatch(value):
-                used = [value[1:-1], source["key"]]
+                stored = value[1:-1]
+                used = [stored, source["key"]]
             else:
                 computed, used = value, [source["key"]]
         else:
             match = list(source["filter"])
+            named = [i for i in node.choice_items if i["value"] in columns]
+            stored = named[0]["value"] if named else None
             items = [
                 v
                 for i in node.choice_items
@@ -136,6 +141,7 @@ def _reads(contract: FormContract, name: str, columns: list[str]) -> list[dict]:
                 "missing": [c for c in used if c not in columns],
                 "computed": computed,
                 "choices": choices,
+                "value": stored,
             }
         )
     return fields

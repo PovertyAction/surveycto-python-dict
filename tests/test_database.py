@@ -415,6 +415,7 @@ def test_joins_connect_a_reader_field_to_the_publisher_field():
                         "dataset": "HH",
                         "match": match,
                     },
+                    "choice_columns": None,
                 }
             ],
             "repeat_of": {},
@@ -460,6 +461,16 @@ def test_joins_connect_a_reader_field_to_the_publisher_field():
         "visit.submissions.visit_hh = listing.submissions.hhid  (through dataset.hh.hhid; "
         "a search() filter: the choices are every matching row)"
     ]
+    # A search() select stores its value column: the field itself joins on it.
+    question = forms["visit"]["questions"][0]
+    question["data_source"]["match"] = []
+    question["choice_columns"] = {"value": "hhid", "label": "village"}
+    _write_project(duckdb.connect(), flow, forms, structure)
+    assert structure["joins"]["joins"] == [
+        "visit.submissions.where = listing.submissions.hhid  (through dataset.hh.hhid; "
+        "the select stores this column; not unique: 1 distinct values in 2 rows, so a "
+        "match can return another row)"
+    ]
 
 
 def test_outputs_writes_stats_codebook_and_database(tmp_path, analyzer, monkeypatch):
@@ -495,3 +506,15 @@ def test_a_project_that_reads_no_dataset(tmp_path, analyzer):
     con = duckdb.connect(str(_write(cfg)), read_only=True)
     assert con.sql("SELECT count(*) FROM main.datasets").fetchone() == (0,)
     con.close()
+
+
+def test_an_empty_table_types_its_text_columns_as_text():
+    import pandas as pd
+
+    from surveycto_python_dict.database import _table
+
+    con = duckdb.connect()
+    _table(con, "main", "empty", pd.DataFrame([], columns=["form", "field"]))
+    assert con.sql(
+        "SELECT data_type FROM information_schema.columns WHERE table_name = 'empty'"
+    ).fetchall() == [("VARCHAR",), ("VARCHAR",)]

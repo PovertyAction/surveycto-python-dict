@@ -113,6 +113,12 @@ _ORIGIN_KINDS = ("entered", "calculated", "carried", "metadata")
 
 
 def _table(con, schema: str, name: str, frame: pd.DataFrame) -> None:
+    # An empty frame has no values to type its columns by: DuckDB would call them
+    # INTEGER, so they are text.
+    if frame.empty:
+        frame = frame.astype(
+            {c: "string" for c in frame.columns if frame[c].dtype == object}
+        )
     con.register("frame", frame)
     con.execute(f"CREATE TABLE {_q(schema, name)} AS SELECT * FROM frame")
     con.unregister("frame")
@@ -188,7 +194,7 @@ _PROJECT = {
     },
     "joins": {
         "grain": "one row per reader field matched to the publisher field it comes "
-        "from; via: pulldata or search; is_unique: the dataset column identifies one "
+        "from; via: pulldata, search (a filter) or search value (the select stores the column); is_unique: the dataset column identifies one "
         "row, which a pulldata() needs and a search() filter does not",
         "key": ["reader_form", "reader_field", "dataset", "dataset_column"],
         "joins": [
@@ -540,39 +546,47 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
             for c in reader["codebook"]
             if c["dataset"] == r["name_in_form"]
         }
+
+        def join(field: str, dataset_column: str, via: str) -> None:
+            path = d["publish_map"].get(dataset_column)
+            if path is None:
+                return
+            published = path.rsplit("/", 1)[-1]
+            column = stats[dataset_column]
+            row = {
+                "reader_form": r["form"],
+                "reader_table": reader["repeat_of"].get(field) or "submissions",
+                "reader_field": field,
+                "dataset": d["id"],
+                "dataset_column": dataset_column,
+                "via": via,
+                "publisher_form": publisher,
+                "publisher_table": forms[publisher]["repeat_of"].get(published)
+                or "submissions",
+                "publisher_field": published,
+                # Unique: each value matches one dataset row. Otherwise a pulldata()
+                # can return another row's value; a search() filter takes every
+                # matching row by design.
+                "is_unique": column["distinct"] == column["non_null"] == column["rows"],
+                "distinct_values": column["distinct"],
+                "dataset_rows": column["rows"],
+            }
+            if row not in joins:
+                joins.append(row)
+
         for q in reader["questions"]:
             source = q["data_source"]
             if not source or source["dataset"] != r["name_in_form"]:
                 continue
             for m in source["match"]:
                 value = m["value"] or ""
-                path = d["publish_map"].get(m["column"])
-                if path is None or not (value.startswith("${") and value.endswith("}")):
-                    continue
-                field, published = value[2:-1], path.rsplit("/", 1)[-1]
-                column = stats[m["column"]]
-                row = {
-                    "reader_form": r["form"],
-                    "reader_table": reader["repeat_of"].get(field) or "submissions",
-                    "reader_field": field,
-                    "dataset": d["id"],
-                    "dataset_column": m["column"],
-                    "via": source["kind"],
-                    "publisher_form": publisher,
-                    "publisher_table": forms[publisher]["repeat_of"].get(published)
-                    or "submissions",
-                    "publisher_field": published,
-                    # Unique: each value matches one dataset row. Otherwise a
-                    # pulldata() can return another row's value; a search() takes
-                    # every matching row by design.
-                    "is_unique": column["distinct"]
-                    == column["non_null"]
-                    == column["rows"],
-                    "distinct_values": column["distinct"],
-                    "dataset_rows": column["rows"],
-                }
-                if row not in joins:
-                    joins.append(row)
+                if value.startswith("${") and value.endswith("}"):
+                    join(value[2:-1], m["column"], source["kind"])
+            # A search() select stores the code of its value column, so the field
+            # equals that column of the row it picked.
+            stored = (q["choice_columns"] or {}).get("value")
+            if source["kind"] == "search" and stored:
+                join(q["variable_name"], stored, "search value")
     tables = {
         "forms": pd.DataFrame(
             [
@@ -664,6 +678,8 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
                 "distinct_values",
                 "dataset_rows",
             ],
+        ).astype(
+            {"is_unique": bool, "distinct_values": "int64", "dataset_rows": "int64"}
         ),
     }
     for name, frame in tables.items():
@@ -675,6 +691,7 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
             f"{j['reader_form']}.{j['reader_table']}.{j['reader_field']} = "
             f"{j['publisher_form']}.{j['publisher_table']}.{j['publisher_field']}  "
             f"(through dataset.{j['dataset']}.{j['dataset_column']}"
+            + ("; the select stores this column" if j["via"] == "search value" else "")
             + (
                 "; a search() filter: the choices are every matching row)"
                 if j["via"] == "search"

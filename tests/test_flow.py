@@ -142,6 +142,7 @@ def test_reads_name_the_fields_and_columns(flow):
             "missing": [],
             "computed": None,
             "choices": ["hhid", "village"],
+            "value": "hhid",
         },
         {
             "field": "where",
@@ -151,6 +152,7 @@ def test_reads_name_the_fields_and_columns(flow):
             "missing": [],
             "computed": None,
             "choices": [],
+            "value": "village",
         },
     ]
     assert visit["zones"]["attached"] is False
@@ -174,8 +176,9 @@ def test_a_read_of_a_column_the_dataset_lacks_is_flagged(tmp_path):
     assert "Comes from: households.villages (no such column)" in upstream_lines(
         flow, "visit", "where"
     )
-    assert "  villages  no such column; read by visit.where (pulldata)" in render_flow(
-        flow, "households"
+    assert (
+        "  villages  no such column; read by visit.where (pulldata value)"
+        in render_flow(flow, "households")
     )
 
 
@@ -259,8 +262,8 @@ def test_render_flow_shows_stages_and_column_lineage(flow):
     assert "  visit reads zones (area)" in text
     lineage = render_flow(flow, "households")
     assert (
-        "  village  <- listing.village (entered)  -> visit.hh (search), "
-        "visit.where (pulldata)" in lineage
+        "  village  <- listing.village (entered)  -> visit.hh (search label), "
+        "visit.where (pulldata value)" in lineage
     )
 
 
@@ -476,10 +479,12 @@ def test_lineage_follows_reads_back_to_the_entered_question(flow, tmp_path):
     hh = trace_lineage(stores, "visit", "hh").splitlines()
     assert hh[:4] == [
         "visit.hh (select_one): Household",
-        "  choices: rows of households",
+        "  choices: rows of households; stores hhid, shows village",
         "    households.hhid: published by listing",
         "      listing.hhid (text): Household",
     ]
+    # The label only shows: the value's lineage does not run through it.
+    assert not any("households.village" in line for line in hh)
 
 
 def test_lineage_says_a_pulldata_key_is_not_unique(flow, tmp_path):
@@ -524,7 +529,7 @@ def test_lineage_follows_a_choice_column_the_search_also_filters_on(tmp_path):
     stores = _stores(tmp_path, _flow(tmp_path, xmls), xmls)
     assert trace_lineage(stores, "visit", "hh").splitlines()[:4] == [
         "visit.hh (select_one): Household",
-        "  choices: rows of households where hhid = ${area}",
+        "  choices: rows of households where hhid = ${area}; stores hhid, shows village",
         "    households.hhid: published by listing",
         "      listing.hhid (text): Household",
     ]

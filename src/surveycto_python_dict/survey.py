@@ -486,6 +486,17 @@ def render_mermaid(flow: dict) -> str:
     return "\n".join(lines)
 
 
+def _role(read: dict, column: str) -> str:
+    """Return how a field uses a dataset column: the value it stores, the key or filter
+    it matches rows on, or a label it only shows.
+    """
+    if column in read["match"]:
+        return f"{read['via']} {'key' if read['via'] == 'pulldata' else 'filter'}"
+    if read["via"] == "search" and column != read["value"]:
+        return "search label"
+    return f"{read['via']} value"
+
+
 def render_flow(flow: dict, dataset: str | None = None, columns: bool = False) -> str:
     """Render ``flow.json``: forms by stage, then each dataset's publisher and readers.
 
@@ -508,7 +519,7 @@ def render_flow(flow: dict, dataset: str | None = None, columns: bool = False) -
             for f in r["fields"]:
                 for column in f["columns"]:
                     readers.setdefault(column, []).append(
-                        f"{r['form']}.{_leaf(f['field'])} ({f['via']})"
+                        f"{r['form']}.{_leaf(f['field'])} ({_role(f, column)})"
                     )
         if not columns and len(d["columns"]) > _LISTED:
             return "\n".join(lines + _field_lines(d, readers))
@@ -737,7 +748,8 @@ class SurveyStore:
             lines += [self._column_line(c) for c in columns]
         if any(self.variables[c]["pii"]["status"] in _FLAGGED for c in columns):
             lines.append(
-                f"PII: check pii.status before reading these values; review {self.review_file}."
+                "PII: use flagged columns in scripts like any other, but print only "
+                f"their counts and KEYs; the team checks the flags in {self.review_file}."
             )
         return "\n".join(lines)
 
@@ -1489,16 +1501,21 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
             where = " and ".join(
                 f"{m['column']} = {m['value']}" for m in source["match"]
             )
-            line = f"{pad}  choices: rows of {d['id']}" + (
-                f" where {where}" if where else ""
+            # The select stores its value column; the label columns are only shown.
+            labels = [c for c in read["choices"] if c != read["value"]]
+            line = (
+                f"{pad}  choices: rows of {d['id']}"
+                + (f" where {where}" if where else "")
+                + (f"; stores {read['value']}" if read["value"] else "")
+                + (f", shows {', '.join(labels)}" if labels else "")
             )
             if not d["published_by"]:
                 what = "an attached file" if d["kind"] == "form_file" else "external"
                 lines.append(f"{line} ({what}, no project form fills it)")
             else:
                 lines.append(line)
-                for col in read["choices"]:
-                    column(d, col, depth + 2)
+                if read["value"]:
+                    column(d, read["value"], depth + 2)
         for ref in refs:
             walk(form, ref, depth + 1)
 
