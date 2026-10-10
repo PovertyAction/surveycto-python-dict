@@ -139,6 +139,12 @@ def _source_line(source: dict) -> str:
     )
 
 
+_PII_LINE = (
+    "-- Every view holds every column; dictionary.pii_status says which may hold "
+    "personal data: use them in scripts, print only their counts and KEYs."
+)
+
+
 def render_structure(
     project: str, objects: list[dict], all_columns: bool = False, listed: int = _LISTED
 ) -> str:
@@ -149,18 +155,13 @@ def render_structure(
     """
     lines = [
         f"-- {project}.duckdb: every table and view, what one row is, its key and joins.",
-        "-- Read values only from the *_safe views; the description tables are open.",
+        _PII_LINE,
     ]
     for o in objects:
         lines += ["", f"-- {o['kind']} {o['name']}: {o['grain']}"]
         lines.append(f"--   key: {', '.join(o['key'])}")
         lines += [f"--   join: {j}" for j in o["joins"]]
         columns = o["columns"]
-        if "safe_columns" in o:
-            lines.append(
-                f"--   {o['name']}_safe: the same with its {o['safe_columns']} cleared "
-                "columns"
-            )
         if len(columns) > listed and not all_columns:
             lines.append(
                 f"--   columns ({len(columns)}): "
@@ -190,27 +191,19 @@ def render_structure_summary(project: str, objects: list[dict]) -> str:
     lines = [
         f"-- {project}.duckdb: {len(objects)} tables and views in {len(schemas)} "
         "schemas. get_structure_db(<schema>) maps one schema in full.",
-        "-- Read values only from the *_safe views; the description tables are open.",
+        _PII_LINE,
     ]
     main = render_structure(project, schemas.pop("main"))
     lines += ["", "-- schema main: the project, from flow.json"]
     lines += main.splitlines()[2:]
-    datasets = [
-        o for o in schemas.pop("dataset", []) if not o["name"].endswith("_safe")
-    ]
-    lines += ["", f"-- schema dataset: {len(datasets)} datasets, each with <id>_safe"]
+    datasets = schemas.pop("dataset", [])
+    lines += ["", f"-- schema dataset: {len(datasets)} datasets"]
     lines += [f"--   {o['name'].split('.', 1)[1]}: {o['grain']}" for o in datasets]
     for schema, members in schemas.items():
         width = next(
             len(o["columns"]) for o in members if o["name"].endswith(".submissions")
         )
-        repeats = [
-            o
-            for o in members
-            if o["kind"] == "view"
-            and len(o["key"]) > 1
-            and not o["name"].endswith("_safe")
-        ]
+        repeats = [o for o in members if o["kind"] == "view" and len(o["key"]) > 1]
         tables = [o for o in members if o["kind"] == "table"]
         deepest = max((len(o["key"]) - 1 for o in repeats), default=0)
         lines += [
@@ -252,21 +245,9 @@ def render_structure_schema(project: str, objects: list[dict], schema: str) -> s
         mine = [j for j in joins["joins"] if f"{schema}." in j]
         if mine:
             picked.append({**joins, "joins": mine})
-    # A schema can hold dozens of tables: each *_safe view is one line under its full
-    # view, and a table's columns are counted, listed by get_structure_db(schema, table).
-    names = {o["name"] for o in picked}
-    safe = {
-        o["name"].removesuffix("_safe"): len(o["columns"])
-        for o in picked
-        if o["name"].endswith("_safe") and o["name"].removesuffix("_safe") in names
-    }
-    folded = [
-        {**o, "safe_columns": safe[o["name"]]} if o["name"] in safe else o
-        for o in picked
-        if o["name"].removesuffix("_safe") not in safe
-        or not o["name"].endswith("_safe")
-    ]
-    return render_structure(project, folded, listed=0)
+    # A schema can hold dozens of tables: a table's columns are counted, listed by
+    # get_structure_db(schema, table).
+    return render_structure(project, picked, listed=0)
 
 
 def _places(item: dict) -> str:
@@ -901,7 +882,7 @@ class SurveyStore:
             )
             lines.append(
                 f"  The rest: {columns['value']} and {columns['label']} of "
-                f"{self.project}.duckdb dataset.{d['id']}_safe"
+                f"{self.project}.duckdb dataset.{d['id']}"
                 + (f" where {where}" if where else "")
                 + ", read in a script"
             )
@@ -1087,8 +1068,7 @@ class SurveyStore:
         view = f"dataset.{dataset_id}"
         return [
             f"{name}: {cols[0]['rows']} rows, {len(cols)} columns, pii {statuses}",
-            f"  In {self.project}.duckdb: {view} (every column, plus row) and "
-            f"{view}_safe (row plus cleared columns).",
+            f"  In {self.project}.duckdb: {view} (every column, plus row).",
         ]
 
     def _join_lines(

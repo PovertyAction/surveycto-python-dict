@@ -108,9 +108,6 @@ class PiiConfig:
     # True: the project holds no personal data (study metadata, say); every column
     # past the blacklist, publishable and device rules is whitelisted, unscanned.
     no_personal_data: bool = False
-    # Flagged columns (or questions, or dataset.column) the _safe views show masked:
-    # a salted hash, so the column still groups and joins without its values.
-    mask: tuple[str, ...] = ()
 
     def __post_init__(self):
         """Raise when a name is on both the whitelist and the blacklist."""

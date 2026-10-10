@@ -95,17 +95,14 @@ column, dataset column and `search()` list that is not blacklisted or collection
 metadata is `whitelisted` with basis `project`, and Presidio never runs. Collection
 metadata is `contains_pii` under any setting and any name: device columns
 (`username`, `deviceid`, ...), a field that preloads them, a calculate that calls
-`enumerator-id()`, `enumerator-name()` or `username()`. The `[pii]` settings also change the parquet's columns: a `search()` list
-Presidio withholds is not written out, so its select_multiple has binaries only for the
-codes picked. Rebuild after changing them, and write cleaning code against that build.
+`enumerator-id()`, `enumerator-name()` or `username()`.
 
-The `*_safe` views leave flagged columns out. A flagged column needed as an
-identifier (a coder's name that tells a resubmission from double coding, say) goes
-in `[pii] mask`: the `_safe` views then keep it under its own name as `pii_` and 12
-hex digits of a SHA-256 salted with `SCTO_MASK_SALT`, nulls kept. The same text
-gives the same mask in every form and dataset, so it still groups, counts and joins.
-Anyone with the salt can match a mask to a guessed value, so keep it out of the
-outputs and of chats.
+A flag says where personal data may be, so it is handled carefully; the data stays
+whole. The parquet, the long tables and every view in `<project>.duckdb` keep every
+column, flagged or not, and a `search()` list withheld from the outputs keeps all its
+binaries. Cleaning scripts use flagged columns like any other (join on a coder's name,
+deduplicate on a phone number) and print only their counts and `KEY`s; their values
+stay out of what an agent sees. Removing a column is a delivery decision for the team.
 
 A `search()` select's choices come from its dataset, never from the XML. A list of up to
 50 choices is written into the outputs; a longer one stays in its dataset
@@ -198,11 +195,11 @@ project. A database holds schemas and a schema holds tables and views:
 ```text
 <project>.duckdb
 ├── <form>          one schema per form
-│   ├── submissions, submissions_safe           views over <form>.parquet, columns outside repeats
-│   ├── <repeat>, <repeat>_safe                 views over long/<repeat>.parquet
+│   ├── submissions                 view over <form>.parquet, columns outside repeats
+│   ├── <repeat>                    view over long/<repeat>.parquet
 │   └── dictionary, questions, choices, edges, dataset_links, dataset_codebook, stats
 ├── dataset         each dataset once, under its flow.json id
-│   └── <id>, <id>_safe                         views over raw/datasets/<id>.csv
+│   └── <id>                        view over raw/datasets/<id>.csv
 └── main            the project, from flow.json
     └── forms, datasets, publishes, reads, joins
 ```
@@ -226,19 +223,17 @@ the next as the forms do. Select in SQL, clean in pandas:
 import duckdb
 
 con = duckdb.connect("data/out/<project>/<project>.duckdb", read_only=True)
-long = con.sql("SELECT * FROM <form>.<repeat>_safe").df()
+long = con.sql("SELECT * FROM <form>.<repeat>").df()
 chained = con.sql("""
     SELECT v.KEY, l.KEY AS listing_key
-    FROM visit.submissions_safe v
-    JOIN dataset.households_safe d ON d.hhid = v.hhid
-    JOIN listing.submissions_safe l ON l.hhid = d.hhid
+    FROM visit.submissions v
+    JOIN dataset.households d ON d.hhid = v.hhid
+    JOIN listing.submissions l ON l.hhid = d.hhid
 """).df()
 ```
 
-The `*_safe` views hold only `cleared_by_form` and `whitelisted` columns (for a
-dataset, the columns every reading form clears); agents read values through them.
-Adding a column to `[pii] whitelist` (a dataset column as `dataset.column`) and
-rebuilding lets it in.
+Every view holds every column; `<form>.dictionary.pii_status` and
+`<form>.dataset_codebook.pii_status` say which may hold personal data.
 
 ## Survey-expert MCP server and skill
 

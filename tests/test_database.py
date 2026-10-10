@@ -61,18 +61,15 @@ def test_schemas_views_and_tables(database):
     ).fetchall()
     assert objects == [
         ("dataset", "farm/prev_round.csv", "VIEW"),
-        ("dataset", "farm/prev_round.csv_safe", "VIEW"),
         ("farm", "choices", "BASE TABLE"),
         ("farm", "dataset_codebook", "BASE TABLE"),
         ("farm", "dataset_links", "BASE TABLE"),
         ("farm", "dictionary", "BASE TABLE"),
         ("farm", "edges", "BASE TABLE"),
         ("farm", "plot", "VIEW"),
-        ("farm", "plot_safe", "VIEW"),
         ("farm", "questions", "BASE TABLE"),
         ("farm", "stats", "BASE TABLE"),
         ("farm", "submissions", "VIEW"),
-        ("farm", "submissions_safe", "VIEW"),
         ("main", "datasets", "BASE TABLE"),
         ("main", "forms", "BASE TABLE"),
         ("main", "joins", "BASE TABLE"),
@@ -104,20 +101,17 @@ def test_submissions_reads_the_parquet(database):
     ).fetchall() == [("plot",)]
 
 
-def test_safe_view_has_only_cleared_columns(database):
+def test_flagged_columns_stay_in_their_views(database):
     con, _ = database
-    safe = con.sql("SELECT * FROM farm.submissions_safe LIMIT 0").columns
-    cleared = (
-        con.sql(
-            """SELECT "column" FROM farm.dictionary
-           WHERE pii_status IN ('cleared_by_form', 'whitelisted')
-             AND "table" = 'submissions' ORDER BY variable_order"""
-        )
-        .df()["column"]
-        .tolist()
-    )
-    assert safe == cleared
-    assert "owner" not in safe
+    flagged = con.sql(
+        """SELECT "column", "table" FROM farm.dictionary
+           WHERE pii_status NOT IN ('cleared_by_form', 'whitelisted')"""
+    ).fetchall()
+    assert ("owner", "submissions") in flagged
+    for column, table in flagged:
+        columns = con.sql(f"SELECT * FROM farm.{table} LIMIT 0").columns
+        assert column in columns or column.rsplit("_", 1)[0] in columns
+    assert {"owner", "phone"} <= set(con.sql(f"SELECT * FROM {_PREV} LIMIT 0").columns)
 
 
 def test_repeat_is_long_with_one_row_per_answered_instance(database):
@@ -143,17 +137,6 @@ def test_repeat_no_submission_reached_is_its_keys_without_rows():
     long = _long_table(wide, {}, ["KEY", "hh_index", "member_index"])
     assert long.num_rows == 0
     assert long.schema.names == ["KEY", "hh_index", "member_index"]
-
-
-def test_repeat_safe_view_drops_flagged_columns(database):
-    con, _ = database
-    flagged = con.sql(
-        """SELECT DISTINCT question FROM farm.dictionary
-           WHERE repeat_group = 'plot' AND pii_status NOT IN ('cleared_by_form', 'whitelisted')"""
-    ).fetchall()
-    safe = con.sql("SELECT * FROM farm.plot_safe LIMIT 0").columns
-    assert safe[:2] == ["KEY", "plot_index"]
-    assert not {q for (q,) in flagged} & set(safe)
 
 
 def test_choices_and_edges(database):
@@ -211,13 +194,6 @@ def test_dataset_codebook_lists_readers_and_status(database):
     assert by_column["phone"][3] in ("may_contain_pii", "no_hits")
 
 
-def test_dataset_safe_view_has_row_and_cleared_columns(database):
-    con, _ = database
-    safe = 'dataset."farm/prev_round.csv_safe"'
-    assert con.sql(f"SELECT * FROM {safe}").fetchall() == [(1, "007")]
-    assert con.sql(f"SELECT * FROM {safe} LIMIT 0").columns == ["row", "plot_code"]
-
-
 def test_project_tables_come_from_the_flow(database):
     con, _ = database
     assert con.sql("SELECT form, stage FROM forms").fetchall() == [("farm", 1)]
@@ -247,46 +223,41 @@ def test_structure_comes_from_the_finished_database(database):
         ).fetchall()
     }
     assert set(names) == in_file
-    plot = next(o for o in objects if o["name"] == "farm.plot_safe")
+    plot = next(o for o in objects if o["name"] == "farm.plot")
     assert plot["kind"] == "view"
     assert plot["key"] == ["KEY", "plot_index"]
-    assert plot["joins"] == [
-        "farm.plot_safe.KEY = farm.submissions_safe.KEY  (many to one)"
-    ]
+    assert plot["joins"] == ["farm.plot.KEY = farm.submissions.KEY  (many to one)"]
     assert {"name": "plot_index", "type": "INTEGER"} in plot["columns"]
-    prev = next(o for o in objects if o["name"] == "dataset.farm/prev_round.csv_safe")
+    prev = next(o for o in objects if o["name"] == "dataset.farm/prev_round.csv")
     assert prev["joins"] == [
-        "dataset.farm/prev_round.csv_safe.phone = farm.submissions_safe.phone  "
+        "dataset.farm/prev_round.csv.phone = farm.submissions.phone  "
         "(many to one: the column is unique in the dataset)"
     ]
 
     store = SurveyStore(cfg.form_dir("farm"), "farm")
     summary = store.get_structure_db()
-    assert summary.startswith("-- farmproject.duckdb: 18 tables and views in 3 schemas")
+    assert summary.startswith("-- farmproject.duckdb: 15 tables and views in 3 schemas")
     assert "-- table joins: one row per reader field matched" in summary
     assert "--   farm/prev_round.csv: one row per CSV row" in summary
     assert (
         "-- schema farm: submissions (" in summary
         and "repeat tables: 1, nested up to 1 deep; description tables: 7" in summary
     )
-    assert "farm.plot_safe" not in summary
+    assert "use them in scripts, print only their counts and KEYs" in summary
 
     out = store.get_structure_db("farm")
     assert "-- view farm.plot: one row per instance of the repeat plot" in out
-    assert "--   farm.plot_safe: the same with its " in out
     assert "--   join: farm.plot.KEY = farm.submissions.KEY  (many to one)" in out
-    assert "-- view farm.plot_safe" not in out
     assert "plot_size" in store.get_structure_db("farm", "plot")
     assert "-- table farm.dictionary: one row per parquet column; table names" in out
     # The datasets the form joins come with it.
     assert "-- view dataset.farm/prev_round.csv:" in out
-    assert "--   dataset.farm/prev_round.csv_safe: the same with its " in out
     with pytest.raises(ValueError, match="no schema 'nope'"):
         store.get_structure_db("nope")
 
     # The file on disk keeps every object.
     sql = (cfg.out_dir / "farmproject_db.sql").read_text(encoding="utf-8")
-    assert "-- view farm.plot_safe:" in sql and "-- table forms:" in sql
+    assert "-- view farm.plot:" in sql and "-- table forms:" in sql
 
 
 def test_declared_dataset_key_is_checked_and_named(database):
@@ -440,57 +411,6 @@ def test_outputs_writes_stats_codebook_and_database(tmp_path, analyzer, monkeypa
     assert (form_dir / "farm_codebook.xlsx").exists()
     con = duckdb.connect(str(cfg.out_dir / "farmproject.duckdb"), read_only=True)
     assert con.sql("SELECT count(*) FROM farm.stats").fetchone() == (28,)
-
-
-def test_masked_columns_stay_in_safe_views_as_salted_hashes(project):
-    from surveycto_python_dict.database import Mask
-
-    flow = json.loads((project.out_dir / "flow.json").read_text(encoding="utf-8"))
-    path = write_database(
-        project.out_dir,
-        project.project,
-        list(project.forms),
-        dataset_csvs(project, flow),
-        project.dataset_keys,
-        Mask(("phone", "prev_round.owner"), "salt"),
-    )
-    con = duckdb.connect(str(path), read_only=True)
-    phones = [
-        r[0] for r in con.sql("SELECT phone FROM farm.submissions_safe").fetchall()
-    ]
-    assert all(p.startswith("pii_") and len(p) == 16 for p in phones)
-    assert "3104567890" not in phones
-    (owner,) = con.sql(
-        'SELECT owner FROM dataset."farm/prev_round.csv_safe"'
-    ).fetchone()
-    assert owner.startswith("pii_")
-    # owner is flagged and not masked: still left out.
-    columns = {r[0] for r in con.sql("DESCRIBE farm.submissions_safe").fetchall()}
-    assert "owner" not in columns
-    con.close()
-
-
-def test_mask_needs_a_salt_and_names_that_exist():
-    from surveycto_python_dict.api import MissingEnvVar
-    from surveycto_python_dict.database import Mask
-
-    with pytest.raises(MissingEnvVar, match="SCTO_MASK_SALT"):
-        Mask(("phone",), None)
-
-
-def test_mask_of_an_unknown_name_raises(project):
-    from surveycto_python_dict.database import Mask
-
-    flow = json.loads((project.out_dir / "flow.json").read_text(encoding="utf-8"))
-    with pytest.raises(ValueError, match="no flagged column named nothing"):
-        write_database(
-            project.out_dir,
-            project.project,
-            list(project.forms),
-            dataset_csvs(project, flow),
-            project.dataset_keys,
-            Mask(("nothing",), "salt"),
-        )
 
 
 def test_a_project_that_reads_no_dataset(tmp_path, analyzer):
