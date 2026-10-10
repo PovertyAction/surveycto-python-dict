@@ -272,7 +272,7 @@ harder to find.
    repeat has a `<repeat>_count` question. Instance `n` is the n-th entry, **not** a
    choice code: map positions to codes through the routing variable after reshaping.
 2. **Suggested: work each repeat at its own level, from its long view.** `just duckdb`
-   writes `<form>.<repeat>` / `<form>.<repeat>_safe` in the project database: one row
+   writes `<form>.<repeat>` in the project database: one row
    per instance with any value, keyed by
    `KEY` and one `<repeat>_index` per repeat from the outermost down, each field
    under its name without the instance suffix. A household roster becomes one row per
@@ -282,13 +282,13 @@ harder to find.
    con = duckdb.connect("data/out/<project>/<project>.duckdb", read_only=True)
    roster = con.sql(
        "SELECT KEY, roster_index AS member, member_name, member_age "
-       "FROM baseline.roster_safe"
+       "FROM baseline.roster"
    ).df()
    assert not roster.duplicated(["KEY", "member"]).any()
 
    # The view keeps every instance with a value, so compare with the declared count:
    # an instance past it was filled and then dropped from the count.
-   counts = con.sql("SELECT KEY, roster_count FROM baseline.submissions_safe").df()
+   counts = con.sql("SELECT KEY, roster_count FROM baseline.submissions").df()
    ```
 3. **Merge back with the identifiers and a declared cardinality:**
    ```python
@@ -337,7 +337,8 @@ harder to find.
 1. **Two phases:** validate raw invariants (domains, gate-to-detail counts, skip
    structure against the instrument), then transform with tolerance checks.
 2. **Log what each step changes:** pandas never reports "N changes made", so log
-   `mask.sum()`; end each module with `describe(include="all")` and missing counts.
+   `mask.sum()`; end each module with missing counts, and `describe()` of the
+   columns whose values you may see.
 3. **Compare outputs per column, aligned on KEY:** `NaN != NaN` is true, so count
    `(a != b) & ~(a.isna() & b.isna())`, and judge floats by maximum difference
    (`np.isclose`), not a file hash. Take a fresh "before" snapshot for each change.
@@ -374,15 +375,20 @@ harder to find.
 
 ## 11. PII
 
-1. **Check `pii.status` before reading any column's values;** `contains_pii` and
-   `may_contain_pii` are for the people cleaning the data, through
+1. **A flag means handle carefully, never drop or avoid.** Scripts use every column:
+   join on it, clean it, deduplicate on it, keep it. For a `contains_pii`,
+   `may_contain_pii` or `no_hits` column, print counts, null rates, distinct counts and
+   the `KEY`s a check flags, never its values, `head()`, `value_counts()` or
+   `describe()`. The people cleaning the data verify the flags in
    `<form>_pii_review.xlsx`.
 2. **Presidio over-flags** (codes read as names): it proposes, a person decides, and the
    decision goes in `[pii] whitelist`, or `[pii] blacklist` for columns that are
    personal even when the form marks them publishable.
-3. **Free text:** drop or review before sharing; keep derived scores. Do not drop every
-   other-specify column; only the flagged ones are PII.
-4. **Scan what you deliver,** derived columns included, and make the drop repeatable.
+3. **Sharing is decided at delivery, by the team:** free text is reviewed before it
+   leaves the project, derived scores stay, and only the flagged other-specify columns
+   are PII.
+4. **Scan what you deliver,** derived columns included, and make the delivery step
+   repeatable.
 5. **Tokenize IDs with an HMAC crosswalk** (`hmac.new(key, id.encode(), hashlib.sha256)`,
    base32): deterministic for joins, irreversible without the key. Key and crosswalk
    never go in the repo. One-off corrections keyed by signature survive tokenization.

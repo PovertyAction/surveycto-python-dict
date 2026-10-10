@@ -1,6 +1,6 @@
 ---
 name: survey-expert
-description: Read a SurveyCTO form's outputs from surveycto-python-dict - questions.json, the variable dictionary, the variable graph - to explain questions, skip logic, choices, repeat groups and columns, and to tell which columns may hold PII before anyone reads their values. Use when asked what a variable or column means, why it is missing, what gates or feeds it, how a repeat or select_multiple is laid out, or whether a column is safe to look at.
+description: Read a SurveyCTO form's outputs from surveycto-python-dict - questions.json, the variable dictionary, the variable graph - to explain questions, skip logic, choices, repeat groups and columns, and to tell which columns may hold PII so they are handled carefully. Use when asked what a variable or column means, why it is missing, what gates or feeds it, how a repeat or select_multiple is laid out, or how to handle a column that may hold PII.
 ---
 
 # Survey expert
@@ -15,9 +15,9 @@ writes: one folder per form, `<out_dir>/<form>/`, and the project's `<out_dir>/f
 | `sections/section_<group>.json` | `questions.json` sliced per group level |
 | `<form>_variable_dictionary.json` | One entry per parquet column: stats, types, sentinels, `pii` |
 | `<form>_variable_graph.json` | Questions linked by calculation, relevance, constraint and repeat |
-| `<form>.parquet` | The submissions. **Do not read it** unless the columns you need are cleared (below) |
-| `<form>_pii_review.xlsx` | Every value of a flagged column, for the people cleaning the data. **Never read it** |
-| `<out_dir>/<project>.duckdb` | `just duckdb`: one database for the project. A schema per form (`<form>.submissions` with the columns outside repeats, `<form>.<repeat>` long with `KEY` and one `<repeat>_index` per enclosing repeat, and the descriptions as tables; `<form>.dictionary.table` names each column's view), `dataset.<id>` for each dataset once, and `main.forms`, `datasets`, `publishes`, `reads`, `joins` for the chain. **Read values only through the `*_safe` views.** A column on `[pii] mask` appears there as `pii_<hash>`: use it to group, count and join, never to recover the value. `<form>.dataset_links` gives each `pulldata()`/`search()` match; `main.joins` connects a reader's field to the publisher's field across forms. `get_structure_db` summarises it; `get_structure_db(<form>)` maps one schema |
+| `<form>.parquet` | The submissions, every column. Scripts use it; flagged columns' values stay out of what you print (below) |
+| `<form>_pii_review.xlsx` | Every value of a flagged column, for the people cleaning the data to verify the flags. **Never open it** |
+| `<out_dir>/<project>.duckdb` | `just duckdb`: one database for the project. A schema per form (`<form>.submissions` with the columns outside repeats, `<form>.<repeat>` long with `KEY` and one `<repeat>_index` per enclosing repeat, and the descriptions as tables; `<form>.dictionary.table` names each column's view), `dataset.<id>` for each dataset once, and `main.forms`, `datasets`, `publishes`, `reads`, `joins` for the chain. Every view holds every column; `dictionary.pii_status` says which to handle carefully. `<form>.dataset_links` gives each `pulldata()`/`search()` match; `main.joins` connects a reader's field to the publisher's field across forms. `get_structure_db` summarises it; `get_structure_db(<form>)` maps one schema |
 | `<out_dir>/flow.json`, `flow.md` | The project: which form publishes each dataset, which forms read it (fields and columns), each published column's origin, each form's stage; `flow.md` draws it |
 | `<form>_summary_stats.csv` | `just stats`: per column, eligible rows under skip logic, sentinels apart, then stats; flagged PII columns get counts only |
 
@@ -81,24 +81,31 @@ A name can be a question (`water_source`) or a column (`water_source_3`); a colu
 lookup returns its question with every column it produced. Read the JSON files
 directly only for what the tools do not show, such as a whole section.
 
-## PII: check before reading values
+## PII: use every column, see only cleared values
 
-Every column carries `pii.status` with the `basis` for it:
+Every column carries `pii.status` with the `basis` for it. The status says where
+personal data may be so it is handled carefully; it never means drop the column or
+work around it. Scripts use every column: join on a coder's name, deduplicate on a
+phone number, clean a free-text field, keep them in the output. What changes is what
+you see: a flagged column's values never reach the conversation.
 
-| Status | Meaning | Values |
+| Status | Meaning | You may see |
 |---|---|---|
-| `cleared_by_form` | The form marks the field `publishable` | May be read |
-| `whitelisted` | Reviewed by the team (`reviewed`), a system column, a number/date, an inline-choice select, or a calculate whose inputs are all cleared (`lineage:...`) | May be read |
-| `contains_pii` | Blacklisted by the team (`reviewed`), collection metadata (device or user, under any name), GPS, or an attachment | Do not read |
-| `may_contain_pii` | Presidio found names, phones, emails or places (`presidio:PERSON`, ...) in its values | Do not read |
-| `no_hits` | Free text where Presidio found nothing | Treat as unreviewed; ask before reading |
+| `cleared_by_form` | The form marks the field `publishable` | Its values |
+| `whitelisted` | Reviewed by the team (`reviewed`), a system column, a number/date, an inline-choice select, or a calculate whose inputs are all cleared (`lineage:...`) | Its values |
+| `contains_pii` | Blacklisted by the team (`reviewed`), collection metadata (device or user, under any name), GPS, or an attachment | Counts and `KEY`s only |
+| `may_contain_pii` | Presidio found names, phones, emails or places (`presidio:PERSON`, ...) in its values | Counts and `KEY`s only |
+| `no_hits` | Free text where Presidio found nothing | Counts and `KEY`s until the team reviews it |
 
-This is a signal, not enforcement. When a task needs a flagged column's values, say so
-and leave the reading to the user, who reviews `<form>_pii_review.xlsx` and adds the
-columns they clear to `[pii] whitelist` in `config.toml` (and personal ones to
-`[pii] blacklist`). A `search()` select with `choices_withheld` has no choice list in
-the outputs: its dataset held what Presidio flags; `get_choice_list` names the dataset's
-value and label columns instead. `presidio.hit_rows` counts the
+For a flagged column, a script prints counts, null rates, distinct counts and the
+`KEY`s of the rows a check flags, never the values, `head()` or `value_counts()`.
+Whether a column leaves a delivered dataset is the team's decision, not a cleaning
+default. A flag the team disagrees with is fixed in `config.toml`: they review
+`<form>_pii_review.xlsx` and add the columns they clear to `[pii] whitelist` (and
+personal ones to `[pii] blacklist`). A `search()` list that Presidio flags, the team puts on
+`[pii] blacklist` or that has more than 50 choices is referred to, not listed
+(`choices_withheld` says why): `get_choice_list` names its dataset, value and label
+columns and filter, and a script reads it. The parquet keeps all its binaries. `presidio.hit_rows` counts the
 rows with a hit and `presidio.hit_keys` gives up to five of their `KEY`s; quote counts
 and KEYs, never values.
 
