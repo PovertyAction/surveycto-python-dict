@@ -643,7 +643,9 @@ class SurveyStore:
             f". lookup_variable('{name}', columns=True) lists each."
         )
 
-    def _render_question(self, q: dict, all_columns: bool = False) -> str:
+    def _render_question(
+        self, q: dict, all_columns: bool = False, listed: int | None = None
+    ) -> str:
         lines = [f"{q['variable_name']} ({q['type']})"]
         if q["question_text"]:
             lines.append(f"Text: {q['question_text']}")
@@ -672,10 +674,7 @@ class SurveyStore:
                 "shows them"
             )
         elif q["choices"]:
-            lines.append(
-                "Choices: "
-                + "; ".join(f"{c['value']} = {c['label']}" for c in q["choices"])
-            )
+            lines.append(_choices_line(q))
         if q["choices_per_submission"] and q["type"] == "select_multiple":
             lines.append(
                 "Binaries: only for the codes someone picked (the form filters the "
@@ -699,7 +698,7 @@ class SurveyStore:
         if q["publishable"]:
             lines.append("Publishable: yes")
         columns = self.columns.get(q["variable_name"], [])
-        if len(columns) > _LISTED and not all_columns:
+        if len(columns) > (_LISTED if listed is None else listed) and not all_columns:
             lines.append(self._columns_summary(q["variable_name"], columns))
         else:
             lines.append("Columns:" if columns else "Columns: none in the data")
@@ -710,18 +709,20 @@ class SurveyStore:
             )
         return "\n".join(lines)
 
-    def lookup_variable(self, name: str, columns: bool = False) -> str:
+    def lookup_variable(
+        self, name: str, columns: bool = False, listed: int | None = None
+    ) -> str:
         """Describe a question, or the column ``name`` and its question.
 
-        A question with more than 20 columns (a repeat, a long choice list) gets a
-        summary of them; ``columns`` lists each.
+        A question with more than ``listed`` columns (default 20: a repeat, a long
+        choice list) gets a summary of them; ``columns`` lists each.
         """
         if name in self.questions:
-            return self._render_question(self.questions[name], columns)
+            return self._render_question(self.questions[name], columns, listed)
         if name in self.variables:
             question = self.variables[name]["question"]
             if question is not None:
-                return self._render_question(self.questions[question], columns)
+                return self._render_question(self.questions[question], columns, listed)
             v = self.variables[name]
             what = _KINDS[v["column_kind"]] if "column_kind" in v else "a system column"
             return (
@@ -734,8 +735,11 @@ class SurveyStore:
         return f"No variable or question named {name!r}.{hint}"
 
     def lookup_variables(self, names: list[str], columns: bool = False) -> str:
-        """Describe several variables."""
-        return "\n\n".join(self.lookup_variable(n, columns) for n in names)
+        """Describe several variables; with more than one, a question's columns are
+        summarised unless ``columns``.
+        """
+        listed = None if len(names) == 1 else 1
+        return "\n\n".join(self.lookup_variable(n, columns, listed) for n in names)
 
     def search_scored(self, query: str) -> list[tuple[float, str]]:
         """Score questions by the IDF of the query words their name or text contains;
@@ -1386,6 +1390,27 @@ def _not_unique(column: dict) -> str | None:
     if column["distinct"] == column["non_null"] == column["rows"]:
         return None
     return f"not unique: {column['distinct']} distinct in {column['non_null']} rows"
+
+
+def _choices_line(q: dict) -> str:
+    """Return a select's choices; past ``_LISTED``, the first ones, or the label
+    pattern when every label is the same text around its value.
+    """
+    choices = q["choices"]
+    if len(choices) <= _LISTED:
+        return "Choices: " + "; ".join(f"{c['value']} = {c['label']}" for c in choices)
+    rest = f"; get_choice_list('{q['variable_name']}') lists each"
+    patterns = {c["label"].replace(c["value"], "<n>") for c in choices}
+    if len(patterns) == 1 and "<n>" in (pattern := patterns.pop()):
+        return (
+            f"Choices: {len(choices)}, {choices[0]['value']} ... "
+            f"{choices[-1]['value']}, each labelled {pattern} (<n>: its value){rest}"
+        )
+    return (
+        "Choices: "
+        + "; ".join(f"{c['value']} = {c['label']}" for c in choices[:_LISTED])
+        + f"; ... {len(choices) - _LISTED} more{rest}"
+    )
 
 
 def _choices_text(q: dict) -> str:

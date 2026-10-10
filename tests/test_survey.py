@@ -324,6 +324,30 @@ def test_many_columns_are_summarised_and_listed_on_request(store, monkeypatch):
     assert "plot_crop_2_2" in store.lookup_variable("plot_crop", columns=True)
 
 
+def test_a_long_choice_list_is_cut_or_given_by_its_pattern(store, monkeypatch):
+    from surveycto_python_dict import survey
+
+    monkeypatch.setattr(survey, "_LISTED", 2)
+    q = store.questions["crop"]
+    q["choices"] = [{"value": str(n), "label": f"${{combo{n}}}"} for n in (1, 2, 3)]
+    assert (
+        "Choices: 3, 1 ... 3, each labelled ${combo<n>} (<n>: its value); "
+        "get_choice_list('crop') lists each"
+    ) in store.lookup_variable("crop")
+    q["choices"] = [{"value": v, "label": v.upper()} for v in ("a", "b", "c")]
+    assert (
+        "Choices: a = A; b = B; ... 1 more; get_choice_list('crop') lists each"
+        in store.lookup_variable("crop")
+    )
+
+
+def test_several_lookups_summarise_each_question_columns(store):
+    out = store.lookup_variables(["plot_crop", "plot_size"])
+    assert "Columns: 4, plot_crop_1_1 ... " in out
+    assert "plot_crop_2_2  " not in out
+    assert "plot_crop_2_2  " in store.lookup_variable("plot_crop")
+
+
 def test_neighborhood_names_the_repeat_instead_of_its_members(store):
     out = store.get_variable_neighborhood("plot_size")
     assert out.startswith("plot_size is in repeat plot with 2 questions")

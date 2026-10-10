@@ -62,7 +62,7 @@ uv run scto-survey --config config.toml --form <form> <command>
 
 | Need | MCP tool | Shell (`<S> <command>`) |
 |---|---|---|
-| What a question or column is, and where a value read from a dataset comes from (more than 20 columns are summarised; `columns=True` lists each) | `lookup_variable(form, name)` / `lookup_variables(form, names)` | `var <name> [<name> ...] [--columns]` |
+| What a question or column is, and where a value read from a dataset comes from (more than 20 columns or choices are summarised, and every question's columns when you look up several; `columns=True` lists each) | `lookup_variable(form, name)` / `lookup_variables(form, names)` | `var <name> [<name> ...] [--columns]` |
 | Find questions by words or exact name, in every form or one | `search_questions(query)` / `search_questions(query, form)` | `search <words>` (every form without `--form`) |
 | A select's choices | `get_choice_list(form, name)` | `choices <name>` |
 | Why a question is asked | `get_gate_chain(form, name)` | `gates <name>` |
