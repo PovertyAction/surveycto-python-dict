@@ -95,29 +95,33 @@ def test_submissions_reads_the_parquet(database):
     assert (
         columns
         == con.sql(
-            """SELECT "column" FROM farm.dictionary WHERE "table" = 'submissions'
+            """SELECT column_name FROM farm.dictionary WHERE view_name = 'submissions'
             ORDER BY variable_order"""
         )
-        .df()["column"]
+        .df()["column_name"]
         .tolist()
     )
     # The repeat's columns are read from its long view.
     assert "plot_size_1" not in columns
     assert con.sql(
-        """SELECT DISTINCT "table" FROM farm.dictionary WHERE question = 'plot_size'"""
+        "SELECT DISTINCT view_name FROM farm.dictionary WHERE question = 'plot_size'"
     ).fetchall() == [("plot",)]
+    # A long view's column, binaries included, resolves to its code.
+    assert con.sql(
+        """SELECT DISTINCT view_column, choice_value FROM farm.dictionary
+           WHERE view_name = 'plot' AND question = 'plot_crop' ORDER BY view_column"""
+    ).fetchall() == [("plot_crop_1", "1"), ("plot_crop_2", "2")]
 
 
 def test_flagged_columns_stay_in_their_views(database):
     con, _ = database
     flagged = con.sql(
-        """SELECT "column", "table" FROM farm.dictionary
+        """SELECT view_column, view_name FROM farm.dictionary
            WHERE pii_status NOT IN ('cleared_by_form', 'whitelisted')"""
     ).fetchall()
     assert ("owner", "submissions") in flagged
-    for column, table in flagged:
-        columns = con.sql(f"SELECT * FROM farm.{table} LIMIT 0").columns
-        assert column in columns or column.rsplit("_", 1)[0] in columns
+    for column, view in flagged:
+        assert column in con.sql(f"SELECT * FROM farm.{view} LIMIT 0").columns
     assert {"owner", "phone"} <= set(con.sql(f"SELECT * FROM {_PREV} LIMIT 0").columns)
 
 
@@ -167,7 +171,7 @@ def test_dictionary_says_what_a_column_without_a_question_is(tmp_path, analyzer)
     )
     con = duckdb.connect(str(_write(cfg)), read_only=True)
     assert con.sql(
-        """SELECT "column", column_kind FROM farm.dictionary
+        """SELECT column_name, column_kind FROM farm.dictionary
         WHERE question IS NULL AND NOT system"""
     ).fetchall() == [("old_field", "not_in_form")]
     con.close()
@@ -237,7 +241,7 @@ def test_dataset_links_spell_out_the_join(database):
 def test_dataset_codebook_lists_readers_and_status(database):
     con, _ = database
     rows = con.sql(
-        """SELECT "column", rows, non_null, read_by, pii_status, pii_basis
+        """SELECT column_name, rows, non_null, read_by, pii_status, pii_basis
            FROM farm.dataset_codebook WHERE dataset = 'prev_round'"""
     ).fetchall()
     by_column = {r[0]: r[1:] for r in rows}
@@ -303,7 +307,7 @@ def test_structure_comes_from_the_finished_database(database):
     assert "-- view farm.plot: one row per instance of the repeat plot" in out
     assert "--   join: farm.plot.KEY = farm.submissions.KEY  (many to one)" in out
     assert "plot_size" in store.get_structure_db("farm", "plot")
-    assert "-- table farm.dictionary: one row per parquet column; table names" in out
+    assert "-- table farm.dictionary: one row per parquet column; view_name is" in out
     # The datasets the form joins come with it.
     assert "-- view dataset.farm/prev_round.csv:" in out
     with pytest.raises(ValueError, match="no schema 'nope'"):

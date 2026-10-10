@@ -642,10 +642,11 @@ class SurveyStore:
         choices = {v["choice_value"] for v in entries if "choice_value" in v}
         rates = [v["missing_rate"] for v in entries]
         parts = [f"Columns: {len(columns)}, {columns[0]} ... {columns[-1]}"]
+        # Slots, not instances: score_3 is the third instance of every submission.
         if instances != {()}:
-            parts.append(f"{len(instances)} repeat instances")
+            parts.append(f"{len(instances)} repeat slots")
         if choices:
-            parts.append(f"{len(choices)} choices")
+            parts.append(f"{len(choices)} codes with a column")
         ragged = sum(1 for v in entries if v.get("ragged"))
         if ragged:
             parts.append(f"{ragged} from another form version (ragged)")
@@ -963,7 +964,7 @@ class SurveyStore:
         # A list filtered by an expression has no choices known before a submission.
         if not any(r.startswith("filtered by ") for r in q["choices_withheld"]):
             lines.append(
-                f"  Every choice, with its filter values: SELECT value, label, when "
+                f"  Every choice, with its filter values: SELECT value, label, filter_values "
                 f"FROM {self.form_id}.choices WHERE question = '{name}'"
             )
         picked = self.summary["withheld_choices"].get(name)

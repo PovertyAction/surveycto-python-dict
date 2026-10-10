@@ -12,8 +12,8 @@ Views read the files on disk; nothing is copied into the database:
   (``KEY, hh_index, member_index``). A column keeps its wide name without the instance
   suffix: ``score_3`` -> ``score``. Columns written under another form version, with
   more or fewer instance numbers than the field's nesting (``ragged`` in the
-  dictionary), stay wide in ``submissions``. The ``dictionary`` table's ``table``
-  names each column's view.
+  dictionary), stay wide in ``submissions``. The ``dictionary`` table's
+  ``view_name`` names each column's view and ``view_column`` its name there.
 - ``dataset.<id>``: each dataset once, under its ``flow.json`` id (the server id, or
   ``<form>/<file>.csv`` for a CSV attached to a form), every column as text, with
   ``row`` (1 = first data row).
@@ -122,16 +122,18 @@ def _table(con, schema: str, name: str, frame: pd.DataFrame) -> None:
 # `{s}` is the form's schema.
 _DESCRIPTIONS = {
     "dictionary": {
-        "grain": "one row per parquet column; table names the view it is in",
-        "key": ["column"],
+        "grain": "one row per parquet column; view_name is the view it is in and "
+        "view_column its name there (score_3 in submissions is score in a long "
+        "view)",
+        "key": ["column_name"],
         "joins": ["{s}.dictionary.question = {s}.questions.question"],
     },
     "questions": {"grain": "one row per question", "key": ["question"], "joins": []},
     "choices": {
-        "grain": "one row per choice of a select, search() lists included; when: the "
-        "search() filter values of its list; withheld: why get_choice_list does not "
-        "list it",
-        "key": ["question", "when", "value"],
+        "grain": "one row per choice of a select, search() lists included; "
+        "filter_values: the search() filter values of its list; withheld: why "
+        "get_choice_list does not list it",
+        "key": ["question", "filter_values", "value"],
         "joins": ["{s}.choices.question = {s}.questions.question"],
     },
     "edges": {
@@ -153,13 +155,13 @@ _DESCRIPTIONS = {
     },
     "dataset_codebook": {
         "grain": "one row per column of a dataset the form reads",
-        "key": ["dataset", "column"],
+        "key": ["dataset", "column_name"],
         "joins": [],
     },
     "stats": {
         "grain": "one row per parquet column",
         "key": ["variable"],
-        "joins": ["{s}.stats.variable = {s}.dictionary.column"],
+        "joins": ["{s}.stats.variable = {s}.dictionary.column_name"],
     },
 }
 
@@ -173,7 +175,7 @@ _PROJECT = {
     },
     "publishes": {
         "grain": "one row per column of a published dataset",
-        "key": ["dataset", "column"],
+        "key": ["dataset", "dataset_column"],
         "joins": [
             "publishes.dataset = datasets.dataset",
             "publishes.form = forms.form",
@@ -186,7 +188,7 @@ _PROJECT = {
     },
     "joins": {
         "grain": "one row per reader field matched to the publisher field it comes "
-        "from; via: pulldata or search; unique: the dataset column identifies one "
+        "from; via: pulldata or search; is_unique: the dataset column identifies one "
         "row, which a pulldata() needs and a search() filter does not",
         "key": ["reader_form", "reader_field", "dataset", "dataset_column"],
         "joins": [
@@ -212,6 +214,13 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
         and repeat_of[v["question"]]
         and not v.get("ragged")
         else "submissions"
+        for c, v in variables.items()
+    }
+    # Its name there: a long view drops the instance suffix, score_3 -> score.
+    view_column = {
+        c: c
+        if table_of[c] == "submissions"
+        else c.removesuffix("".join(f"_{i}" for i in v["repeat_iteration"]))
         for c, v in variables.items()
     }
     wide = [c for c in variables if table_of[c] == "submissions"]
@@ -265,8 +274,9 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
         "dictionary": pd.DataFrame(
             [
                 {
-                    "column": c,
-                    "table": table_of[c],
+                    "column_name": c,
+                    "view_name": table_of[c],
+                    "view_column": view_column[c],
                     "variable_order": v["variable_order"],
                     "question": v["question"],
                     "column_kind": v.get("column_kind"),
@@ -301,7 +311,7 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                     "n_columns": n_columns.get(q["variable_name"], 0),
                     "relevance": q["relevance"],
                     "group_relevances": q["group_relevances"],
-                    "constraint": q["constraint"],
+                    "constraint_expr": q["constraint"],
                     "constraint_message": q["constraint_message"],
                     "hint": q["hint"],
                     "calculation": q["calculation"],
@@ -325,16 +335,20 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                             "question": q["variable_name"],
                             "value": c["value"],
                             "label": c["label"],
-                            "when": json.dumps(c["when"]) if "when" in c else None,
+                            "filter_values": json.dumps(c["when"])
+                            if "when" in c
+                            else None,
                             "withheld": None,
                         }
                         for q in questions
                         if q["choices"] and not q["choices_withheld"]
                         for c in q["choices"]
                     ],
-                    columns=["question", "value", "label", "when", "withheld"],
+                    columns=["question", "value", "label", "filter_values", "withheld"],
                 ),
-                pq.read_table(form_dir / f"{form}_search_choices.parquet").to_pandas(),
+                pq.read_table(form_dir / f"{form}_search_choices.parquet")
+                .to_pandas()
+                .rename(columns={"when": "filter_values"}),
             ],
             ignore_index=True,
         ),
@@ -344,10 +358,10 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                 {
                     "dataset": c["dataset"],
                     "dataset_id": ids[c["dataset"]],
-                    "column": c["column"],
+                    "column_name": c["column"],
                     "rows": c["rows"],
                     "non_null": c["non_null"],
-                    "distinct": c["distinct"],
+                    "n_distinct": c["distinct"],
                     "max_length": c["max_length"],
                     "at_max_length": c["at_max_length"],
                     "read_by": c["read_by"],
@@ -360,10 +374,10 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
             columns=[
                 "dataset",
                 "dataset_id",
-                "column",
+                "column_name",
                 "rows",
                 "non_null",
-                "distinct",
+                "n_distinct",
                 "max_length",
                 "at_max_length",
                 "read_by",
@@ -551,7 +565,7 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
                     # Unique: each value matches one dataset row. Otherwise a
                     # pulldata() can return another row's value; a search() takes
                     # every matching row by design.
-                    "unique": column["distinct"]
+                    "is_unique": column["distinct"]
                     == column["non_null"]
                     == column["rows"],
                     "distinct_values": column["distinct"],
@@ -601,7 +615,7 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
             [
                 {
                     "dataset": d["id"],
-                    "column": column,
+                    "dataset_column": column,
                     "form": d["published_by"],
                     "field": path,
                     "origin": d["origins"][column]["kind"],
@@ -610,7 +624,14 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
                 for d in flow["datasets"]
                 for column, path in d["publish_map"].items()
             ],
-            columns=["dataset", "column", "form", "field", "origin", "carried_from"],
+            columns=[
+                "dataset",
+                "dataset_column",
+                "form",
+                "field",
+                "origin",
+                "carried_from",
+            ],
         ),
         "reads": pd.DataFrame(
             [
@@ -639,7 +660,7 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
                 "publisher_form",
                 "publisher_table",
                 "publisher_field",
-                "unique",
+                "is_unique",
                 "distinct_values",
                 "dataset_rows",
             ],
@@ -658,7 +679,7 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
                 "; a search() filter: the choices are every matching row)"
                 if j["via"] == "search"
                 else ")"
-                if j["unique"]
+                if j["is_unique"]
                 else f"; not unique: {j['distinct_values']} distinct values in "
                 f"{j['dataset_rows']} rows, so a match can return another row)"
             )

@@ -281,7 +281,7 @@ def test_withheld_choices_say_how_to_decode_them_and_what_was_picked(
         "label column crop_name (may_contain_pii)",
         '  A script decodes them: SELECT crop_id, crop_name FROM dataset."crops" '
         "WHERE zone = <the submission's ${area}>",
-        "  Every choice, with its filter values: SELECT value, label, when FROM "
+        "  Every choice, with its filter values: SELECT value, label, filter_values FROM "
         "farm.choices WHERE question = 'crop'",
         "  In the data: 3 codes picked; 1 not in the list: 9",
     ]
