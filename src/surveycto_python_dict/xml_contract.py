@@ -134,7 +134,7 @@ class Node:
     is_select_multiple: bool = False
     calculate: str | None = None
     # The calculate is on the body control, not the bind: a default the user can
-    # change, unless the field is read-only.
+    # change when the field is shown and not read-only.
     calculation_is_default: bool = False
     relevant: str | None = None
     constraint: str | None = None

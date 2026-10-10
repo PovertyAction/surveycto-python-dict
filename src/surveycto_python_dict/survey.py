@@ -952,6 +952,12 @@ class SurveyStore:
             f'  A script decodes them: SELECT {value}, {label} FROM dataset."{d["id"]}"'
             + (f" WHERE {where}" if where else ""),
         ]
+        # A list filtered by an expression has no choices known before a submission.
+        if not any(r.startswith("filtered by ") for r in q["choices_withheld"]):
+            lines.append(
+                f"  Every choice, with its filter values: SELECT value, label, when "
+                f"FROM {self.form_id}.choices WHERE question = '{name}'"
+            )
         picked = self.summary["withheld_choices"].get(name)
         if picked is None:
             lines.append("  In the data: no submission picked a code")

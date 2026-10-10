@@ -256,7 +256,8 @@ def build_questions(contract: FormContract) -> list[dict]:
                 "calculation": calculation,
                 "calculation_is_default": node.calculation_is_default
                 and qtype != "calculate"
-                and not node.readonly,
+                and not node.readonly
+                and "invisible" not in (node.appearance or ""),
                 "appearance": refs(node.appearance),
                 "references": _references(relevance, constraint, calculation),
                 "group_path": node.group_path,
