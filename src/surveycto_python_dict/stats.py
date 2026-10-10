@@ -53,7 +53,7 @@ COLUMNS = [
     "max",
     "selected",
     "selected_share",
-    "distinct",
+    "n_distinct",
     "frequencies",
 ]
 RAGGED_NOTE = "layout from another form version; not evaluated"
@@ -74,7 +74,7 @@ SQL_TYPES = {
             "answered_when_skipped",
             "n_valid",
             "selected",
-            "distinct",
+            "n_distinct",
         ),
         "BIGINT",
     ),
@@ -421,7 +421,7 @@ def _describe(valid: list, entry: dict, q: dict | None, is_binary: bool) -> dict
             "median": ordered[len(ordered) // 2],
             "max": ordered[-1],
         }
-    return {"distinct": len(set(valid))}
+    return {"n_distinct": len(set(valid))}
 
 
 def write_csv(rows: list[dict], path: Path) -> Path:

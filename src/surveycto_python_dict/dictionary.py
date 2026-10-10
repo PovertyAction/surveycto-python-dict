@@ -99,9 +99,9 @@ _COMPARED = (
 
 
 def absent_codes(questions: list[dict], contract: FormContract) -> list[dict]:
-    """Return each condition that compares a select with a code its list lacks: a
-    follow-up gated on it is never asked. A list read per submission or kept
-    unread has no known codes and is not checked.
+    """Return each condition, of a question or of a group, that compares a select
+    with a code its list lacks: a follow-up gated on it is never asked. A list read
+    per submission or kept unread has no known codes and is not checked.
     """
     selects = {}
     for q in questions:
@@ -111,20 +111,22 @@ def absent_codes(questions: list[dict], contract: FormContract) -> list[dict]:
         if node.data_source and node.choice_universe is None:
             continue
         selects[q["variable_name"]] = {str(c["value"]) for c in node.all_choices}
-    found = []
+    conditions = {}
     for q in questions:
         for where in ("relevance", "constraint", "calculation"):
-            for pattern in _COMPARED:
-                for name, code in pattern.findall(q[where] or ""):
-                    if name in selects and code not in selects[name]:
-                        found.append(
-                            {
-                                "question": q["variable_name"],
-                                "in": where,
-                                "select": name,
-                                "code": code,
-                            }
-                        )
+            conditions[q["variable_name"], where] = q[where]
+        # A group's relevance, once, under the group's name.
+        for gate in q["gates"]:
+            if gate["group"] is not None:
+                conditions[gate["group"], "group relevance"] = gate["relevance"]
+    found = []
+    for (name, where), condition in conditions.items():
+        for pattern in _COMPARED:
+            for select, code in pattern.findall(condition or ""):
+                if select in selects and code not in selects[select]:
+                    found.append(
+                        {"name": name, "in": where, "select": select, "code": code}
+                    )
     return found
 
 

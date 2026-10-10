@@ -281,7 +281,7 @@ def test_withheld_choices_say_how_to_decode_them_and_what_was_picked(
         "label column crop_name (may_contain_pii)",
         '  A script decodes them: SELECT crop_id, crop_name FROM dataset."crops" '
         "WHERE zone = <the submission's ${area}>",
-        "  Every choice, with its filter values: SELECT value, label, when FROM "
+        "  Every choice, with its filter values: SELECT value, label, filter_values FROM "
         "farm.choices WHERE question = 'crop'",
         "  In the data: 3 codes picked; 1 not in the list: 9",
     ]
@@ -488,6 +488,18 @@ def test_search_skips_formulas_and_repeat_count_text_and_weighs_hints_half(store
     hits = [line.split()[0] for line in store.search_questions("crop").splitlines()]
     assert hits[-1] == "owner"
     assert {"crop", "plot_crop"} <= set(hits[:-1])
+
+
+def test_search_ranks_answered_questions_first_and_names_unmatched_words(store):
+    from surveycto_python_dict.survey import search_forms
+
+    lines = store.search_questions("plot zzz").splitlines()
+    assert lines[0] == "No question holds: zzz; ranked on the rest."
+    types = [store.questions[line.split()[0]]["type"] for line in lines[1:]]
+    computed = [t in ("calculate", "repeat_count") for t in types]
+    # per_plot (a calculate) and plot_count follow every question someone answers.
+    assert any(computed) and computed == sorted(computed)
+    assert search_forms({"farm": store}, "plot zzz").splitlines()[0] == lines[0]
 
 
 def test_search_tags_flagged_columns(store):

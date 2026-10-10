@@ -124,7 +124,7 @@ def _kinds_text(summary: dict) -> str:
 def _absent_text(found: list[dict]) -> str:
     text = f"conditions comparing a select with a code it lacks: {len(found)}"
     shown = "; ".join(
-        f"{f['question']} ({f['in']}): {f['select']} has no {f['code']}"
+        f"{f['name']} ({f['in']}): {f['select']} has no {f['code']}"
         for f in found[:_LISTED]
     )
     more = f"; ... {len(found) - _LISTED} more" if len(found) > _LISTED else ""
@@ -642,10 +642,11 @@ class SurveyStore:
         choices = {v["choice_value"] for v in entries if "choice_value" in v}
         rates = [v["missing_rate"] for v in entries]
         parts = [f"Columns: {len(columns)}, {columns[0]} ... {columns[-1]}"]
+        # Slots, not instances: score_3 is the third instance of every submission.
         if instances != {()}:
-            parts.append(f"{len(instances)} repeat instances")
+            parts.append(f"{len(instances)} repeat slots")
         if choices:
-            parts.append(f"{len(choices)} choices")
+            parts.append(f"{len(choices)} codes with a column")
         ragged = sum(1 for v in entries if v.get("ragged"))
         if ragged:
             parts.append(f"{ragged} from another form version (ragged)")
@@ -772,10 +773,13 @@ class SurveyStore:
         listed = None if len(names) == 1 else 1
         return "\n\n".join(self.lookup_variable(n, columns, listed) for n in names)
 
-    def search_scored(self, query: str) -> list[tuple[tuple[float, float], str]]:
+    def search_scored(
+        self, query: str
+    ) -> tuple[list[tuple[tuple[float, bool, float], str]], set[str]]:
         """Rank questions by how many query words their name, label or hint holds,
-        then by those words' IDF; a hint counts half. A question named exactly
-        ``query`` comes first.
+        then questions someone answers above calculates and repeat counts, then by
+        the words' IDF; a hint counts half. A question named exactly ``query`` comes
+        first. Also return the query words no question holds.
         """
         docs = {
             n: set(_name_tokens(n)) | set(_tokens(_label(q)))
@@ -815,14 +819,16 @@ class SurveyStore:
             }
             scores[n] = (
                 sum(weights.values()),
+                self.questions[n]["type"] not in ("calculate", "repeat_count"),
                 sum(idf[w] * weight for w, weight in weights.items()),
             )
         if query.strip() in scores:
-            scores[query.strip()] = (math.inf, math.inf)
-        return sorted(
+            scores[query.strip()] = (math.inf, True, math.inf)
+        ranked = sorted(
             ((s, n) for n, s in scores.items() if s[0] > 0),
-            key=lambda x: (-x[0][0], -x[0][1], x[1]),
+            key=lambda x: (-x[0][0], -x[0][1], -x[0][2], x[1]),
         )
+        return ranked, {w for w in words if not matched[w] | hinted[w]}
 
     def search_line(self, name: str) -> str:
         """Return a search hit: the question's name, type and short text, and its
@@ -841,10 +847,13 @@ class SurveyStore:
 
     def search_questions(self, query: str, max_results: int = 20) -> str:
         """Rank the form's questions by the words of ``query`` in their name or text."""
-        ranked = self.search_scored(query)[:max_results]
+        ranked, unmatched = self.search_scored(query)
         if not ranked:
             return f"No question of {self.form_id} matches {query!r}."
-        return "\n".join(self.search_line(n) for _, n in ranked)
+        return "\n".join(
+            _unmatched_lines(unmatched)
+            + [self.search_line(n) for _, n in ranked[:max_results]]
+        )
 
     def get_group(self, group: str) -> str:
         """List a group's questions in form order, with their type and condition."""
@@ -955,7 +964,7 @@ class SurveyStore:
         # A list filtered by an expression has no choices known before a submission.
         if not any(r.startswith("filtered by ") for r in q["choices_withheld"]):
             lines.append(
-                f"  Every choice, with its filter values: SELECT value, label, when "
+                f"  Every choice, with its filter values: SELECT value, label, filter_values "
                 f"FROM {self.form_id}.choices WHERE question = '{name}'"
             )
         picked = self.summary["withheld_choices"].get(name)
@@ -1321,25 +1330,37 @@ class SurveyStore:
         )
 
 
+def _unmatched_lines(words: set[str]) -> list[str]:
+    """Return a line naming the query words no question holds, when there are any."""
+    if not words:
+        return []
+    return [f"No question holds: {', '.join(sorted(words))}; ranked on the rest."]
+
+
 def search_forms(stores: dict, query: str, max_results: int = 20) -> str:
     """Search every form's questions; each form ranks its own, best first."""
+    scored = {form: store.search_scored(query) for form, store in stores.items()}
     ranked = sorted(
         (
             (score, form, name)
-            for form, store in stores.items()
-            for score, name in store.search_scored(query)
+            for form, (hits, _) in scored.items()
+            for score, name in hits
         ),
-        key=lambda x: (-x[0][0], -x[0][1], x[1], x[2]),
+        key=lambda x: (-x[0][0], -x[0][1], -x[0][2], x[1], x[2]),
     )[:max_results]
     if not ranked:
         return f"No question of {', '.join(stores)} matches {query!r}."
+    unmatched = set.intersection(*(words for _, words in scored.values()))
     return "\n".join(
-        f"{form}.{stores[form].search_line(name)}" for _, form, name in ranked
+        _unmatched_lines(unmatched)
+        + [f"{form}.{stores[form].search_line(name)}" for _, form, name in ranked]
     )
 
 
 # A wide column's instance suffixes: score_2_1 -> score.
 _STEM = re.compile(r"(_[0-9]+)+$")
+# The literal start of a column named per row: concat('score_', index()).
+_CONCAT_PREFIX = re.compile(r"concat\(\s*'([^']+)'\s*,")
 
 
 def _capped(names: list[str]) -> str:
@@ -1358,7 +1379,8 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
 
     One line per hop, indented by depth: a calculate to the fields it reads; a
     ``pulldata()`` to the dataset column and the field another form publishes it
-    from; a ``search()`` select to the dataset columns its choices come from. A hop
+    from (a column named per row, ``concat('score_', index())``, to the one field
+    that publishes every ``score_<n>``); a ``search()`` select to the dataset columns its choices come from. A hop
     that goes no further says why (an external dataset, a column the dataset lacks).
     """
     lines: list[str] = []
@@ -1380,6 +1402,30 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
             )
         else:
             lines.append(f"{pad}{d['id']}.{col}: no such column")
+
+    def computed(d: dict, expression: str, depth: int) -> None:
+        # concat('score_', index()) names score_1, score_2, ...: when one field
+        # publishes every column of that stem, the hop continues to it.
+        pad = "  " * depth
+        prefix = _CONCAT_PREFIX.match(expression)
+        stem = prefix.group(1).rstrip("_") if prefix else None
+        named = sorted(
+            (
+                c
+                for c in d["publish_map"]
+                if stem and c.startswith(prefix.group(1)) and _STEM.sub("", c) == stem
+            ),
+            key=lambda c: [int(n) for n in c[len(stem) + 1 :].split("_")],
+        )
+        fields = {_leaf(d["publish_map"][c]) for c in named}
+        if len(fields) != 1:
+            lines.append(f"{pad}{d['id']}: the column is named per row")
+            return
+        lines.append(
+            f"{pad}{d['id']}.{named[0]} ... {named[-1]} ({len(named)} columns, named "
+            f"per row): published by {d['published_by']}"
+        )
+        walk(d["published_by"], fields.pop(), depth + 1)
 
     def walk(form: str, name: str, depth: int) -> None:
         pad = "  " * depth
@@ -1414,7 +1460,7 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
             )
             d, read = store.read(source["dataset"], _path(q))
             if read["computed"]:
-                lines.append(f"{pad}  {d['id']}: the column is named per row")
+                computed(d, read["computed"], depth + 1)
             else:
                 column(d, source["column"], depth + 1)
             keys = {r for m in source["match"] for r in _REF_RE.findall(m["value"])}

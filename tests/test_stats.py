@@ -81,7 +81,7 @@ def test_select_multiple_binary_share_among_answered(stats):
 
 
 def test_text_gets_distinct_count_only(stats):
-    assert stats["plot_code"]["distinct"] == 2
+    assert stats["plot_code"]["n_distinct"] == 2
     assert stats["plot_code"]["frequencies"] == ""
 
 
@@ -89,7 +89,7 @@ def test_flagged_pii_columns_get_counts_only(stats):
     owner = stats["owner"]
     assert owner["pii_status"] == "may_contain_pii"
     assert owner["answered"] == 1
-    assert (owner["distinct"], owner["frequencies"], owner["min"]) == ("", "", "")
+    assert (owner["n_distinct"], owner["frequencies"], owner["min"]) == ("", "", "")
 
 
 def test_unsupported_relevance_falls_back_to_all_rows(tmp_path, analyzer):

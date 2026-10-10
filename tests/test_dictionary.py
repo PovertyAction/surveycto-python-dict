@@ -250,7 +250,23 @@ def test_conditions_on_codes_a_select_lacks_are_listed(tmp_path):
     area = next(q for q in questions if q["variable_name"] == "area")
     area["relevance"] = "${crop} = '02' or ${crop} = '-99' or selected(${tools}, '77')"
     assert absent_codes(questions, contract) == [
-        {"question": "area", "in": "relevance", "select": "crop", "code": "-99"}
+        {"name": "area", "in": "relevance", "select": "crop", "code": "-99"}
+    ]
+
+
+def test_a_group_gated_on_a_code_the_select_lacks_is_listed_once(tmp_path):
+    from surveycto_python_dict.dictionary import absent_codes
+
+    path = tmp_path / "farm.xml"
+    path.write_text(XML, encoding="utf-8")
+    contract = parse_contract(path)
+    questions = build_questions(contract)
+    for q in questions:
+        for gate in q["gates"]:
+            if gate["group"] == "plot":
+                gate["relevance"] = "${crop} != -99"
+    assert absent_codes(questions, contract) == [
+        {"name": "plot", "in": "group relevance", "select": "crop", "code": "-99"}
     ]
 
 
