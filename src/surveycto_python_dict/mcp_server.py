@@ -13,10 +13,11 @@ _INSTRUCTIONS = (
     "(get_project, start there), its forms ({forms}), how they chain through datasets "
     "(get_flow), and each form's questions, skip logic, choices, "
     "columns and their relationships. Form tools take the form's id. Every column "
-    "carries pii.status. Check pii.status before reading a variable's values: "
-    "contains_pii and may_contain_pii columns hold, or may hold, personal data; their "
-    "rows are listed in <form>_pii_review.xlsx for the people cleaning the data to "
-    "verify."
+    "carries pii.status: contains_pii and may_contain_pii columns hold, or may hold, "
+    "personal data. Use them like any column in cleaning scripts (join, clean, "
+    "deduplicate, keep); handle them carefully by never printing or quoting their "
+    "values, only counts and KEYs. The people cleaning the data verify the flags in "
+    "<form>_pii_review.xlsx."
 )
 
 

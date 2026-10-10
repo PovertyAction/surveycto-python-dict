@@ -189,6 +189,35 @@ def kept(table: pa.Table, exclude: str | None) -> pa.Table:
     return table.filter(pc.is_in(table.column("KEY"), keys.column("KEY")))
 
 
+def _add_picked(
+    picked: dict,
+    universes: dict,
+    question: dict,
+    node,
+    meta: dict,
+    column_name: str,
+    column: pa.ChunkedArray,
+    contract: FormContract,
+) -> None:
+    """Add the codes ``column`` holds for its withheld select to ``picked``."""
+    name = question["variable_name"]
+    codes = picked.setdefault(name, set())
+    universes[name] = {str(c["value"]) for c in node.all_choices}
+    if "choice_value" in meta:
+        if pc.max(column).as_py() == 1:
+            codes.add(meta["choice_value"])
+    elif question["type"] == "select_multiple":
+        code = contract.map_column(column_name)["choice_code"]
+        if code is not None:
+            # A binary for a code the list lacks, kept as text.
+            if "1" in column.cast(pa.string()).to_pylist():
+                codes.add(str(code))
+        else:
+            codes |= {c for v in column.drop_null().to_pylist() for c in v.split()}
+    else:
+        codes |= {str(v) for v in pc.unique(column.drop_null()).to_pylist()}
+
+
 def build_dictionary(
     table: pa.Table,
     questions: list[dict],
@@ -204,6 +233,9 @@ def build_dictionary(
     table = kept(table, exclude)
     n_rows = table.num_rows
     variables = {}
+    # The codes the submissions picked in each withheld list, and the list's codes.
+    picked: dict[str, set[str]] = {}
+    universes: dict[str, set[str]] = {}
     for order, field in enumerate(table.schema):
         meta = {k.decode(): v.decode() for k, v in (field.metadata or {}).items()}
         column = table.column(field.name)
@@ -276,6 +308,17 @@ def build_dictionary(
             entry["survey"]["original_variable_name"] = question["variable_name"]
             entry["survey"]["group_path"] = "/".join(question["group_path"])
 
+        if (
+            question
+            and question["choices_withheld"]
+            and node is not None
+            and node.choice_universe is not None
+            and non_null
+        ):
+            _add_picked(
+                picked, universes, question, node, meta, field.name, column, contract
+            )
+
         labels = (
             choice_labels(question["choices"])
             if question and question["choices"]
@@ -316,6 +359,15 @@ def build_dictionary(
                 )
             ),
             "conditions_on_absent_codes": absent_codes(questions, contract),
+            # Per withheld list: how many codes the submissions picked, and those its
+            # dataset no longer offers.
+            "withheld_choices": {
+                name: {
+                    "n_codes_picked": len(codes),
+                    "codes_not_in_list": sorted(codes - universes[name]),
+                }
+                for name, codes in picked.items()
+            },
             "n_empty_notes_and_groups_dropped": int(
                 table.schema.metadata[DROPPED.encode()]
             ),

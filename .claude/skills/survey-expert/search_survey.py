@@ -21,6 +21,8 @@ from pathlib import Path
 _FLAGGED = {"contains_pii", "may_contain_pii"}
 # Longer lists are summarised, with an argument that lists them in full.
 _LISTED = 20
+# The pii statuses whose values an agent may see.
+_SEEN = {"cleared_by_form", "whitelisted"}
 _TOKEN_RE = re.compile(r"\w+")
 _TAG_RE = re.compile(r"<[^>]+>")
 _REF_RE = re.compile(r"\$\{([^}]+)\}")
@@ -139,6 +141,12 @@ def _source_line(source: dict) -> str:
     )
 
 
+_PII_LINE = (
+    "-- Every view holds every column; dictionary.pii_status says which may hold "
+    "personal data: use them in scripts, print only their counts and KEYs."
+)
+
+
 def render_structure(
     project: str, objects: list[dict], all_columns: bool = False, listed: int = _LISTED
 ) -> str:
@@ -149,18 +157,13 @@ def render_structure(
     """
     lines = [
         f"-- {project}.duckdb: every table and view, what one row is, its key and joins.",
-        "-- Read values only from the *_safe views; the description tables are open.",
+        _PII_LINE,
     ]
     for o in objects:
         lines += ["", f"-- {o['kind']} {o['name']}: {o['grain']}"]
         lines.append(f"--   key: {', '.join(o['key'])}")
         lines += [f"--   join: {j}" for j in o["joins"]]
         columns = o["columns"]
-        if "safe_columns" in o:
-            lines.append(
-                f"--   {o['name']}_safe: the same with its {o['safe_columns']} cleared "
-                "columns"
-            )
         if len(columns) > listed and not all_columns:
             lines.append(
                 f"--   columns ({len(columns)}): "
@@ -190,27 +193,19 @@ def render_structure_summary(project: str, objects: list[dict]) -> str:
     lines = [
         f"-- {project}.duckdb: {len(objects)} tables and views in {len(schemas)} "
         "schemas. get_structure_db(<schema>) maps one schema in full.",
-        "-- Read values only from the *_safe views; the description tables are open.",
+        _PII_LINE,
     ]
     main = render_structure(project, schemas.pop("main"))
     lines += ["", "-- schema main: the project, from flow.json"]
     lines += main.splitlines()[2:]
-    datasets = [
-        o for o in schemas.pop("dataset", []) if not o["name"].endswith("_safe")
-    ]
-    lines += ["", f"-- schema dataset: {len(datasets)} datasets, each with <id>_safe"]
+    datasets = schemas.pop("dataset", [])
+    lines += ["", f"-- schema dataset: {len(datasets)} datasets"]
     lines += [f"--   {o['name'].split('.', 1)[1]}: {o['grain']}" for o in datasets]
     for schema, members in schemas.items():
         width = next(
             len(o["columns"]) for o in members if o["name"].endswith(".submissions")
         )
-        repeats = [
-            o
-            for o in members
-            if o["kind"] == "view"
-            and len(o["key"]) > 1
-            and not o["name"].endswith("_safe")
-        ]
+        repeats = [o for o in members if o["kind"] == "view" and len(o["key"]) > 1]
         tables = [o for o in members if o["kind"] == "table"]
         deepest = max((len(o["key"]) - 1 for o in repeats), default=0)
         lines += [
@@ -252,21 +247,9 @@ def render_structure_schema(project: str, objects: list[dict], schema: str) -> s
         mine = [j for j in joins["joins"] if f"{schema}." in j]
         if mine:
             picked.append({**joins, "joins": mine})
-    # A schema can hold dozens of tables: each *_safe view is one line under its full
-    # view, and a table's columns are counted, listed by get_structure_db(schema, table).
-    names = {o["name"] for o in picked}
-    safe = {
-        o["name"].removesuffix("_safe"): len(o["columns"])
-        for o in picked
-        if o["name"].endswith("_safe") and o["name"].removesuffix("_safe") in names
-    }
-    folded = [
-        {**o, "safe_columns": safe[o["name"]]} if o["name"] in safe else o
-        for o in picked
-        if o["name"].removesuffix("_safe") not in safe
-        or not o["name"].endswith("_safe")
-    ]
-    return render_structure(project, folded, listed=0)
+    # A schema can hold dozens of tables: a table's columns are counted, listed by
+    # get_structure_db(schema, table).
+    return render_structure(project, picked, listed=0)
 
 
 def _places(item: dict) -> str:
@@ -884,28 +867,55 @@ class SurveyStore:
         return lines
 
     def _withheld_lines(self, q: dict) -> list[str]:
-        """Return why a list is left out, the form's own choices, and where a script
-        reads the rest.
+        """Return why a list is left out, the form's own choices, where a script reads
+        the rest and how, and the codes the submissions picked.
         """
-        lines = [f"{q['variable_name']} ({q['type']}): {_withheld(q)}"]
+        name = q["variable_name"]
+        lines = [f"{name} ({q['type']}): {_withheld(q)}"]
         if q["choices"]:
             lines.append(
                 "  The form's own choices: "
                 + "; ".join(f"{c['value']} = {c['label']}" for c in q["choices"])
             )
         source, columns = q["data_source"], q["choice_columns"]
-        if source and columns:
-            d, _ = self.read(source["dataset"], _path(q))
-            where = " and ".join(
-                f"{m['column']} = {m['value']}" for m in source["match"]
+        if not (source and columns):
+            return lines
+        d, _ = self.read(source["dataset"], _path(q))
+        value, label = columns["value"], columns["label"]
+        status = {
+            c["column"]: c["pii"]["status"]
+            for c in self.dataset_columns
+            if c["dataset"] == source["dataset"]
+        }
+        where = " AND ".join(
+            f"{m['column']} = <the submission's {m['value']}>"
+            if m["value"].startswith("${")
+            else f"{m['column']} = {m['value']}"
+            for m in source["match"]
+        )
+        lines += [
+            f"  The rest: in {self.project}.duckdb dataset.{d['id']}; value column "
+            f"{value} ({status[value]}), label column {label} ({status[label]})",
+            f'  A script decodes them: SELECT {value}, {label} FROM dataset."{d["id"]}"'
+            + (f" WHERE {where}" if where else ""),
+        ]
+        picked = self.summary["withheld_choices"].get(name)
+        if picked is None:
+            lines.append("  In the data: no submission picked a code")
+            return lines
+        missing = picked["codes_not_in_list"]
+        n = picked["n_codes_picked"]
+        line = f"  In the data: {n} code{'s' if n > 1 else ''} picked"
+        if not missing:
+            line += ", all in the list"
+        elif status[value] in _SEEN:
+            line += f"; {len(missing)} not in the list: {', '.join(missing)}"
+        else:
+            line += (
+                f"; {len(missing)} not in the list (codes not shown: {value} is "
+                f"{status[value]})"
             )
-            lines.append(
-                f"  The rest: {columns['value']} and {columns['label']} of "
-                f"{self.project}.duckdb dataset.{d['id']}_safe"
-                + (f" where {where}" if where else "")
-                + ", read in a script"
-            )
-        return lines
+        return [*lines, line]
 
     def get_gate_chain(self, name: str, depth: int = 3) -> str:
         """Show the conditions that must hold for ``name`` to be asked, and their gates."""
@@ -1087,8 +1097,7 @@ class SurveyStore:
         view = f"dataset.{dataset_id}"
         return [
             f"{name}: {cols[0]['rows']} rows, {len(cols)} columns, pii {statuses}",
-            f"  In {self.project}.duckdb: {view} (every column, plus row) and "
-            f"{view}_safe (row plus cleared columns).",
+            f"  In {self.project}.duckdb: {view} (every column, plus row).",
         ]
 
     def _join_lines(

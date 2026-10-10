@@ -126,7 +126,7 @@ def load_config(path: Path) -> Config:
     _check_keys("[pii]", set(pii), {f.name for f in fields(PiiConfig)})
     if "entities" in pii:
         pii["entities"] = tuple(pii["entities"])
-    for key in ("whitelist", "blacklist", "mask"):
+    for key in ("whitelist", "blacklist"):
         if key in pii:
             pii[key] = tuple(pii[key])
     datasets = data.get("datasets", {})

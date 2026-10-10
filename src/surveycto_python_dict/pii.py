@@ -108,9 +108,6 @@ class PiiConfig:
     # True: the project holds no personal data (study metadata, say); every column
     # past the blacklist, publishable and device rules is whitelisted, unscanned.
     no_personal_data: bool = False
-    # Flagged columns (or questions, or dataset.column) the _safe views show masked:
-    # a salted hash, so the column still groups and joins without its values.
-    mask: tuple[str, ...] = ()
 
     def __post_init__(self):
         """Raise when a name is on both the whitelist and the blacklist."""
@@ -265,12 +262,13 @@ def screen_search_choices(
 ) -> None:
     """Give each ``search()`` select its dataset choices when they hold no PII.
 
-    All or nothing: a blacklisted question, a list over ``MAX_INLINE_CHOICES``, or any
-    Presidio hit among the choices' values and labels withholds the whole list
-    (``node.choices_withheld`` says why) and the select keeps only its literal items;
-    a blacklisted one keeps none, as its dataset is never read. The others record the
-    value and label columns their item names (``node.choice_columns``). A
-    whitelisted question gets its list unscanned. A filter on a field keeps the rows
+    All or nothing: a list over ``MAX_INLINE_CHOICES``, a blacklisted question, or any
+    Presidio hit among the choices' values and labels withholds the whole list from
+    the outputs (``node.choices_withheld`` says why) and the select keeps only its
+    literal items. Withheld or not, ``node.choice_universe`` holds every choice, so
+    the parquet's binaries are the same. Each records the value and label columns its
+    item names (``node.choice_columns``). A whitelisted question gets its list
+    unscanned. A filter on a field keeps the rows
     matching the values the field takes in ``rows`` (the submissions); a filter on
     anything but a plain field withholds the list.
     """
@@ -279,10 +277,6 @@ def screen_search_choices(
     for node in contract.nodes.values():
         source = node.data_source
         if not source or source["kind"] != "search":
-            continue
-        if node.name in config.blacklist:
-            node.choices_withheld = ["reviewed"]
-            node.choice_items = []
             continue
         header = dataset_header(datasets[source["dataset"]])
         named = [i for i in node.choice_items if i["value"] in header]
@@ -307,19 +301,21 @@ def screen_search_choices(
             tables[dataset] = DatasetTable(datasets[dataset])
         universe = search_universe(node, tables[dataset], fields)
         node.choice_universe = universe
+        withheld = []
         if len(universe) > MAX_INLINE_CHOICES:
-            node.choices_withheld = [f"{len(universe)} choices"]
+            withheld = [f"{len(universe)} choices"]
             node.choices_per_submission = True
-            node.choice_items = literals
-            continue
-        if node.name not in config.whitelist and not config.no_personal_data:
+        elif node.name in config.blacklist:
+            withheld = ["reviewed"]
+        elif node.name not in config.whitelist and not config.no_personal_data:
             texts = sorted({t for c in universe for t in (c["value"], c["label"]) if t})
             found = sorted(set().union(*_entities(texts, config, analyzer)))
-            if found:
-                node.choices_withheld = [f"presidio:{e}" for e in found]
-                node.choice_items = literals
-                continue
-        node.choice_items = universe
+            withheld = [f"presidio:{e}" for e in found]
+        if withheld:
+            node.choices_withheld = withheld
+            node.choice_items = literals
+        else:
+            node.choice_items = universe
 
 
 class _Scans:

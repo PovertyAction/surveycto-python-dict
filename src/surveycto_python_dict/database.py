@@ -6,7 +6,6 @@ Views read the files on disk; nothing is copied into the database:
 
 - ``<form>.submissions``: one row per submission, from ``<form>.parquet``: every
   column outside the repeat groups, which are in their long views.
-- ``<form>.submissions_safe``: only the ``cleared_by_form`` and ``whitelisted`` columns.
 - ``<form>.<repeat>``: each repeat group long, from ``long/<repeat>.parquet``, which this
   step reshapes from the wide parquet: one row per instance that has any value, keyed
   by ``KEY`` and one ``<repeat>_index`` per repeat from the outermost down
@@ -15,16 +14,13 @@ Views read the files on disk; nothing is copied into the database:
   more or fewer instance numbers than the field's nesting (``ragged`` in the
   dictionary), stay wide in ``submissions``. The ``dictionary`` table's ``table``
   names each column's view.
-- ``<form>.<repeat>_safe``: the same, limited to cleared columns.
 - ``dataset.<id>``: each dataset once, under its ``flow.json`` id (the server id, or
   ``<form>/<file>.csv`` for a CSV attached to a form), every column as text, with
   ``row`` (1 = first data row).
-- ``dataset.<id>_safe``: ``row`` plus the columns every reading form clears.
 
-A flagged column on ``[pii] mask`` stays in the ``_safe`` views, masked (``Mask``).
-
-Agents read values only through the ``*_safe`` views. That is a convention, like the
-``pii`` signal itself, not access control.
+Every view holds every column. ``dictionary.pii_status`` and
+``dataset_codebook.pii_status`` say which may hold personal data: scripts use those
+columns like any other, and their values stay out of what an agent prints.
 
 Tables copy the descriptions. Per form: ``dictionary`` (one row per column),
 ``questions``, ``choices``, ``edges`` (the variable graph), ``dataset_links`` (how each
@@ -40,7 +36,6 @@ the MCP's ``get_structure_db`` reads, and rendered for people as ``<project>_db.
 """
 
 import json
-import os
 from collections import Counter
 from functools import reduce
 from pathlib import Path
@@ -52,8 +47,6 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 from dotenv import load_dotenv
 
-from surveycto_python_dict.api import MissingEnvVar
-from surveycto_python_dict.pii import FLAGGED, SAFE
 from surveycto_python_dict.stats import SQL_TYPES
 from surveycto_python_dict.survey import render_structure
 
@@ -200,38 +193,7 @@ _PROJECT = {
 }
 
 
-class Mask:
-    """The flagged columns the ``_safe`` views show masked (``[pii] mask``): each
-    value as ``pii_`` and 12 hex digits of a salted SHA-256, nulls kept. The same
-    text gives the same mask in every form and dataset, so a masked column still
-    groups and joins.
-    """
-
-    def __init__(self, names: tuple[str, ...], salt: str | None):
-        """Hold the names to mask; the salt is required when there are any."""
-        if names and not salt:
-            raise MissingEnvVar("[pii] mask needs SCTO_MASK_SALT in .env")
-        self.names, self.salt = set(names), salt
-        self.used: set[str] = set()
-
-    def covers(self, *names: str | None) -> bool:
-        """Return whether any of ``names`` is listed, recording it as used."""
-        hit = {n for n in names if n in self.names}
-        self.used |= hit
-        return bool(hit)
-
-    def sql(self, column: str) -> str:
-        """Return the SELECT item that shows ``column`` masked under its own name."""
-        c = _ident(column)
-        return (
-            f"CASE WHEN {c} IS NULL THEN NULL ELSE 'pii_' || "
-            f"left(sha256({_literal(self.salt)} || CAST({c} AS VARCHAR)), 12) END AS {c}"
-        )
-
-
-def _write_form(
-    con, form: str, form_dir: Path, ids: dict, structure: dict, mask: Mask
-) -> dict:
+def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> dict:
     """Write one form's schema; return what the project layer needs from it."""
     dictionary = _load(form_dir / f"{form}_variable_dictionary.json")
     questions = _load(form_dir / f"{form}_questions.json")
@@ -239,13 +201,6 @@ def _write_form(
     codebook = _load(form_dir / f"{form}_dataset_codebook.json")
     variables = dictionary["variables"]
     repeat_of = {node["id"]: node["repeat_group"] for node in graph["nodes"]}
-    cleared = {c for c, v in variables.items() if v["pii"]["status"] in SAFE}
-    assert "KEY" in cleared
-    masked = {
-        c
-        for c, v in variables.items()
-        if v["pii"]["status"] in FLAGGED and mask.covers(c, v["question"])
-    }
     # The view each column is read from: its repeat's long view, or submissions.
     table_of = {
         c: repeat_of[v["question"]]
@@ -259,30 +214,18 @@ def _write_form(
 
     con.execute(f"CREATE SCHEMA {_ident(form)}")
     parquet = (form_dir / f"{form}.parquet").resolve().as_posix()
-    # Both straight from the file, each binding only its columns: DuckDB takes
-    # seconds per ten thousand columns to bind a view.
-    for name, columns in (
-        ("submissions", [_ident(c) for c in wide]),
-        (
-            "submissions_safe",
-            [
-                _ident(c) if c in cleared else mask.sql(c)
-                for c in wide
-                if c in cleared or c in masked
-            ],
-        ),
-    ):
-        con.execute(
-            f"CREATE VIEW {_q(form, name)} AS SELECT "
-            + ", ".join(columns)
-            + f" FROM read_parquet({_literal(parquet)})"
-        )
-    for name in ("submissions", "submissions_safe"):
-        structure[f"{form}.{name}"] = {
-            "grain": "one row per submission",
-            "key": ["KEY"],
-            "joins": [],
-        }
+    # Straight from the file, binding only its columns: DuckDB takes seconds per ten
+    # thousand columns to bind a view.
+    con.execute(
+        f"CREATE VIEW {_q(form, 'submissions')} AS SELECT "
+        + ", ".join(_ident(c) for c in wide)
+        + f" FROM read_parquet({_literal(parquet)})"
+    )
+    structure[f"{form}.submissions"] = {
+        "grain": "one row per submission",
+        "key": ["KEY"],
+        "joins": [],
+    }
 
     groups = graph["repeat_groups"]
     long_dir = form_dir / "long"
@@ -303,35 +246,15 @@ def _write_form(
         con.execute(
             f"CREATE VIEW {_q(form, repeat)} AS SELECT * FROM read_parquet({source})"
         )
-        # A long column is cleared when every wide column it stacks is, and masked
-        # when each is cleared or masked.
-        stacked: dict[str, set[str]] = {}
-        for column, iterations in columns.items():
-            name = column.removesuffix("".join(f"_{i}" for i in iterations))
-            state = (
-                "clear" if column in cleared else "mask" if column in masked else "drop"
-            )
-            stacked.setdefault(name, set()).add(state)
-        keep = [_ident(k) for k in keys] + [
-            _ident(name) if states == {"clear"} else mask.sql(name)
-            for name, states in stacked.items()
-            if "drop" not in states
-        ]
-        con.execute(
-            f"CREATE VIEW {_q(form, repeat + '_safe')} AS SELECT "
-            + ", ".join(keep)
-            + f" FROM {_q(form, repeat)}"
-        )
         # An instance joins its parent on the parent's keys, named alike in both.
-        for suffix in ("", "_safe"):
-            this = f"{form}.{repeat}{suffix}"
-            parent = f"{form}.{group['parent'] or 'submissions'}{suffix}"
-            on = " AND ".join(f"{this}.{k} = {parent}.{k}" for k in keys[:-1])
-            structure[this] = {
-                "grain": f"one row per instance of the repeat {repeat} that has any value",
-                "key": keys,
-                "joins": [f"{on}  (many to one)"],
-            }
+        this = f"{form}.{repeat}"
+        parent = f"{form}.{group['parent'] or 'submissions'}"
+        on = " AND ".join(f"{this}.{k} = {parent}.{k}" for k in keys[:-1])
+        structure[this] = {
+            "grain": f"one row per instance of the repeat {repeat} that has any value",
+            "key": keys,
+            "joins": [f"{on}  (many to one)"],
+        }
 
     n_columns = Counter(v["question"] for v in variables.values())
     tables = {
@@ -486,7 +409,6 @@ def _write_datasets(
     forms: dict,
     dataset_keys: dict,
     structure: dict,
-    mask: Mask,
 ) -> None:
     """Write each dataset once in the ``dataset`` schema, with its joins to the forms."""
     con.execute("CREATE SCHEMA dataset")
@@ -499,30 +421,12 @@ def _write_datasets(
             f"CREATE VIEW {view} AS SELECT row_number() OVER () AS row, * "
             f"FROM read_csv({source}, header = true, all_varchar = true)"
         )
-        # A column is cleared when every form that reads the dataset clears it.
         entries = [
             c
             for form in d["read_by"]
             for c in forms[form]["codebook"]
             if id_of[form, c["dataset"]] == did
         ]
-        statuses: dict[str, list[str]] = {}
-        for c in entries:
-            statuses.setdefault(c["column"], []).append(c["pii"]["status"])
-        names: dict[str, set[str]] = {}
-        for c in entries:
-            names.setdefault(c["column"], set()).add(f"{c['dataset']}.{c['column']}")
-        safe = ["row"]
-        for column in d["columns"]:
-            if statuses.get(column) and set(statuses[column]) <= SAFE:
-                safe.append(_ident(column))
-            elif mask.covers(f"{did}.{column}", *names.get(column, ())):
-                safe.append(mask.sql(column))
-        con.execute(
-            f"CREATE VIEW {_q('dataset', did + '_safe')} AS SELECT "
-            + ", ".join(safe)
-            + f" FROM {view}"
-        )
         # The key the config declares ([datasets.<id>] key), checked on the rows that
         # have all of it; without one, the CSV row is the key.
         key = list(dataset_keys.get(did, ["row"]))
@@ -545,48 +449,42 @@ def _write_datasets(
         # The joins each reading form's pulldata()/search() use, the dataset column on
         # the left; a literal match is a filter.
         stats = {c["column"]: c for c in entries}
-        for suffix in ("", "_safe"):
-            name = f"dataset.{did}{suffix}"
-            joins = []
-            for form in d["read_by"]:
-                repeat_of = forms[form]["repeat_of"]
-                for q in forms[form]["questions"]:
-                    source = q["data_source"]
-                    if not source or id_of[form, source["dataset"]] != did:
-                        continue
-                    for m in source["match"]:
-                        value = m["value"] or ""
-                        if not (value.startswith("${") and value.endswith("}")):
-                            line = f"filter: {name}.{m['column']} = {value}"
-                        elif m["column"] not in stats:
-                            # The form names a column the dataset does not have: the
-                            # lookup never finds a row.
-                            line = (
-                                f"{name}.{m['column']} = {form}.${{{value[2:-1]}}}  "
-                                f"({m['column']} is not a column of {did}: "
-                                f"{form}.{q['variable_name']} finds no row)"
-                            )
-                        else:
-                            field = value[2:-1]
-                            table = f"{form}.{repeat_of.get(field) or 'submissions'}"
-                            column = stats[m["column"]]
-                            unique = (
-                                column["distinct"]
-                                == column["non_null"]
-                                == column["rows"]
-                            )
-                            line = (
-                                f"{name}.{m['column']} = {table}{suffix}.{field}  "
-                                + (
-                                    "(many to one: the column is unique in the dataset)"
-                                    if unique
-                                    else f"(not unique: {column['distinct']} distinct "
-                                    f"values in {column['non_null']} rows)"
-                                )
-                            )
-                        if line not in joins:
-                            joins.append(line)
-            structure[name] = {"grain": grain, "key": key, "joins": joins}
+        name = f"dataset.{did}"
+        joins = []
+        for form in d["read_by"]:
+            repeat_of = forms[form]["repeat_of"]
+            for q in forms[form]["questions"]:
+                source = q["data_source"]
+                if not source or id_of[form, source["dataset"]] != did:
+                    continue
+                for m in source["match"]:
+                    value = m["value"] or ""
+                    if not (value.startswith("${") and value.endswith("}")):
+                        line = f"filter: {name}.{m['column']} = {value}"
+                    elif m["column"] not in stats:
+                        # The form names a column the dataset does not have: the
+                        # lookup never finds a row.
+                        line = (
+                            f"{name}.{m['column']} = {form}.${{{value[2:-1]}}}  "
+                            f"({m['column']} is not a column of {did}: "
+                            f"{form}.{q['variable_name']} finds no row)"
+                        )
+                    else:
+                        field = value[2:-1]
+                        table = f"{form}.{repeat_of.get(field) or 'submissions'}"
+                        column = stats[m["column"]]
+                        unique = (
+                            column["distinct"] == column["non_null"] == column["rows"]
+                        )
+                        line = f"{name}.{m['column']} = {table}.{field}  " + (
+                            "(many to one: the column is unique in the dataset)"
+                            if unique
+                            else f"(not unique: {column['distinct']} distinct "
+                            f"values in {column['non_null']} rows)"
+                        )
+                    if line not in joins:
+                        joins.append(line)
+        structure[name] = {"grain": grain, "key": key, "joins": joins}
 
 
 def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
@@ -746,15 +644,12 @@ def write_database(
     forms: list[str],
     csvs: dict[str, Path],
     dataset_keys: dict[str, list[str]],
-    mask: Mask | None = None,
 ) -> Path:
     """Write ``<project>.duckdb`` in ``out_dir``, replacing any earlier one.
 
     ``csvs`` gives each ``flow.json`` dataset's CSV; ``dataset_keys`` the columns that
-    identify a dataset's rows, by dataset id; ``mask`` the flagged columns the
-    ``_safe`` views show masked. A name to mask that matches no flagged column raises.
+    identify a dataset's rows, by dataset id.
     """
-    mask = mask or Mask((), None)
     out_dir = Path(out_dir)
     flow = _load(out_dir / "flow.json")
     ids = {
@@ -769,13 +664,10 @@ def write_database(
     # Each object's grain, key and joins, recorded as it is created.
     structure: dict[str, dict] = {}
     loaded = {
-        form: _write_form(con, form, out_dir / form, ids[form], structure, mask)
+        form: _write_form(con, form, out_dir / form, ids[form], structure)
         for form in forms
     }
-    _write_datasets(con, flow, csvs, loaded, dataset_keys, structure, mask)
-    unused = sorted(mask.names - mask.used)
-    if unused:
-        raise ValueError(f"[pii] mask: no flagged column named {', '.join(unused)}")
+    _write_datasets(con, flow, csvs, loaded, dataset_keys, structure)
     _write_project(con, flow, loaded, structure)
 
     # The finished file's own schema, with what each object is. One query for every
@@ -827,7 +719,6 @@ def main(argv: list[str] | None = None) -> None:
         list(cfg.forms),
         dataset_csvs(cfg, flow),
         cfg.dataset_keys,
-        Mask(cfg.pii.mask, os.environ.get("SCTO_MASK_SALT")),
     )
     con = duckdb.connect(str(path), read_only=True)
     for form in cfg.forms:

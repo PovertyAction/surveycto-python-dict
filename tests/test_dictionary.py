@@ -262,3 +262,22 @@ def test_the_codes_a_constraint_accepts():
     assert allowed_codes(". >= 0 or . = -99", codes) == [-99]
     assert allowed_codes(". != -88", codes) == [-99, -77]
     assert allowed_codes(". <= ${plots}", codes) is None
+
+
+def test_withheld_lists_count_the_codes_picked_and_those_not_in_the_list(tmp_path):
+    path = tmp_path / "farm.xml"
+    path.write_text(XML, encoding="utf-8")
+    contract = parse_contract(path)
+    questions = build_questions(contract)
+    table = cast_wide(ROWS, contract)
+    # Both lists withheld; their datasets now offer one code each.
+    for q in questions:
+        if q["variable_name"] in ("crop", "tools"):
+            q["choices_withheld"] = ["presidio:PERSON"]
+    contract.nodes["crop"].choice_universe = [{"value": "01", "label": "x"}]
+    contract.nodes["tools"].choice_universe = [{"value": "1", "label": "x"}]
+    summary = build_dictionary(table, questions, contract, SENTINELS)["summary"]
+    assert summary["withheld_choices"] == {
+        "crop": {"n_codes_picked": 2, "codes_not_in_list": ["02"]},
+        "tools": {"n_codes_picked": 1, "codes_not_in_list": ["2"]},
+    }
