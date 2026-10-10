@@ -28,7 +28,8 @@ blacklist = []
 
 # Submissions the project does not use (tests, say), as an SQL condition on the
 # parquet's columns: left out of the dictionary's counts and the stats; the parquet
-# keeps them.
+# keeps them. A window over the rows of `submissions` keeps each entity's latest:
+# "row_number() OVER (PARTITION BY hhid ORDER BY SubmissionDate DESC) > 1".
 # [submissions]
 # exclude = "username = 'test'"
 

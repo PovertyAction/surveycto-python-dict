@@ -63,7 +63,6 @@ _SYS_EXACT = {
     "instanceName",
     "SubmitterID",
     "SubmitterName",
-    "X_searchText",
 }
 _SYS_PREFIX = ("meta-", "SET-OF-")
 
@@ -134,6 +133,9 @@ class Node:
     control: str | None = None  # body control: select_one/select_multiple/input/...
     is_select_multiple: bool = False
     calculate: str | None = None
+    # The calculate is on the body control, not the bind: a default the user can
+    # change, unless the field is read-only.
+    calculation_is_default: bool = False
     relevant: str | None = None
     constraint: str | None = None
     required: bool = False
@@ -167,7 +169,8 @@ class Node:
     hint: str | None = None
     constraint_message: str | None = None
     # A `search()` select's choices as read from its dataset, also when they are left
-    # out of the outputs: they decode column names and type the data. Never exported.
+    # out of the outputs: they decode column names and type the data. A withheld list's
+    # go to <form>_search_choices.parquet only, for the database.
     choice_universe: list[dict] | None = None
     # Binaries only for the codes someone picked: the list is filtered per submission
     # (an itemset filter or a search() filter on a field), or kept in its dataset.
@@ -861,6 +864,7 @@ def parse_contract(xml_path) -> FormContract:
             is_select_multiple=select_multiple,
             choice_items=items.get(path, []),
             calculate=calculate,
+            calculation_is_default=not b.get("calculate") and path in body_calculates,
             relevant=b.get("relevant"),
             constraint=b.get("constraint"),
             required=str(b.get("required", "")).strip() in ("true()", "true", "1"),

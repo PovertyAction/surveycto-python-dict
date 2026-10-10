@@ -31,6 +31,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass, fields
 from pathlib import Path
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 from dotenv import load_dotenv
 
@@ -49,9 +50,17 @@ from surveycto_python_dict.pii import (
     screen_search_choices,
     warn_unknown_names,
 )
-from surveycto_python_dict.questions import build_questions, write_sections
+from surveycto_python_dict.questions import (
+    build_questions,
+    withheld_choices,
+    write_sections,
+)
 from surveycto_python_dict.survey import render_mermaid
 from surveycto_python_dict.xml_contract import FormContract, parse_contract
+
+SEARCH_CHOICES = pa.schema(
+    [(c, pa.string()) for c in ("question", "value", "label", "when", "withheld")]
+)
 
 _TOP_KEYS = {
     "forms",
@@ -323,6 +332,7 @@ def build_form(
         "graph": out / f"{form}_variable_graph.json",
         "pii_review": out / f"{form}_pii_review.xlsx",
         "dataset_codebook": out / f"{form}_dataset_codebook.json",
+        "search_choices": out / f"{form}_search_choices.parquet",
     }
     # pyarrow writes the parquet outside the GIL while the JSON is written here.
     with ThreadPoolExecutor(1) as background:
@@ -336,6 +346,10 @@ def build_form(
         write_pii_review(table, vardict, paths["pii_review"])
         codebook = dataset_codebook(datasets, questions, cfg.pii, analyzer, scanned)
         write_json(codebook, paths["dataset_codebook"])
+        pq.write_table(
+            pa.Table.from_pylist(withheld_choices(contract), schema=SEARCH_CHOICES),
+            paths["search_choices"],
+        )
         parquet.result()
 
     fallbacks = vardict["summary"]["n_cast_fallback"]

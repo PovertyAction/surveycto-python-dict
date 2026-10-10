@@ -75,6 +75,20 @@ def _tokens(text: str) -> list[str]:
     return _TOKEN_RE.findall(plain_label(text).lower())
 
 
+_REPEAT_COUNT_TEXT = re.compile(r"Number of iterations in '(.*)' repeat group")
+
+
+def _label(q: dict) -> str:
+    """Return the words a question is searched by besides its name: its label, the
+    repeat's label for a repeat count, nothing for a calculate's formula.
+    """
+    if q["type"] == "repeat_count":
+        return _REPEAT_COUNT_TEXT.fullmatch(q["question_text"]).group(1)
+    if q["question_text"] == q["calculation"]:
+        return ""
+    return q["question_text"]
+
+
 def _name_tokens(name: str) -> list[str]:
     """Return a field name's parts and the name itself, lowercased: ``refugeePop``
     gives ``refugee``, ``pop`` and ``refugeepop``.
@@ -643,19 +657,30 @@ class SurveyStore:
             f". lookup_variable('{name}', columns=True) lists each."
         )
 
-    def _render_question(self, q: dict, all_columns: bool = False) -> str:
+    def _render_question(
+        self, q: dict, all_columns: bool = False, listed: int | None = None
+    ) -> str:
         lines = [f"{q['variable_name']} ({q['type']})"]
-        if q["question_text"]:
+        # An unlabelled calculate's text is its formula, shown as Calculation below.
+        if q["question_text"] and q["question_text"] != q["calculation"]:
             lines.append(f"Text: {q['question_text']}")
         if q["hint"]:
             lines.append(f"Hint: {q['hint']}")
         if q["group_path"]:
             lines.append(f"Group: {'/'.join(q['group_path'])}")
+        # A search() appearance is shown as the data source.
+        if q["appearance"] and "search(" not in q["appearance"]:
+            lines.append(f"Appearance: {q['appearance']}")
+        calculation = (
+            "Default (computed; the user can change it)"
+            if q["calculation_is_default"]
+            else "Calculation"
+        )
         for label, key in (
             ("Relevance", "relevance"),
             ("Constraint", "constraint"),
             ("Constraint message", "constraint_message"),
-            ("Calculation", "calculation"),
+            (calculation, "calculation"),
         ):
             if q[key]:
                 lines.append(f"{label}: {q[key]}")
@@ -665,17 +690,22 @@ class SurveyStore:
         if q["choices_withheld"]:
             lines.append(_withheld(q))
         elif q["choices"] and any("when" in c for c in q["choices"]):
-            lists = dict.fromkeys(_when(c) for c in q["choices"])
+            lists = list(dict.fromkeys(w for c in q["choices"] if (w := _when(c))))
+            every = [c["value"] for c in q["choices"] if not _when(c)]
             lines.append(
                 f"Choices: {len(q['choices'])} in {len(lists)} lists, by the dataset "
-                f"rows the submissions reach ({'; '.join(lists)}); get_choice_list "
-                "shows them"
+                f"rows the submissions reach ({'; '.join(lists[:_LISTED])}"
+                + (f"; ... {len(lists) - _LISTED} more" if len(lists) > _LISTED else "")
+                + ")"
+                + (
+                    f", plus {len(every)} in every list ({', '.join(every)})"
+                    if every
+                    else ""
+                )
+                + "; get_choice_list shows them"
             )
         elif q["choices"]:
-            lines.append(
-                "Choices: "
-                + "; ".join(f"{c['value']} = {c['label']}" for c in q["choices"])
-            )
+            lines.append(_choices_line(q))
         if q["choices_per_submission"] and q["type"] == "select_multiple":
             lines.append(
                 "Binaries: only for the codes someone picked (the form filters the "
@@ -699,7 +729,7 @@ class SurveyStore:
         if q["publishable"]:
             lines.append("Publishable: yes")
         columns = self.columns.get(q["variable_name"], [])
-        if len(columns) > _LISTED and not all_columns:
+        if len(columns) > (_LISTED if listed is None else listed) and not all_columns:
             lines.append(self._columns_summary(q["variable_name"], columns))
         else:
             lines.append("Columns:" if columns else "Columns: none in the data")
@@ -710,18 +740,20 @@ class SurveyStore:
             )
         return "\n".join(lines)
 
-    def lookup_variable(self, name: str, columns: bool = False) -> str:
+    def lookup_variable(
+        self, name: str, columns: bool = False, listed: int | None = None
+    ) -> str:
         """Describe a question, or the column ``name`` and its question.
 
-        A question with more than 20 columns (a repeat, a long choice list) gets a
-        summary of them; ``columns`` lists each.
+        A question with more than ``listed`` columns (default 20: a repeat, a long
+        choice list) gets a summary of them; ``columns`` lists each.
         """
         if name in self.questions:
-            return self._render_question(self.questions[name], columns)
+            return self._render_question(self.questions[name], columns, listed)
         if name in self.variables:
             question = self.variables[name]["question"]
             if question is not None:
-                return self._render_question(self.questions[question], columns)
+                return self._render_question(self.questions[question], columns, listed)
             v = self.variables[name]
             what = _KINDS[v["column_kind"]] if "column_kind" in v else "a system column"
             return (
@@ -734,41 +766,62 @@ class SurveyStore:
         return f"No variable or question named {name!r}.{hint}"
 
     def lookup_variables(self, names: list[str], columns: bool = False) -> str:
-        """Describe several variables."""
-        return "\n\n".join(self.lookup_variable(n, columns) for n in names)
+        """Describe several variables; with more than one, a question's columns are
+        summarised unless ``columns``.
+        """
+        listed = None if len(names) == 1 else 1
+        return "\n\n".join(self.lookup_variable(n, columns, listed) for n in names)
 
-    def search_scored(self, query: str) -> list[tuple[float, str]]:
-        """Score questions by the IDF of the query words their name or text contains;
-        a question named exactly ``query`` comes first.
+    def search_scored(self, query: str) -> list[tuple[tuple[float, float], str]]:
+        """Rank questions by how many query words their name, label or hint holds,
+        then by those words' IDF; a hint counts half. A question named exactly
+        ``query`` comes first.
         """
         docs = {
-            n: set(_name_tokens(n)) | set(_tokens(q["question_text"]))
+            n: set(_name_tokens(n)) | set(_tokens(_label(q)))
             for n, q in self.questions.items()
         }
+        hints = {n: set(_tokens(q["hint"] or "")) for n, q in self.questions.items()}
         # One-letter words ("p" of "p-value") only count when alone.
         words = set(_tokens(query))
         words = {w for w in words if len(w) > 1} or words
-        # A word of four letters or more also matches the words it starts
-        # ("child" finds "children").
-        matched = {
-            w: {
+
+        def holding(w: str, texts: dict[str, set[str]]) -> set[str]:
+            # A word of four letters or more also matches the words it starts
+            # ("child" finds "children").
+            return {
                 n
-                for n, toks in docs.items()
+                for n, toks in texts.items()
                 if w in toks or (len(w) >= 4 and any(t.startswith(w) for t in toks))
             }
-            for w in words
-        }
+
+        matched = {w: holding(w, docs) for w in words}
+        hinted = {w: holding(w, hints) - matched[w] for w in words}
         # Words in more than half the questions ("de", "the") only rank when alone.
-        terms = [w for w in words if len(matched[w]) <= len(docs) / 2] or list(words)
+        terms = [
+            w for w in words if len(matched[w] | hinted[w]) <= len(docs) / 2
+        ] or list(words)
         idf = {
-            w: math.log(len(docs) / len(matched[w])) + 1 for w in terms if matched[w]
+            w: math.log(len(docs) / len(matched[w] | hinted[w])) + 1
+            for w in terms
+            if matched[w] | hinted[w]
         }
         # Each word counts once per question, so long texts do not win on common words.
-        scores = {n: sum(s for w, s in idf.items() if n in matched[w]) for n in docs}
+        scores = {}
+        for n in docs:
+            weights = {
+                w: 1.0 if n in matched[w] else 0.5 if n in hinted[w] else 0.0
+                for w in idf
+            }
+            scores[n] = (
+                sum(weights.values()),
+                sum(idf[w] * weight for w, weight in weights.items()),
+            )
         if query.strip() in scores:
-            scores[query.strip()] = math.inf
+            scores[query.strip()] = (math.inf, math.inf)
         return sorted(
-            ((s, n) for n, s in scores.items() if s > 0), key=lambda x: (-x[0], x[1])
+            ((s, n) for n, s in scores.items() if s[0] > 0),
+            key=lambda x: (-x[0][0], -x[0][1], x[1]),
         )
 
     def search_line(self, name: str) -> str:
@@ -1045,14 +1098,22 @@ class SurveyStore:
             )
             lines.append(f"  count reads {ref} {what}")
         indexed = [
-            (m, self.questions[m]["calculation"])
+            self.questions[m]
             for m in g["members"]
             if m in self.questions
             and "index()" in (self.questions[m]["calculation"] or "")
         ]
-        if indexed:
-            lines.append("  set per instance (calculates that read index()):")
-            lines += [f"    {m} = {_short(c, 160)}" for m, c in indexed]
+        for default, what in (
+            (False, "calculates that read index()"),
+            (True, "defaults that read index(); the user can change them"),
+        ):
+            set_by = [q for q in indexed if q["calculation_is_default"] == default]
+            if set_by:
+                lines.append(f"  set per instance ({what}):")
+                lines += [
+                    f"    {q['variable_name']} = {_short(q['calculation'], 160)}"
+                    for q in set_by
+                ]
         return lines
 
     def _table_of(self, value: str | None) -> str:
@@ -1125,7 +1186,6 @@ class SurveyStore:
                     what
                 )
         by_name = {c["column"]: c for c in cols}
-        n_rows = cols[0]["rows"]
         lines = [
             "  Joins to the form (dataset column = form value: fields; `<- column` "
             "reads it, `(choices)` takes its choices from the matching rows):"
@@ -1137,11 +1197,8 @@ class SurveyStore:
             if column not in by_name:
                 lines.append(f"    {name}.{column}: no such column in {name}")
             else:
-                key = by_name[column]
                 unique = (
-                    "unique: one dataset row per match"
-                    if key["distinct"] == key["non_null"] == n_rows
-                    else f"not unique: {key['distinct']} distinct in {key['non_null']} rows"
+                    _not_unique(by_name[column]) or "unique: one dataset row per match"
                 )
                 lines.append(f"    {name}.{column} ({unique}) =")
             items = list(values.items())
@@ -1266,7 +1323,7 @@ def search_forms(stores: dict, query: str, max_results: int = 20) -> str:
             for form, store in stores.items()
             for score, name in store.search_scored(query)
         ),
-        key=lambda x: (-x[0], x[1], x[2]),
+        key=lambda x: (-x[0][0], -x[0][1], x[1], x[2]),
     )[:max_results]
     if not ranked:
         return f"No question of {', '.join(stores)} matches {query!r}."
@@ -1335,9 +1392,19 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
             match = " and ".join(
                 f"{m['column']} = {m['value']}" for m in source["match"]
             )
+            keys = {
+                c["column"]: c
+                for c in store.dataset_columns
+                if c["dataset"] == source["dataset"]
+            }
+            warnings = [
+                f"{m['column']} {_not_unique(keys[m['column']])}"
+                for m in source["match"]
+                if m["column"] in keys and _not_unique(keys[m["column"]])
+            ]
             lines.append(
                 f"{pad}{form}.{name} <- pulldata {source['dataset']}.{source['column']}"
-                f" where {match}"
+                f" where {match}" + (f" ({'; '.join(warnings)})" if warnings else "")
             )
             d, read = store.read(source["dataset"], _path(q))
             if read["computed"]:
@@ -1347,7 +1414,14 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
             keys = {r for m in source["match"] for r in _REF_RE.findall(m["value"])}
             refs = [r for r in refs if r not in keys]
         elif calculation:
-            lines.append(f"{pad}{form}.{name} = {_short(calculation, 160)}")
+            lines.append(
+                f"{pad}{form}.{name} = {_short(calculation, 160)}"
+                + (
+                    f" (a default of this {q['type']}; the user can change it)"
+                    if q["calculation_is_default"]
+                    else ""
+                )
+            )
         else:
             lines.append(
                 f"{pad}{form}.{name} ({q['type']}): {_short(q['question_text'])}"
@@ -1373,6 +1447,34 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
 
     walk(form, name, 0)
     return "\n".join(lines)
+
+
+def _not_unique(column: dict) -> str | None:
+    """Return why a dataset column does not identify one row, or None when it does."""
+    if column["distinct"] == column["non_null"] == column["rows"]:
+        return None
+    return f"not unique: {column['distinct']} distinct in {column['non_null']} rows"
+
+
+def _choices_line(q: dict) -> str:
+    """Return a select's choices; past ``_LISTED``, the first ones, or the label
+    pattern when every label is the same text around its value.
+    """
+    choices = q["choices"]
+    if len(choices) <= _LISTED:
+        return "Choices: " + "; ".join(f"{c['value']} = {c['label']}" for c in choices)
+    rest = f"; get_choice_list('{q['variable_name']}') lists each"
+    patterns = {c["label"].replace(c["value"], "<n>") for c in choices}
+    if len(patterns) == 1 and "<n>" in (pattern := patterns.pop()):
+        return (
+            f"Choices: {len(choices)}, {choices[0]['value']} ... "
+            f"{choices[-1]['value']}, each labelled {pattern} (<n>: its value){rest}"
+        )
+    return (
+        "Choices: "
+        + "; ".join(f"{c['value']} = {c['label']}" for c in choices[:_LISTED])
+        + f"; ... {len(choices) - _LISTED} more{rest}"
+    )
 
 
 def _choices_text(q: dict) -> str:

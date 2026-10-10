@@ -175,6 +175,10 @@ def _kind(node) -> str:
 def kept(table: pa.Table, exclude: str | None) -> pa.Table:
     """Return the rows of ``table`` that the SQL predicate ``exclude`` does not hold
     for (the config's ``[submissions] exclude``); every row without one.
+
+    The predicate is evaluated as a column over every row of ``submissions``, so a
+    window can say which rows a resubmission replaced:
+    ``row_number() OVER (PARTITION BY id ORDER BY SubmissionDate DESC) > 1``.
     """
     if exclude is None:
         return table
@@ -182,7 +186,8 @@ def kept(table: pa.Table, exclude: str | None) -> pa.Table:
     con.register("submissions", table)
     try:
         keys = con.execute(
-            f"SELECT KEY FROM submissions WHERE ({exclude}) IS NOT TRUE"
+            f"SELECT KEY FROM (SELECT KEY, ({exclude}) AS excluded FROM submissions) "
+            "WHERE excluded IS NOT TRUE"
         ).to_arrow_table()
     except duckdb.Error as e:
         raise ValueError(f"[submissions] exclude = {exclude!r}: {e}") from e

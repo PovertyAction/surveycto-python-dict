@@ -50,8 +50,12 @@ codes. Never commit `.env`, the `.pem` key, `config.toml` or `data/`.
 
 Submissions the project does not use (tests, say) can be left out of the counts:
 `[submissions] exclude` takes an SQL condition on the parquet's columns
-(`"username = 'test'"`). The dictionary's counts and the stats then cover the other
-rows, `get_survey_info` says how many were left out, and the parquet keeps every row.
+(`"username = 'test'"`), evaluated over every row of the table `submissions`, so a
+window can leave out the submissions a resubmission replaced
+(`"row_number() OVER (PARTITION BY hhid ORDER BY SubmissionDate DESC) > 1"`) and a
+subquery can read a file of `KEY`s by its absolute path. The dictionary's counts and
+the stats then cover the other rows, `get_survey_info` says how many were left out,
+and the parquet keeps every row.
 
 A project is one connected study: one or more forms on one server that chain through
 the server datasets they publish and read (any number of datasets, none included). It
@@ -76,6 +80,7 @@ list and every server dataset pulled (`raw/datasets/<id>.csv`): the ones in
 | `<form>_summary_stats.csv` | `just stats`: per column, counts over the rows where it was asked (skip logic evaluated per row), sentinels apart, then mean/quartiles, frequencies or shares; flagged PII columns get counts only |
 | `<form>_codebook.xlsx` | `just codebook` (which writes `<form>_summary_stats.csv` too): for PIs. Variables (label, type, group, relevance, value labels, missing, sentinels, PII status) and Summary stats; no values of flagged PII columns |
 | `<form>_dataset_codebook.json` | One row per column of each dataset the form reads: counts, the questions that read it, and a `pii` block (Presidio, or `dataset.column` on the whitelist/blacklist) |
+| `<form>_search_choices.parquet` | Every choice of the `search()` lists the outputs refer to without listing (flagged, blacklisted or over 50 choices), for `<form>.choices` in the database |
 | `long/<repeat>.parquet` | `just duckdb`: each repeat group long, one row per instance with any value, keyed by `KEY` and one `<repeat>_index` per enclosing repeat |
 
 And for the project, in `<out_dir>`: `flow.json` and `flow.md` (below), and

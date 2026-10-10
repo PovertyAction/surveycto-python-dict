@@ -47,7 +47,9 @@ def make_server(stores: dict[str, SurveyStore]) -> MCPServer:
 
     @server.tool()
     def lookup_variables(form: str, names: list[str], columns: bool = False) -> str:
-        """Describe several questions or columns of a form at once."""
+        """Describe several questions or columns of a form at once, each question's
+        columns summarised; ``columns`` lists each.
+        """
         return store(form).lookup_variables(names, columns)
 
     @server.tool()

@@ -324,6 +324,30 @@ def test_many_columns_are_summarised_and_listed_on_request(store, monkeypatch):
     assert "plot_crop_2_2" in store.lookup_variable("plot_crop", columns=True)
 
 
+def test_a_long_choice_list_is_cut_or_given_by_its_pattern(store, monkeypatch):
+    from surveycto_python_dict import survey
+
+    monkeypatch.setattr(survey, "_LISTED", 2)
+    q = store.questions["crop"]
+    q["choices"] = [{"value": str(n), "label": f"${{combo{n}}}"} for n in (1, 2, 3)]
+    assert (
+        "Choices: 3, 1 ... 3, each labelled ${combo<n>} (<n>: its value); "
+        "get_choice_list('crop') lists each"
+    ) in store.lookup_variable("crop")
+    q["choices"] = [{"value": v, "label": v.upper()} for v in ("a", "b", "c")]
+    assert (
+        "Choices: a = A; b = B; ... 1 more; get_choice_list('crop') lists each"
+        in store.lookup_variable("crop")
+    )
+
+
+def test_several_lookups_summarise_each_question_columns(store):
+    out = store.lookup_variables(["plot_crop", "plot_size"])
+    assert "Columns: 4, plot_crop_1_1 ... " in out
+    assert "plot_crop_2_2  " not in out
+    assert "plot_crop_2_2  " in store.lookup_variable("plot_crop")
+
+
 def test_neighborhood_names_the_repeat_instead_of_its_members(store):
     out = store.get_variable_neighborhood("plot_size")
     assert out.startswith("plot_size is in repeat plot with 2 questions")
@@ -345,6 +369,40 @@ def test_repeat_structure_says_what_sets_its_instances(store):
     assert "  count reads plots (integer) Plots" in out
     assert "  set per instance (calculates that read index()):" in out
     assert "    plot_size = concat('plot-', index())" in out
+
+
+def test_a_default_is_told_apart_from_a_calculation(store):
+    q = store.questions["plot_size"]
+    q.update(calculation="concat('plot-', index())", calculation_is_default=True)
+    assert (
+        "Default (computed; the user can change it): concat('plot-', index())"
+        in store.lookup_variable("plot_size")
+    )
+    out = store.get_repeat_structure("plot")
+    assert "  set per instance (defaults that read index(); the user can" in out
+    assert "calculates that read index()" not in out
+
+
+def test_lookup_shows_appearance_and_no_formula_as_text(store):
+    store.questions["area"]["appearance"] = "month-year"
+    assert "Appearance: month-year" in store.lookup_variable("area")
+    q = store.questions["plot_size"]
+    q.update(type="calculate", calculation="1 + 1", question_text="1 + 1")
+    out = store.lookup_variable("plot_size")
+    assert "Text:" not in out
+    assert "Calculation: 1 + 1" in out
+
+
+def test_reached_choices_count_only_filtered_lists(store):
+    store.questions["crop"]["choices"] = [
+        {"value": "1", "label": "A", "when": {"list": "x"}},
+        {"value": "2", "label": "B", "when": {"list": "y"}},
+        {"value": "-66", "label": "Other"},
+    ]
+    assert (
+        "Choices: 3 in 2 lists, by the dataset rows the submissions reach "
+        "(list = x; list = y), plus 1 in every list (-66); get_choice_list shows them"
+    ) in store.lookup_variable("crop")
 
 
 def test_project_commands_need_no_form(store, capsys):
@@ -417,6 +475,17 @@ def test_search_matches_name_parts_and_word_starts_and_drops_one_letters(store):
     store.questions["per_plot"]["question_text"] = "Area per plot, in hectares"
     # "hectare" starts "hectares"; "a" alone of one letter is dropped.
     assert store.search_questions("a hectare").splitlines()[0].startswith("per_plot")
+
+
+def test_search_skips_formulas_and_repeat_count_text_and_weighs_hints_half(store):
+    q = store.questions["per_plot"]
+    q.update(type="calculate", calculation="${area} * 2", question_text="${area} * 2")
+    assert "per_plot" not in store.search_questions("area")
+    assert "plot_count" not in store.search_questions("iterations group")
+    store.questions["owner"]["hint"] = "The crop owner"
+    hits = [line.split()[0] for line in store.search_questions("crop").splitlines()]
+    assert hits[-1] == "owner"
+    assert {"crop", "plot_crop"} <= set(hits[:-1])
 
 
 def test_search_tags_flagged_columns(store):
