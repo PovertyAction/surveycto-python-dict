@@ -1125,7 +1125,6 @@ class SurveyStore:
                     what
                 )
         by_name = {c["column"]: c for c in cols}
-        n_rows = cols[0]["rows"]
         lines = [
             "  Joins to the form (dataset column = form value: fields; `<- column` "
             "reads it, `(choices)` takes its choices from the matching rows):"
@@ -1137,11 +1136,8 @@ class SurveyStore:
             if column not in by_name:
                 lines.append(f"    {name}.{column}: no such column in {name}")
             else:
-                key = by_name[column]
                 unique = (
-                    "unique: one dataset row per match"
-                    if key["distinct"] == key["non_null"] == n_rows
-                    else f"not unique: {key['distinct']} distinct in {key['non_null']} rows"
+                    _not_unique(by_name[column]) or "unique: one dataset row per match"
                 )
                 lines.append(f"    {name}.{column} ({unique}) =")
             items = list(values.items())
@@ -1335,9 +1331,19 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
             match = " and ".join(
                 f"{m['column']} = {m['value']}" for m in source["match"]
             )
+            keys = {
+                c["column"]: c
+                for c in store.dataset_columns
+                if c["dataset"] == source["dataset"]
+            }
+            warnings = [
+                f"{m['column']} {_not_unique(keys[m['column']])}"
+                for m in source["match"]
+                if m["column"] in keys and _not_unique(keys[m["column"]])
+            ]
             lines.append(
                 f"{pad}{form}.{name} <- pulldata {source['dataset']}.{source['column']}"
-                f" where {match}"
+                f" where {match}" + (f" ({'; '.join(warnings)})" if warnings else "")
             )
             d, read = store.read(source["dataset"], _path(q))
             if read["computed"]:
@@ -1373,6 +1379,13 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
 
     walk(form, name, 0)
     return "\n".join(lines)
+
+
+def _not_unique(column: dict) -> str | None:
+    """Return why a dataset column does not identify one row, or None when it does."""
+    if column["distinct"] == column["non_null"] == column["rows"]:
+        return None
+    return f"not unique: {column['distinct']} distinct in {column['non_null']} rows"
 
 
 def _choices_text(q: dict) -> str:

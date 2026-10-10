@@ -454,7 +454,7 @@ def _stores(tmp_path, flow, xmls):
         path = tmp_path / f"{form}-s.xml"
         path.write_text(xml, encoding="utf-8")
         store = SurveyStore.__new__(SurveyStore)
-        store.form_id, store.flow = form, flow
+        store.form_id, store.flow, store.dataset_columns = form, flow, []
         store.questions = {
             q["variable_name"]: q for q in build_questions(parse_contract(path))
         }
@@ -480,6 +480,23 @@ def test_lineage_follows_reads_back_to_the_entered_question(flow, tmp_path):
         "    households.hhid: published by listing",
         "      listing.hhid (text): Household",
     ]
+
+
+def test_lineage_says_a_pulldata_key_is_not_unique(flow, tmp_path):
+    stores = _stores(tmp_path, flow, {"listing": _LISTING, "visit": _VISIT})
+    stores["visit"].dataset_columns = [
+        {
+            "dataset": "Households",
+            "column": "hhid",
+            "distinct": 3,
+            "non_null": 4,
+            "rows": 4,
+        }
+    ]
+    assert trace_lineage(stores, "visit", "where").splitlines()[0] == (
+        "visit.where <- pulldata Households.village where hhid = ${hh} "
+        "(hhid not unique: 3 distinct in 4 rows)"
+    )
 
 
 def test_lineage_follows_a_choice_column_the_search_also_filters_on(tmp_path):
