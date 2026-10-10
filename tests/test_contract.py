@@ -196,6 +196,7 @@ def test_questions_carry_the_dataset_join(sources_contract):
     assert by_name["member"]["data_source"] == {
         "kind": "search",
         "dataset": "roster",
+        "mode": "matches",
         "match": [{"column": "hhid", "value": "${hhid}"}],
     }
     assert by_name["hhid"]["data_source"] is None

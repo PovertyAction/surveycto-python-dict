@@ -128,7 +128,9 @@ _DESCRIPTIONS = {
     },
     "questions": {"grain": "one row per question", "key": ["question"], "joins": []},
     "choices": {
-        "grain": "one row per choice of a select; when: the search() filter values of its list",
+        "grain": "one row per choice of a select, search() lists included; when: the "
+        "search() filter values of its list; withheld: why get_choice_list does not "
+        "list it",
         "key": ["question", "when", "value"],
         "joins": ["{s}.choices.question = {s}.questions.question"],
     },
@@ -141,7 +143,8 @@ _DESCRIPTIONS = {
         ],
     },
     "dataset_links": {
-        "grain": "one row per pulldata()/search() match condition",
+        "grain": "one row per pulldata()/search() match condition; a search() "
+        "names the value_column and label_column its choices come from",
         "key": ["question", "match_column"],
         "joins": [
             "{s}.dataset_links.question = {s}.questions.question",
@@ -308,19 +311,28 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                 for q in questions
             ]
         ),
-        "choices": pd.DataFrame(
+        # The withheld search() lists' choices come from the build's parquet:
+        # questions.json refers to those lists without listing them.
+        "choices": pd.concat(
             [
-                {
-                    "question": q["variable_name"],
-                    "value": c["value"],
-                    "label": c["label"],
-                    "when": json.dumps(c["when"]) if "when" in c else None,
-                }
-                for q in questions
-                if q["choices"] and not q["choices_withheld"]
-                for c in q["choices"]
+                pd.DataFrame(
+                    [
+                        {
+                            "question": q["variable_name"],
+                            "value": c["value"],
+                            "label": c["label"],
+                            "when": json.dumps(c["when"]) if "when" in c else None,
+                            "withheld": None,
+                        }
+                        for q in questions
+                        if q["choices"] and not q["choices_withheld"]
+                        for c in q["choices"]
+                    ],
+                    columns=["question", "value", "label", "when", "withheld"],
+                ),
+                pq.read_table(form_dir / f"{form}_search_choices.parquet").to_pandas(),
             ],
-            columns=["question", "value", "label", "when"],
+            ignore_index=True,
         ),
         "edges": pd.DataFrame(graph["edges"], columns=["source", "target", "type"]),
         "dataset_codebook": pd.DataFrame(
@@ -368,6 +380,9 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                     "dataset_column": q["data_source"].get("column"),
                     "match_column": m["column"],
                     "match_value": m["value"],
+                    "mode": q["data_source"].get("mode"),
+                    "value_column": (q["choice_columns"] or {}).get("value"),
+                    "label_column": (q["choice_columns"] or {}).get("label"),
                 }
                 for q in questions
                 if q["data_source"]
@@ -381,6 +396,9 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                 "dataset_column",
                 "match_column",
                 "match_value",
+                "mode",
+                "value_column",
+                "label_column",
             ],
         ),
     }

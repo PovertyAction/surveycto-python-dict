@@ -166,7 +166,8 @@ class Node:
     hint: str | None = None
     constraint_message: str | None = None
     # A `search()` select's choices as read from its dataset, also when they are left
-    # out of the outputs: they decode column names and type the data. Never exported.
+    # out of the outputs: they decode column names and type the data. A withheld list's
+    # go to <form>_search_choices.parquet only, for the database.
     choice_universe: list[dict] | None = None
     # Binaries only for the codes someone picked: the list is filtered per submission
     # (an itemset filter or a search() filter on a field), or kept in its dataset.

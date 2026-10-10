@@ -117,6 +117,7 @@ def _data_source(node: Node, refs: "_Refs") -> dict | None:
     return {
         "kind": "search",
         "dataset": source["dataset"],
+        "mode": source["mode"],
         "match": [
             {"column": column, "value": refs(value)}
             for column, value in source["match"].items()
@@ -264,6 +265,28 @@ def build_questions(contract: FormContract) -> list[dict]:
     for order, question in enumerate(questions):
         question["question_order"] = order
     return questions
+
+
+def withheld_choices(contract: FormContract) -> list[dict]:
+    """Return every choice of the withheld ``search()`` lists, one row per choice.
+
+    ``questions.json`` refers to these lists without listing them; scripts read them
+    from ``<form>.choices`` in the database, ``withheld`` saying why. A list filtered
+    by an expression has no choices known before a submission, so no rows.
+    """
+    refs = _Refs(contract)
+    return [
+        {
+            "question": node.name,
+            "value": c["value"],
+            "label": refs(c["label"]),
+            "when": json.dumps(c["when"]) if "when" in c else None,
+            "withheld": ", ".join(node.choices_withheld),
+        }
+        for node in contract.nodes.values()
+        if node.choices_withheld and node.choice_universe is not None
+        for c in node.choice_universe
+    ]
 
 
 def write_sections(

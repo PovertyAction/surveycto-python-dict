@@ -197,6 +197,7 @@ def test_build_writes_every_output(built):
         "graph": "farm_variable_graph.json",
         "pii_review": "farm_pii_review.xlsx",
         "dataset_codebook": "farm_dataset_codebook.json",
+        "search_choices": "farm_search_choices.parquet",
     }
     assert all(p.exists() for p in outputs.values())
     assert (form_dir / "sections" / "section_plot.json").exists()

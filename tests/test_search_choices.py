@@ -5,7 +5,7 @@ import pytest
 from surveycto_python_dict import pii
 from surveycto_python_dict.contract import DatasetTable, search_universe
 from surveycto_python_dict.pii import PiiConfig, screen_search_choices
-from surveycto_python_dict.questions import build_questions
+from surveycto_python_dict.questions import build_questions, withheld_choices
 from surveycto_python_dict.xml_contract import parse_contract
 
 _XML = """<?xml version="1.0"?>
@@ -192,6 +192,21 @@ def test_blacklisted_list_is_withheld_unscanned_and_keeps_every_choice(form, ana
     # The parquet's binaries come from every choice, withheld or not.
     assert [c["value"] for c in node.all_choices] == ["1", "2", "-66"]
     assert "small" not in spy.texts
+
+
+def test_a_withheld_list_keeps_every_choice_for_the_database(form, analyzer):
+    xml, datasets = form
+    contract = parse_contract(xml)
+    files = {p.stem: p for p in datasets.glob("*.csv")}
+    screen_search_choices(
+        contract, files, PiiConfig(blacklist=("size",)), analyzer, _ROWS
+    )
+    rows = [r for r in withheld_choices(contract) if r["question"] == "size"]
+    assert [(r["question"], r["value"], r["withheld"]) for r in rows] == [
+        ("size", "1", "reviewed"),
+        ("size", "2", "reviewed"),
+        ("size", "-66", "reviewed"),
+    ]
 
 
 def test_no_item_naming_a_column_leaves_the_literals(form):
