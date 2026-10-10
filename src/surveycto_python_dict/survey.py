@@ -1340,6 +1340,8 @@ def search_forms(stores: dict, query: str, max_results: int = 20) -> str:
 
 # A wide column's instance suffixes: score_2_1 -> score.
 _STEM = re.compile(r"(_[0-9]+)+$")
+# The literal start of a column named per row: concat('score_', index()).
+_CONCAT_PREFIX = re.compile(r"concat\(\s*'([^']+)'\s*,")
 
 
 def _capped(names: list[str]) -> str:
@@ -1358,7 +1360,8 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
 
     One line per hop, indented by depth: a calculate to the fields it reads; a
     ``pulldata()`` to the dataset column and the field another form publishes it
-    from; a ``search()`` select to the dataset columns its choices come from. A hop
+    from (a column named per row, ``concat('score_', index())``, to the one field
+    that publishes every ``score_<n>``); a ``search()`` select to the dataset columns its choices come from. A hop
     that goes no further says why (an external dataset, a column the dataset lacks).
     """
     lines: list[str] = []
@@ -1380,6 +1383,30 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
             )
         else:
             lines.append(f"{pad}{d['id']}.{col}: no such column")
+
+    def computed(d: dict, expression: str, depth: int) -> None:
+        # concat('score_', index()) names score_1, score_2, ...: when one field
+        # publishes every column of that stem, the hop continues to it.
+        pad = "  " * depth
+        prefix = _CONCAT_PREFIX.match(expression)
+        stem = prefix.group(1).rstrip("_") if prefix else None
+        named = sorted(
+            (
+                c
+                for c in d["publish_map"]
+                if stem and c.startswith(prefix.group(1)) and _STEM.sub("", c) == stem
+            ),
+            key=lambda c: [int(n) for n in c[len(stem) + 1 :].split("_")],
+        )
+        fields = {_leaf(d["publish_map"][c]) for c in named}
+        if len(fields) != 1:
+            lines.append(f"{pad}{d['id']}: the column is named per row")
+            return
+        lines.append(
+            f"{pad}{d['id']}.{named[0]} ... {named[-1]} ({len(named)} columns, named "
+            f"per row): published by {d['published_by']}"
+        )
+        walk(d["published_by"], fields.pop(), depth + 1)
 
     def walk(form: str, name: str, depth: int) -> None:
         pad = "  " * depth
@@ -1414,7 +1441,7 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
             )
             d, read = store.read(source["dataset"], _path(q))
             if read["computed"]:
-                lines.append(f"{pad}  {d['id']}: the column is named per row")
+                computed(d, read["computed"], depth + 1)
             else:
                 column(d, source["column"], depth + 1)
             keys = {r for m in source["match"] for r in _REF_RE.findall(m["value"])}

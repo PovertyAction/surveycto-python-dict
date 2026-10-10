@@ -499,6 +499,23 @@ def test_lineage_says_a_pulldata_key_is_not_unique(flow, tmp_path):
     )
 
 
+def test_lineage_follows_a_column_named_per_row_to_its_one_field(tmp_path):
+    visit = _VISIT.replace(
+        "pulldata('Households', 'village', 'hhid',  /visit/hh )",
+        "pulldata('Households', concat('plot_size_', index()), 'hhid',  /visit/hh )",
+    )
+    xmls = {"listing": _LISTING, "visit": visit}
+    csvs = {"households": "hhid,village,plot_size_1,plot_size_2\nH1,North,0.5,1\n"}
+    stores = _stores(tmp_path, _flow(tmp_path, xmls, csvs=csvs), xmls)
+    assert trace_lineage(stores, "visit", "where").splitlines() == [
+        "visit.where <- pulldata Households.concat('plot_size_', index()) "
+        "where hhid = ${hh}",
+        "  households.plot_size_1 ... plot_size_2 (2 columns, named per row): "
+        "published by listing",
+        "    listing.plot_size (decimal): Size",
+    ]
+
+
 def test_lineage_follows_a_choice_column_the_search_also_filters_on(tmp_path):
     visit = _VISIT.replace(
         "search('Households')", "search('Households', 'matches', 'hhid', /visit/area)"
