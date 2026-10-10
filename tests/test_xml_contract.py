@@ -690,7 +690,7 @@ _XML_ITEMSET = """<?xml version="1.0"?>
       <text id="sizes-1"><value>Large</value></text>
       <text id="sizes-2"><value>Other</value></text>
     </translation></itext>
-    <instance><shop id="shop" version="1"><n/><size/><pick/></shop></instance>
+    <instance><shop id="shop" version="1"><n/><size/><pick/><kind/></shop></instance>
     <instance id="sizes"><root>
       <item><itextId>sizes-0</itextId><name>1</name><filter>1</filter></item>
       <item><itextId>sizes-1</itextId><name>2</name><filter>2</filter></item>
@@ -700,9 +700,14 @@ _XML_ITEMSET = """<?xml version="1.0"?>
       <item><label>North</label><name>11</name><zone>1</zone></item>
       <item><label>South</label><name>21</name><zone>2</zone></item>
     </root></instance>
+    <instance id="kinds"><root>
+      <item><label>Retail</label><name>1</name></item>
+      <item><label>Wholesale</label><name>2</name></item>
+    </root></instance>
     <bind nodeset="/shop/n" type="int"/>
     <bind nodeset="/shop/size" type="select1"/>
     <bind nodeset="/shop/pick" type="select"/>
+    <bind nodeset="/shop/kind" type="select1"/>
   </model></h:head>
   <h:body>
     <input ref="/shop/n"><label>N</label></input>
@@ -716,6 +721,11 @@ _XML_ITEMSET = """<?xml version="1.0"?>
         <value ref="name"/><label ref="label"/>
       </itemset>
     </select>
+    <select1 ref="/shop/kind"><label>Kind</label>
+      <itemset nodeset="instance('kinds')/root/item[filter &lt; 3]">
+        <value ref="name"/><label ref="label"/>
+      </itemset>
+    </select1>
   </h:body>
 </h:html>
 """
@@ -734,6 +744,8 @@ def test_itemset_choices_with_static_and_field_filters(tmp_path):
         {"label": "North", "value": "11"},
         {"label": "South", "value": "21"},
     ]
+    # The kinds list has no filter column: every item reads it as empty, so none pass.
+    assert nodes["kind"].choice_items == []
 
 
 # A calculate on a body control (a prefilled or hidden field), not on its bind.
