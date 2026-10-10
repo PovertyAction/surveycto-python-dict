@@ -70,6 +70,9 @@ _TYPED_SAFE = {"integer", "decimal", "date", "datetime", "time"}
 _METADATA_TYPES = {"deviceid", "subscriberid", "simserial", "phonenumber", "username"}
 _METADATA_CALLS = re.compile(r"(?<![\w-])(enumerator-id|enumerator-name|username)\(\)")
 _SELECT_TYPES = {"select_one", "select_multiple"}
+_CALL = re.compile(r"([A-Za-z][\w-]*)\s*\(")
+# Functions that make a value without reading the form or the device.
+_GENERATED_CALLS = {"once", "uuid", "now", "today", "random", "concat", "if"}
 # The statuses whose values may be read, and those that hold or may hold PII.
 SAFE = {"cleared_by_form", "whitelisted"}
 FLAGGED = {"contains_pii", "may_contain_pii"}
@@ -193,8 +196,13 @@ class _Rules:
             return {"status": "whitelisted", "basis": [f"type:{qtype}"]}
         if qtype in _SELECT_TYPES and "search(" not in (q["appearance"] or ""):
             return {"status": "whitelisted", "basis": ["choices:inline"]}
-        if qtype == "calculate" and not self._pulldata(q) and q["references"]:
+        if qtype == "calculate" and not self._pulldata(q):
             refs = q["references"]
+            # Reading no field and calling only functions that generate a value, it
+            # holds nothing anyone entered: once(uuid(5)), today().
+            calls = set(_CALL.findall(q["calculation"] or ""))
+            if not refs and calls <= _GENERATED_CALLS:
+                return {"status": "whitelisted", "basis": ["generated"]}
             if all(r in self.by_name and self._safe(r) for r in refs):
                 return {"status": "whitelisted", "basis": [f"lineage:{','.join(refs)}"]}
         return None

@@ -284,3 +284,27 @@ def test_collection_metadata_is_personal_whatever_its_name(tmp_path, analyzer):
     assert blocks["tagged"] == {"status": "whitelisted", "basis": ["project"]}
     rules_blocks, _ = _classify(form, analyzer)
     assert rules_blocks["tagged"]["basis"] == ["type:calculate"]
+
+
+def test_a_calculate_that_generates_its_value_is_whitelisted():
+    from surveycto_python_dict.pii import _Rules
+
+    def calc(name, calculation):
+        return {
+            "variable_name": name,
+            "type": "calculate",
+            "calculation": calculation,
+            "references": [],
+            "publishable": False,
+            "appearance": None,
+        }
+
+    rules = _Rules(
+        [calc("shop_id", "once(uuid(5))"), calc("coder", "enumerator-name()")],
+        set(),
+        set(),
+        False,
+    )
+    assert rules.static("shop_id") == {"status": "whitelisted", "basis": ["generated"]}
+    # A function that reads the device or the user is not one that generates.
+    assert rules.static("coder")["status"] == "contains_pii"

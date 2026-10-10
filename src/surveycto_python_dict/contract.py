@@ -176,11 +176,19 @@ def search_universe(
                 when[column] = hit
         else:
             value = row[columns["value"]]
-            choice = {"value": value, "label": row[columns["label"]]}
+            label = ", ".join(row[c] for c in label_columns(columns["label"]))
+            choice = {"value": value, "label": label}
             choices.setdefault(
                 (tuple(when.items()), value), choice | ({"when": when} if when else {})
             )
     return list(choices.values()) + literals
+
+
+def label_columns(label: str) -> list[str]:
+    """Return the dataset columns a search() choice's label names: one, or several
+    separated by commas (``name,id``), which the tool joins with ", ".
+    """
+    return [c.strip() for c in label.split(",")]
 
 
 def resolve_datasets(
