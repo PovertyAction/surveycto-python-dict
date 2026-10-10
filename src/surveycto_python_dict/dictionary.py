@@ -115,11 +115,10 @@ def absent_codes(questions: list[dict], contract: FormContract) -> list[dict]:
     for q in questions:
         for where in ("relevance", "constraint", "calculation"):
             conditions[q["variable_name"], where] = q[where]
-        # A group's relevance, once, under its path: G_household.members.
+        # A group's relevance, once, under the group's name.
         for gate in q["gates"]:
             if gate["group"] is not None:
-                path = q["group_path"][: q["group_path"].index(gate["group"]) + 1]
-                conditions[".".join(path), "group relevance"] = gate["relevance"]
+                conditions[gate["group"], "group relevance"] = gate["relevance"]
     found = []
     for (name, where), condition in conditions.items():
         for pattern in _COMPARED:
