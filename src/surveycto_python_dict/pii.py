@@ -199,7 +199,7 @@ class _Rules:
         if qtype == "calculate" and not self._pulldata(q):
             refs = q["references"]
             # Reading no field and calling only functions that generate a value, it
-            # holds nothing anyone entered: once(uuid(7)), today().
+            # holds nothing anyone entered: once(uuid(5)), today().
             calls = set(_CALL.findall(q["calculation"] or ""))
             if not refs and calls <= _GENERATED_CALLS:
                 return {"status": "whitelisted", "basis": ["generated"]}

@@ -300,11 +300,11 @@ def test_a_calculate_that_generates_its_value_is_whitelisted():
         }
 
     rules = _Rules(
-        [calc("biz_id", "once(uuid(7))"), calc("coder", "enumerator-name()")],
+        [calc("shop_id", "once(uuid(5))"), calc("coder", "enumerator-name()")],
         set(),
         set(),
         False,
     )
-    assert rules.static("biz_id") == {"status": "whitelisted", "basis": ["generated"]}
+    assert rules.static("shop_id") == {"status": "whitelisted", "basis": ["generated"]}
     # A function that reads the device or the user is not one that generates.
     assert rules.static("coder")["status"] == "contains_pii"
