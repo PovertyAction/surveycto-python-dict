@@ -955,10 +955,15 @@ class SurveyStore:
             else f"{m['column']} = {m['value']}"
             for m in source["match"]
         )
+        # A label can name several columns, the value column among them: name,id.
+        labels = [c.strip() for c in label.split(",")]
+        selected = ", ".join([value, *(c for c in labels if c != value)])
         lines += [
             f"  The rest: in {self.project}.duckdb dataset.{d['id']}; value column "
-            f"{value} ({status[value]}), label column {label} ({status[label]})",
-            f'  A script decodes them: SELECT {value}, {label} FROM dataset."{d["id"]}"'
+            f"{value} ({status[value]}), label "
+            + ("columns " if len(labels) > 1 else "column ")
+            + ", ".join(f"{c} ({status[c]})" for c in labels),
+            f'  A script decodes them: SELECT {selected} FROM dataset."{d["id"]}"'
             + (f" WHERE {where}" if where else ""),
         ]
         # A list filtered by an expression has no choices known before a submission.

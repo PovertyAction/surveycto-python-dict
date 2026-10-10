@@ -31,7 +31,7 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from surveycto_python_dict.contract import DatasetSource
+from surveycto_python_dict.contract import DatasetSource, label_columns
 from surveycto_python_dict.xml_contract import FormContract
 
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
@@ -119,7 +119,11 @@ def _reads(contract: FormContract, name: str, columns: list[str]) -> list[dict]:
                 computed, used = value, [source["key"]]
         else:
             match = list(source["filter"])
-            items = [v for i in node.choice_items for v in (i["value"], i["label"])]
+            items = [
+                v
+                for i in node.choice_items
+                for v in (i["value"], *label_columns(i["label"]))
+            ]
             choices = list(dict.fromkeys(c for c in items if c in columns))
             used = [*source["filter"], *choices]
         used = list(dict.fromkeys(used))

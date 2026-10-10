@@ -121,6 +121,16 @@ def test_universe_keeps_literal_extras_and_applies_literal_filters(form):
         search_universe(nodes["buyer"], buyers)
 
 
+def test_a_label_naming_several_columns_joins_them(form):
+    xml, datasets = form
+    node = parse_contract(xml).nodes["size"]
+    node.choice_items[0]["label"] = "size_label,size_id"
+    assert search_universe(node, DatasetTable(datasets / "sizes.csv"))[:2] == [
+        {"value": "1", "label": "small, 1"},
+        {"value": "2", "label": "large, 2"},
+    ]
+
+
 def test_a_filter_on_a_field_keeps_the_rows_the_submissions_reach(form):
     questions, _ = _screen(form, NoHits(), PiiConfig(whitelist=("buyer",)))
     assert questions["buyer"]["choices"] == [
