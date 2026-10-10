@@ -25,6 +25,8 @@ class FormEntry:
     version: str
     dataset_ids: set[str]
     filenames: set[str]
+    # The enumerator dataset its enumerator fields pick from, if it has one.
+    enumerators: str | None = None
 
 
 @dataclass(frozen=True)
@@ -46,7 +48,8 @@ def form_entry(form_list_xml: bytes, form_id: str) -> FormEntry:
 
     SurveyCTO puts ``datasets`` and ``files`` in the entry as JSON text
     (``{"datasets": [{"id": ...}]}``, ``{"files": [{"filename": ...}]}``);
-    ``datasets`` is empty when the form uses none.
+    ``datasets`` is empty when the form uses none. ``enumeratorsSupport`` names the
+    enumerator dataset; the entry of a form without one omits it or leaves it empty.
     """
     for xform in ET.fromstring(form_list_xml).iter():
         if _ln(xform.tag) != "xform":
@@ -63,8 +66,26 @@ def form_entry(form_list_xml: bytes, form_id: str) -> FormEntry:
             version=fields["version"],
             dataset_ids={d["id"] for d in datasets},
             filenames={f["filename"] for f in files},
+            enumerators=fields.get("enumeratorsSupport") or None,
         )
     raise KeyError(f"form {form_id!r} is not in the form list")
+
+
+def attach_enumerators(contract: FormContract, entry: FormEntry) -> None:
+    """Give each enumerator field the form's enumerator dataset as its data source.
+
+    The XML marks the field (``fieldType="enumerator"``) but names no dataset; the
+    form list does.
+    """
+    for node in contract.nodes.values():
+        if node.field_type != "enumerator":
+            continue
+        if entry.enumerators is None:
+            raise UnresolvedDataset(
+                f"{node.path} is an enumerator field, but form {entry.form_id!r} "
+                "has no enumerator dataset in the form list"
+            )
+        node.data_source = {"kind": "enumerator", "dataset": entry.enumerators}
 
 
 def dataset_header(csv_path: Path) -> list[str]:

@@ -4,8 +4,14 @@ import json
 
 import pytest
 
-from surveycto_python_dict.contract import form_entry, resolve_datasets
+from surveycto_python_dict.contract import (
+    UnresolvedDataset,
+    attach_enumerators,
+    form_entry,
+    resolve_datasets,
+)
 from surveycto_python_dict.flow import build_flow, describe_project
+from surveycto_python_dict.pii import _Rules
 from surveycto_python_dict.questions import build_questions
 from surveycto_python_dict.survey import (
     SurveyStore,
@@ -547,3 +553,83 @@ def test_a_wide_dataset_is_summarised_one_line_per_field(flow, monkeypatch):
         "  plot_size ... plot_size_1 (2)  <- listing.plot/plot_size (entered)" in lines
     )
     assert "plot_size_1  <-" in render_flow(flow, "households", columns=True)
+
+
+# tally's enumerator field picks a row of staff, the dataset the form list names.
+_TALLY = """<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml">
+  <h:head><model>
+    <instance><tally id="tally" version="1"><picker/><count/></tally></instance>
+    <bind fieldType="enumerator" nodeset="/tally/picker" required="true()" type="string"/>
+    <bind nodeset="/tally/count" type="int"/>
+  </model></h:head>
+  <h:body>
+    <input ref="/tally/picker"><label>Your name</label></input>
+    <input ref="/tally/count"><label>Count</label></input>
+  </h:body>
+</h:html>
+"""
+
+
+def _tally_list(enumerators: str) -> bytes:
+    return f"""<?xml version="1.0"?>
+<xforms xmlns="http://openrosa.org/xforms/xformsList">
+  <xform><formID>tally</formID><version>1</version>
+    <datasets>{{"datasets":[{{"id":"staff"}}]}}</datasets><files>{{"files":[]}}</files>
+    <enumeratorsSupport>{enumerators}</enumeratorsSupport></xform>
+</xforms>""".encode()
+
+
+def test_an_enumerator_field_reads_the_enumerator_dataset(tmp_path):
+    datasets = tmp_path / "datasets"
+    datasets.mkdir()
+    (datasets / "staff.csv").write_text(
+        "id,name,users\n000001,Coder One,one\n", encoding="utf-8"
+    )
+    (tmp_path / "tally.xml").write_text(_TALLY, encoding="utf-8")
+    contract = parse_contract(tmp_path / "tally.xml")
+    entry = form_entry(_tally_list("staff"), "tally")
+    attach_enumerators(contract, entry)
+    sources = resolve_datasets(contract, entry, {"staff"})
+    server = [{"id": "staff", "title": "Staff", "uniqueRecordField": "id"}]
+    flow = build_flow({"tally": (contract, sources)}, server, (), datasets, {}, None)
+    (read,) = flow["reads"]
+    assert read["fields"] == [
+        {
+            "field": "picker",
+            "via": "enumerator",
+            "columns": ["name", "id"],
+            "match": [],
+            "missing": [],
+            "computed": None,
+            "choices": [],
+            "value": None,
+        }
+    ]
+    lineage = render_flow(flow, "staff")
+    assert "  id  -> tally.picker (enumerator value)" in lineage
+    assert "  name  -> tally.picker (enumerator value)" in lineage
+    questions = build_questions(contract)
+    picker = next(q for q in questions if q["variable_name"] == "picker")
+    assert picker["type"] == "enumerator"
+    store = SurveyStore.__new__(SurveyStore)
+    store.form_id, store.flow, store.dataset_columns = "tally", flow, []
+    store.questions = {q["variable_name"]: q for q in questions}
+    assert trace_lineage({"tally": store}, "tally", "picker").splitlines() == [
+        "tally.picker (enumerator): Your name",
+        '  picks a row of staff; stores its name and id as "name (id)" '
+        "(external, no project form fills it)",
+    ]
+    # It stores a name, whatever the form calls it.
+    rules = _Rules(questions, set(), set(), True)
+    assert rules.static("picker") == {
+        "status": "contains_pii",
+        "basis": ["metadata:enumerator"],
+    }
+
+
+def test_an_enumerator_field_needs_the_form_lists_enumerator_dataset(tmp_path):
+    (tmp_path / "tally.xml").write_text(_TALLY, encoding="utf-8")
+    contract = parse_contract(tmp_path / "tally.xml")
+    with pytest.raises(UnresolvedDataset, match="picker is an enumerator field"):
+        attach_enumerators(contract, form_entry(_tally_list(""), "tally"))

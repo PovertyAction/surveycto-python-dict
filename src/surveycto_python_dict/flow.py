@@ -1,7 +1,8 @@
 """How a project's forms chain through datasets: ``flow.json``.
 
 The XML says which datasets a form reads (``pulldata()``, ``search()``), and the form
-list which ones it attaches. Neither says which form publishes to a dataset, so that
+list which ones it attaches and which enumerator dataset its enumerator fields pick
+from. Neither says which form publishes to a dataset, so that
 is read off the columns: a form publishes a dataset when nearly every dataset column
 (``NEAR``) is one of the form's fields, by the field's own name or by its wide column
 (``score_2``). The columns no field explains are ``legacy_columns``: fields the form's
@@ -32,7 +33,7 @@ from collections import Counter
 from pathlib import Path
 
 from surveycto_python_dict.contract import DatasetSource, label_columns
-from surveycto_python_dict.xml_contract import FormContract
+from surveycto_python_dict.xml_contract import ENUMERATOR_COLUMNS, FormContract
 
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
 
@@ -104,7 +105,8 @@ def _reads(contract: FormContract, name: str, columns: list[str]) -> list[dict]:
     ``choices`` are the columns a ``search()`` select takes its values and labels from,
     a filter column among them. ``value`` is the column whose value the field stores:
     the column a ``pulldata()`` returns, or the value column a ``search()`` item names
-    (its labels are only shown); None for a computed ``pulldata()`` column.
+    (its labels are only shown); None for a computed ``pulldata()`` column and for an
+    enumerator field, which stores two columns as "name (id)".
     """
     fields = []
     for node in contract.nodes.values():
@@ -112,7 +114,9 @@ def _reads(contract: FormContract, name: str, columns: list[str]) -> list[dict]:
         if not source or source["dataset"] != name:
             continue
         computed, choices, stored = None, [], None
-        if source["kind"] == "pulldata":
+        if source["kind"] == "enumerator":
+            match, used = [], list(ENUMERATOR_COLUMNS)
+        elif source["kind"] == "pulldata":
             match = [source["key"]]
             value = source["value"]
             if _QUOTED.fullmatch(value):

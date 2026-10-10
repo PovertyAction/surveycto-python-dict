@@ -38,7 +38,12 @@ from dotenv import load_dotenv
 from surveycto_python_dict.api import Client, MissingEnvVar, env_key_path
 from surveycto_python_dict.cast import cast_wide
 from surveycto_python_dict.codebook import write_pii_review
-from surveycto_python_dict.contract import DatasetSource, form_entry, resolve_datasets
+from surveycto_python_dict.contract import (
+    DatasetSource,
+    attach_enumerators,
+    form_entry,
+    resolve_datasets,
+)
 from surveycto_python_dict.dictionary import build_dictionary, build_graph, write_json
 from surveycto_python_dict.flow import build_flow, describe_project
 from surveycto_python_dict.pii import (
@@ -213,6 +218,16 @@ def env_sentinels() -> dict[int | dt.date, str]:
     return table
 
 
+def _contract(cfg: Config, form: str) -> FormContract:
+    """Parse ``form``'s pulled XML, its enumerator fields reading the dataset the
+    form list names.
+    """
+    contract = parse_contract(cfg.form_raw(form) / "form.xml")
+    form_list = (cfg.raw_dir / "formList.xml").read_bytes()
+    attach_enumerators(contract, form_entry(form_list, form))
+    return contract
+
+
 def _sources(
     cfg: Config, form: str, contract: FormContract
 ) -> dict[str, DatasetSource]:
@@ -226,7 +241,7 @@ def _sources(
 
 def form_datasets(cfg: Config, form: str) -> dict[str, Path]:
     """Return the CSV of each dataset ``form`` reads, by the name the form uses."""
-    contract = parse_contract(cfg.form_raw(form) / "form.xml")
+    contract = _contract(cfg, form)
     return {
         name: (
             cfg.raw_dir / "datasets" / f"{s.ref}.csv"
@@ -269,7 +284,7 @@ def pull(cfg: Config, client: Client) -> Path:
         form_raw = cfg.form_raw(form)
         form_raw.mkdir(parents=True, exist_ok=True)
         (form_raw / "form.xml").write_bytes(client.pull_form_xml(form))
-        contract = parse_contract(form_raw / "form.xml")
+        contract = _contract(cfg, form)
         sources = _sources(cfg, form, contract)
         wanted |= {s.ref for s in sources.values() if s.kind == "server_dataset"}
         form_files = [s.ref for s in sources.values() if s.kind == "form_file"]
@@ -314,7 +329,7 @@ def build_form(
     question, column and ``dataset.column``.
     """
     raw, out = cfg.form_raw(form), cfg.form_dir(form)
-    contract = parse_contract(raw / "form.xml")
+    contract = _contract(cfg, form)
     datasets = form_datasets(cfg, form)
     rows = json.loads((raw / "wide.json").read_text(encoding="utf-8"))
     screen_search_choices(contract, datasets, cfg.pii, analyzer, rows)
@@ -367,7 +382,7 @@ def write_flow(cfg: Config) -> Path:
     """Write ``flow.json``, how the project's forms chain through datasets, and ``flow.md``."""
     forms = {}
     for form in cfg.forms:
-        contract = parse_contract(cfg.form_raw(form) / "form.xml")
+        contract = _contract(cfg, form)
         forms[form] = (contract, _sources(cfg, form, contract))
     server = json.loads((cfg.raw_dir / "datasets.json").read_text(encoding="utf-8"))
     flow = build_flow(

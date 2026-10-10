@@ -148,6 +148,11 @@ def _source_line(source: dict) -> str:
     match = " and ".join(
         f"{source['dataset']}.{m['column']} = {m['value']}" for m in source["match"]
     )
+    if source["kind"] == "enumerator":
+        return (
+            f"enumerator: picks a row of {source['dataset']} and stores its name and "
+            'id as "name (id)"'
+        )
     if source["kind"] == "pulldata":
         return f"pulldata: {source['dataset']}.{source['column']} where {match}"
     return f"search: choices from {source['dataset']}" + (
@@ -1205,6 +1210,12 @@ class SurveyStore:
             if not source or source["dataset"] != name:
                 continue
             read = read_of[name, _path(q)]
+            if source["kind"] == "enumerator":
+                field = "${" + q["variable_name"] + "}"
+                joins.setdefault("id", {}).setdefault(field, []).append(
+                    f'{q["variable_name"]} stores "name (id)", the id in parentheses'
+                )
+                continue
             if source["kind"] == "search":
                 what = f"{q['variable_name']} (choices)"
             elif read["computed"]:
@@ -1496,6 +1507,12 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
                 f"{pad}{form}.{name} ({q['type']}): {_short(q['question_text'])}"
                 + ("" if source else _choices_text(q))
             )
+        if source and source["kind"] == "enumerator":
+            d, _ = store.read(source["dataset"], _path(q))
+            line = f'{pad}  picks a row of {d["id"]}; stores its name and id as "name (id)"'
+            if not d["published_by"]:
+                line += " (external, no project form fills it)"
+            lines.append(line)
         if source and source["kind"] == "search":
             d, read = store.read(source["dataset"], _path(q))
             where = " and ".join(

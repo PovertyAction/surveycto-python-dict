@@ -294,13 +294,17 @@ def test_a_calculate_that_generates_its_value_is_whitelisted():
             "variable_name": name,
             "type": "calculate",
             "calculation": calculation,
-            "references": [],
+            "references": None,
             "publishable": False,
             "appearance": None,
         }
 
     rules = _Rules(
-        [calc("shop_id", "once(uuid(5))"), calc("coder", "enumerator-name()")],
+        [
+            calc("shop_id", "once(uuid(5))"),
+            calc("coder", "enumerator-name()"),
+            calc("slot", "position(..)"),
+        ],
         set(),
         set(),
         False,
@@ -308,3 +312,5 @@ def test_a_calculate_that_generates_its_value_is_whitelisted():
     assert rules.static("shop_id") == {"status": "whitelisted", "basis": ["generated"]}
     # A function that reads the device or the user is not one that generates.
     assert rules.static("coder")["status"] == "contains_pii"
+    # Reading no field through another function, it is scanned.
+    assert rules.static("slot") is None

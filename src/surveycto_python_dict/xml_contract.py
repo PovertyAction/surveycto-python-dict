@@ -145,6 +145,9 @@ class Node:
     preload: str | None = None  # jr:preload (system source, e.g. property)
     preload_params: str | None = None  # jr:preloadParams (e.g. username, deviceid)
     original: str | None = None  # SurveyCTO bind `original` (XLSForm type, e.g. "note")
+    # SurveyCTO bind `fieldType`: "enumerator" picks a row of the form's enumerator
+    # dataset and stores "name (id)".
+    field_type: str | None = None
     # Body label text, from the default translation when the label is itext; each
     # <output value="..."/> is inlined as its expression.
     label: str | None = None
@@ -613,11 +616,18 @@ def _label_text(label) -> str:
     return "".join(parts).strip()
 
 
+# The columns of a SurveyCTO enumerator dataset an enumerator field stores, as
+# "name (id)".
+ENUMERATOR_COLUMNS = ("name", "id")
+
 _ITEXT_REF = re.compile(r"^jr:itext\('([^']+)'\)$")
 _ITEMSET = re.compile(r"^instance\('([^']+)'\)/root/item(?:\[(.*)\])?$", re.DOTALL)
 # A choice filter that reads the submission: current() or a path to a field.
 _READS_FORM = re.compile(r"current\(\)|(?<![\w)\]])/[A-Za-z_]")
 _QUOTED = re.compile(r"('[^']*'|\"[^\"]*\")")
+# A name in a static choice filter that is not a function call: an item's column.
+_BARE_NAME = re.compile(r"(?<![\w$'{-])([A-Za-z_][\w-]*)(?![\w-]|\s*\()")
+_XPATH_WORDS = {"and", "or", "div", "mod"}
 
 
 class _Item:
@@ -627,7 +637,7 @@ class _Item:
         self.columns = columns
 
     def ref(self, name: str):
-        return self.columns[name] or None
+        return self.columns.get(name) or None
 
 
 def _itemset_choices(
@@ -645,10 +655,14 @@ def _itemset_choices(
     predicate = match.group(2)
     per_submission = bool(predicate and _READS_FORM.search(predicate))
     if predicate and not per_submission:
-        # The items' columns become ${column} refs, outside quoted literals.
-        names = sorted({k for item in items for k in item}, key=len, reverse=True)
-        word = re.compile(r"(?<![\w$'{-])(" + "|".join(names) + r")(?![\w(-])")
+        # Columns become ${column} refs, outside quoted literals. A column an item
+        # lacks reads as empty, as a path to no node does on the device.
         parts = _QUOTED.split(predicate)
+        bare = {n for p in parts[::2] for n in _BARE_NAME.findall(p)} - _XPATH_WORDS
+        names = sorted(
+            {k for item in items for k in item} | bare, key=len, reverse=True
+        )
+        word = re.compile(r"(?<![\w$'{-])(" + "|".join(names) + r")(?![\w(-])")
         expr = "".join(
             p if i % 2 else word.sub(r"${\1}", p) for i, p in enumerate(parts)
         )
@@ -877,6 +891,7 @@ def parse_contract(xml_path) -> FormContract:
             data_source=source,
             choices_per_submission=path in filtered or searched_by_field,
             original=b.get("original"),
+            field_type=b.get("fieldType"),
             label=labels.get(path),
             hint=hints.get(path),
             constraint_message=message_text(b.get("constraintMsg")),

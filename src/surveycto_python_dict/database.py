@@ -499,6 +499,15 @@ def _write_datasets(
                 source = q["data_source"]
                 if not source or id_of[form, source["dataset"]] != did:
                     continue
+                if source["kind"] == "enumerator":
+                    field = q["variable_name"]
+                    table = f"{form}.{repeat_of.get(field) or 'submissions'}"
+                    line = (
+                        f"{name}.id = {table}.{field}  (an enumerator field stores "
+                        '"name (id)": the id is in the parentheses)'
+                    )
+                    if line not in joins:
+                        joins.append(line)
                 for m in source["match"]:
                     value = m["value"] or ""
                     if not (value.startswith("${") and value.endswith("}")):

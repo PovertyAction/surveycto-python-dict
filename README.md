@@ -99,8 +99,9 @@ those columns go through the type rules and Presidio like any other. Set
 column, dataset column and `search()` list that is not blacklisted or collection
 metadata is `whitelisted` with basis `project`, and Presidio never runs. Collection
 metadata is `contains_pii` under any setting and any name: device columns
-(`username`, `deviceid`, ...), a field that preloads them, a calculate that calls
-`enumerator-id()`, `enumerator-name()` or `username()`.
+(`username`, `deviceid`, ...), a field that preloads them, an enumerator field (it
+stores `"name (id)"`), a calculate that calls `enumerator-id()`, `enumerator-name()` or
+`username()`.
 
 A flag says where personal data may be, so it is handled carefully; the data stays
 whole. The parquet, the long tables and every view in `<project>.duckdb` keep every
@@ -125,8 +126,9 @@ gets its list unscanned; a blacklisted one never has its dataset read.
 
 - **Reads.** A form reads every dataset its `pulldata()` and `search()` name, matched to
   a server dataset id or an attached CSV regardless of case. Each read lists the
-  fields and the dataset columns they use. A server dataset the form reads without
-  attaching it on the server is kept and marked `attached: false`.
+  fields and the dataset columns they use. An enumerator field reads the `name` and
+  `id` of the enumerator dataset the form list names. A server dataset the form reads
+  without attaching it on the server is kept and marked `attached: false`.
 - **Publishes.** A form publishes a dataset when at least 90% of the dataset's columns
   are its fields: by the field's name, or by a repeat field's wide column (`score_2`).
   `publish_map` gives the field behind each column; `legacy_columns` lists the rest,

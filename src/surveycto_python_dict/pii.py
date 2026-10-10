@@ -67,7 +67,14 @@ _CONTAINS_TYPES = {
 }
 _TYPED_SAFE = {"integer", "decimal", "date", "datetime", "time"}
 # Fields that capture who or which device collected the submission, whatever their name.
-_METADATA_TYPES = {"deviceid", "subscriberid", "simserial", "phonenumber", "username"}
+_METADATA_TYPES = {
+    "deviceid",
+    "subscriberid",
+    "simserial",
+    "phonenumber",
+    "username",
+    "enumerator",  # stores the enumerator's "name (id)"
+}
 _METADATA_CALLS = re.compile(r"(?<![\w-])(enumerator-id|enumerator-name|username)\(\)")
 _SELECT_TYPES = {"select_one", "select_multiple"}
 _CALL = re.compile(r"([A-Za-z][\w-]*)\s*\(")
@@ -203,7 +210,7 @@ class _Rules:
             calls = set(_CALL.findall(q["calculation"] or ""))
             if not refs and calls <= _GENERATED_CALLS:
                 return {"status": "whitelisted", "basis": ["generated"]}
-            if all(r in self.by_name and self._safe(r) for r in refs):
+            if refs and all(r in self.by_name and self._safe(r) for r in refs):
                 return {"status": "whitelisted", "basis": [f"lineage:{','.join(refs)}"]}
         return None
 
@@ -502,6 +509,7 @@ def dataset_codebook(
                 and q["data_source"]["dataset"] == dataset
                 and column
                 in [q["data_source"].get("column")]
+                + q["data_source"].get("columns", [])
                 + [m["column"] for m in q["data_source"]["match"]]
             ]
             lengths = [len(v) for v in values if v is not None]
