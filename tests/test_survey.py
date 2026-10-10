@@ -371,6 +371,40 @@ def test_repeat_structure_says_what_sets_its_instances(store):
     assert "    plot_size = concat('plot-', index())" in out
 
 
+def test_a_default_is_told_apart_from_a_calculation(store):
+    q = store.questions["plot_size"]
+    q.update(calculation="concat('plot-', index())", calculation_is_default=True)
+    assert (
+        "Default (computed; the user can change it): concat('plot-', index())"
+        in store.lookup_variable("plot_size")
+    )
+    out = store.get_repeat_structure("plot")
+    assert "  set per instance (defaults that read index(); the user can" in out
+    assert "calculates that read index()" not in out
+
+
+def test_lookup_shows_appearance_and_no_formula_as_text(store):
+    store.questions["area"]["appearance"] = "month-year"
+    assert "Appearance: month-year" in store.lookup_variable("area")
+    q = store.questions["plot_size"]
+    q.update(type="calculate", calculation="1 + 1", question_text="1 + 1")
+    out = store.lookup_variable("plot_size")
+    assert "Text:" not in out
+    assert "Calculation: 1 + 1" in out
+
+
+def test_reached_choices_count_only_filtered_lists(store):
+    store.questions["crop"]["choices"] = [
+        {"value": "1", "label": "A", "when": {"list": "x"}},
+        {"value": "2", "label": "B", "when": {"list": "y"}},
+        {"value": "-66", "label": "Other"},
+    ]
+    assert (
+        "Choices: 3 in 2 lists, by the dataset rows the submissions reach "
+        "(list = x; list = y), plus 1 in every list (-66); get_choice_list shows them"
+    ) in store.lookup_variable("crop")
+
+
 def test_project_commands_need_no_form(store, capsys):
     from surveycto_python_dict.survey import main
 

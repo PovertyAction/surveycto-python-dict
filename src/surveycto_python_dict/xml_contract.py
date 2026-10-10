@@ -133,6 +133,9 @@ class Node:
     control: str | None = None  # body control: select_one/select_multiple/input/...
     is_select_multiple: bool = False
     calculate: str | None = None
+    # The calculate is on the body control, not the bind: a default the user can
+    # change, unless the field is read-only.
+    calculation_is_default: bool = False
     relevant: str | None = None
     constraint: str | None = None
     required: bool = False
@@ -861,6 +864,7 @@ def parse_contract(xml_path) -> FormContract:
             is_select_multiple=select_multiple,
             choice_items=items.get(path, []),
             calculate=calculate,
+            calculation_is_default=not b.get("calculate") and path in body_calculates,
             relevant=b.get("relevant"),
             constraint=b.get("constraint"),
             required=str(b.get("required", "")).strip() in ("true()", "true", "1"),

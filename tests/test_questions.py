@@ -102,6 +102,7 @@ _KEYS = [
     "gates",
     "required",
     "calculation",
+    "calculation_is_default",
     "appearance",
     "references",
     "group_path",

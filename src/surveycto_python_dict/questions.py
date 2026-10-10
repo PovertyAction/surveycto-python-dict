@@ -201,6 +201,7 @@ def build_questions(contract: FormContract) -> list[dict]:
                     "gates": gates + own_gate(relevance, depth),
                     "required": False,
                     "calculation": calculation,
+                    "calculation_is_default": False,
                     "appearance": None,
                     "references": _references(relevance, calculation),
                     "group_path": node.group_path,
@@ -253,6 +254,9 @@ def build_questions(contract: FormContract) -> list[dict]:
                 "gates": gates + own_gate(relevance, depth),
                 "required": node.required,
                 "calculation": calculation,
+                "calculation_is_default": node.calculation_is_default
+                and qtype != "calculate"
+                and not node.readonly,
                 "appearance": refs(node.appearance),
                 "references": _references(relevance, constraint, calculation),
                 "group_path": node.group_path,

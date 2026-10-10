@@ -762,6 +762,9 @@ def test_a_body_control_calculate_is_read(tmp_path):
     assert nodes["seen"].control == "input"
     assert nodes["village"].pulldata["dataset"] == "households"
     assert nodes["village"].data_source["kind"] == "pulldata"
+    # On the body control, the calculate is a default the user can change.
+    assert nodes["seen"].calculation_is_default
+    assert not nodes["hh"].calculation_is_default
 
 
 _XML_HINT = """<?xml version="1.0"?>

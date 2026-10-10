@@ -304,6 +304,8 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                     "constraint_message": q["constraint_message"],
                     "hint": q["hint"],
                     "calculation": q["calculation"],
+                    "calculation_is_default": q["calculation_is_default"],
+                    "appearance": q["appearance"],
                     "required": q["required"],
                     "publishable": q["publishable"],
                     "choices_withheld": q["choices_withheld"],

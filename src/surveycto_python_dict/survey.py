@@ -647,17 +647,26 @@ class SurveyStore:
         self, q: dict, all_columns: bool = False, listed: int | None = None
     ) -> str:
         lines = [f"{q['variable_name']} ({q['type']})"]
-        if q["question_text"]:
+        # An unlabelled calculate's text is its formula, shown as Calculation below.
+        if q["question_text"] and q["question_text"] != q["calculation"]:
             lines.append(f"Text: {q['question_text']}")
         if q["hint"]:
             lines.append(f"Hint: {q['hint']}")
         if q["group_path"]:
             lines.append(f"Group: {'/'.join(q['group_path'])}")
+        # A search() appearance is shown as the data source.
+        if q["appearance"] and "search(" not in q["appearance"]:
+            lines.append(f"Appearance: {q['appearance']}")
+        calculation = (
+            "Default (computed; the user can change it)"
+            if q["calculation_is_default"]
+            else "Calculation"
+        )
         for label, key in (
             ("Relevance", "relevance"),
             ("Constraint", "constraint"),
             ("Constraint message", "constraint_message"),
-            ("Calculation", "calculation"),
+            (calculation, "calculation"),
         ):
             if q[key]:
                 lines.append(f"{label}: {q[key]}")
@@ -667,11 +676,19 @@ class SurveyStore:
         if q["choices_withheld"]:
             lines.append(_withheld(q))
         elif q["choices"] and any("when" in c for c in q["choices"]):
-            lists = dict.fromkeys(_when(c) for c in q["choices"])
+            lists = list(dict.fromkeys(w for c in q["choices"] if (w := _when(c))))
+            every = [c["value"] for c in q["choices"] if not _when(c)]
             lines.append(
                 f"Choices: {len(q['choices'])} in {len(lists)} lists, by the dataset "
-                f"rows the submissions reach ({'; '.join(lists)}); get_choice_list "
-                "shows them"
+                f"rows the submissions reach ({'; '.join(lists[:_LISTED])}"
+                + (f"; ... {len(lists) - _LISTED} more" if len(lists) > _LISTED else "")
+                + ")"
+                + (
+                    f", plus {len(every)} in every list ({', '.join(every)})"
+                    if every
+                    else ""
+                )
+                + "; get_choice_list shows them"
             )
         elif q["choices"]:
             lines.append(_choices_line(q))
@@ -1049,14 +1066,22 @@ class SurveyStore:
             )
             lines.append(f"  count reads {ref} {what}")
         indexed = [
-            (m, self.questions[m]["calculation"])
+            self.questions[m]
             for m in g["members"]
             if m in self.questions
             and "index()" in (self.questions[m]["calculation"] or "")
         ]
-        if indexed:
-            lines.append("  set per instance (calculates that read index()):")
-            lines += [f"    {m} = {_short(c, 160)}" for m, c in indexed]
+        for default, what in (
+            (False, "calculates that read index()"),
+            (True, "defaults that read index(); the user can change them"),
+        ):
+            set_by = [q for q in indexed if q["calculation_is_default"] == default]
+            if set_by:
+                lines.append(f"  set per instance ({what}):")
+                lines += [
+                    f"    {q['variable_name']} = {_short(q['calculation'], 160)}"
+                    for q in set_by
+                ]
         return lines
 
     def _table_of(self, value: str | None) -> str:
@@ -1357,7 +1382,14 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
             keys = {r for m in source["match"] for r in _REF_RE.findall(m["value"])}
             refs = [r for r in refs if r not in keys]
         elif calculation:
-            lines.append(f"{pad}{form}.{name} = {_short(calculation, 160)}")
+            lines.append(
+                f"{pad}{form}.{name} = {_short(calculation, 160)}"
+                + (
+                    f" (a default of this {q['type']}; the user can change it)"
+                    if q["calculation_is_default"]
+                    else ""
+                )
+            )
         else:
             lines.append(
                 f"{pad}{form}.{name} ({q['type']}): {_short(q['question_text'])}"
