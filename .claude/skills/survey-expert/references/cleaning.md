@@ -76,7 +76,8 @@ df[["KEY", *items, "skill_avg"]].to_parquet(
   `constraint` and `choices` in `${name}` syntax: the instrument, in machine form.
 - `just stats` writes `<form>_summary_stats.csv`: per column, how many rows were
   eligible under skip logic, answered, sentinel, missing while eligible, and answered
-  while skipped.
+  while skipped. `<form>.stats` in the database has it typed; pandas reads the CSV
+  with `low_memory=False`, since most of its text columns are empty.
 - A column kept as text (`parquet.cast_fallback` in the dictionary) holds values that
   did not fit the form's type; look at why before converting it.
 
@@ -173,6 +174,9 @@ harder to find.
    protocol really wants DK = 0, do it after, explicitly, with a comment.
 
 ## 4. Skip logic and structural missing
+
+To learn what a gate opens or what a calculate reads, start with
+`get_variable_neighborhood` on it (the survey-expert skill, "How a form works").
 
 1. **Not asked and asked-but-DK are different and never share a code.** A null in
    `<var>` with a code in `<var>_dk` was asked and not answered; a null where the

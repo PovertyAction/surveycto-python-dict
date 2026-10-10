@@ -19,7 +19,7 @@ writes: one folder per form, `<out_dir>/<form>/`, and the project's `<out_dir>/f
 | `<form>_pii_review.xlsx` | Every value of a flagged column, for the people cleaning the data to verify the flags. **Never open it** |
 | `<out_dir>/<project>.duckdb` | `just duckdb`: one database for the project. A schema per form (`<form>.submissions` with the columns outside repeats, `<form>.<repeat>` long with `KEY` and one `<repeat>_index` per enclosing repeat, and the descriptions as tables; `<form>.dictionary.table` names each column's view), `dataset.<id>` for each dataset once, and `main.forms`, `datasets`, `publishes`, `reads`, `joins` for the chain. Every view holds every column; `dictionary.pii_status` says which to handle carefully. `<form>.dataset_links` gives each `pulldata()`/`search()` match; `main.joins` connects a reader's field to the publisher's field across forms. `get_structure_db` summarises it; `get_structure_db(<form>)` maps one schema |
 | `<out_dir>/flow.json`, `flow.md` | The project: which form publishes each dataset, which forms read it (fields and columns), each published column's origin, each form's stage; `flow.md` draws it |
-| `<form>_summary_stats.csv` | `just stats`: per column, eligible rows under skip logic, sentinels apart, then stats; flagged PII columns get counts only |
+| `<form>_summary_stats.csv` | `just stats`: per column, eligible rows under skip logic, sentinels apart, then stats; flagged PII columns get counts only. Typed in `<form>.stats`; pandas reads the CSV with `low_memory=False` |
 
 ## Start with what the project is about
 
@@ -81,6 +81,17 @@ A name can be a question (`water_source`) or a column (`water_source_3`); a colu
 lookup returns its question with every column it produced. Read the JSON files
 directly only for what the tools do not show, such as a whole section.
 
+## How a form works
+
+Start from the graph, then read the formulas:
+
+- What a gate opens, what a calculate or an id reads, and the repeat it sits in:
+  `get_variable_neighborhood` on the gate or the calculate.
+- Why a question is asked: `get_gate_chain`.
+- Where a value comes from across forms: `trace_lineage`.
+- Many formulas at once (every calculate or relevance of a group or repeat): the
+  `<form>.questions` table in the database, or `questions.json`.
+
 ## PII: use every column, see only cleared values
 
 Every column carries `pii.status` with the `basis` for it. The status says where
@@ -105,7 +116,8 @@ default. A flag the team disagrees with is fixed in `config.toml`: they review
 personal ones to `[pii] blacklist`). A `search()` list that Presidio flags, the team puts on
 `[pii] blacklist` or that has more than 50 choices is referred to, not listed
 (`choices_withheld` says why): `get_choice_list` names its dataset, value and label
-columns and filter, and a script reads it. The parquet keeps all its binaries. `presidio.hit_rows` counts the
+columns and filter, and a script reads it from `<form>.choices` (`withheld` says why),
+keeping its values out of what you print. The parquet keeps all its binaries. `presidio.hit_rows` counts the
 rows with a hit and `presidio.hit_keys` gives up to five of their `KEY`s; quote counts
 and KEYs, never values.
 
