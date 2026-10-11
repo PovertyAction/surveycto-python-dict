@@ -182,8 +182,8 @@ parent = "household"
 
 The survey-expert skill fills them with you. Give it what describes the study: a
 pre-analysis plan, a replication paper, a protocol, a codebook. It reads them, lists the
-candidate keys the outputs carry (`get_project`: each dataset's key and each column the
-forms match on, with the forms, tables and datasets that hold it), proposes entities on
+candidate keys the outputs carry (`get_project`: each dataset's key and each column a
+`pulldata()` matches on, with the forms, tables and datasets that hold it), proposes entities on
 those keys and writes the sections once you confirm. The description is yours: the
 skill asks for it rather than writing one from the questions. Share only documents you
 are allowed to share with the agent: an embargoed plan or unpublished results may not

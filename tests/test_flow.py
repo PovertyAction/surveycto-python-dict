@@ -382,6 +382,14 @@ def test_candidate_keys_say_where_each_column_lives(flow):
     assert keys["zone_id"]["key_of"] == ["zones"]
 
 
+def test_a_search_filter_column_is_not_a_candidate_key(tmp_path):
+    visit = _VISIT.replace(
+        "search('Households')", "search('Households', 'matches', 'village', 'North')"
+    )
+    flow = _flow(tmp_path, {"listing": _LISTING, "visit": visit})
+    assert "village" not in {k["column"] for k in flow["keys"]}
+
+
 def _contracts(tmp_path):
     contracts = {}
     for form, xml in {"listing": _LISTING, "visit": _VISIT}.items():

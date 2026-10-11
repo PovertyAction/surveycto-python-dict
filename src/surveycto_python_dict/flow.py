@@ -22,8 +22,8 @@ the username), ``carried`` (a calculate that traces back to a ``pulldata()`` fro
 another dataset) or ``calculated`` (any other calculate).
 
 ``keys`` lists the columns that can identify an entity: each dataset's key and each
-column a ``pulldata()``/``search()`` matches on, with the forms (and the table in each)
-and datasets that carry it. ``project`` holds what the user says the project is about:
+column a ``pulldata()`` matches on (a ``search()`` filter selects a set of rows, so it
+identifies nothing), with the forms (and the table in each) and datasets that carry it. ``project`` holds what the user says the project is about:
 a description and named entities, each on one or more columns (``describe_project``).
 """
 
@@ -178,9 +178,13 @@ def _keys(contracts: dict[str, FormContract], datasets: list[dict], reads) -> li
     for d in datasets:
         if d["key"]:
             key_of.setdefault(d["key"], []).append(d["id"])
+    # A pulldata() key finds one row; a search() filter selects a set of rows, so its
+    # columns identify nothing.
     matched: dict[str, int] = {}
     for r in reads:
         for f in r["fields"]:
+            if f["via"] != "pulldata":
+                continue
             for column in f["match"]:
                 matched[column] = matched.get(column, 0) + 1
     keys = [
