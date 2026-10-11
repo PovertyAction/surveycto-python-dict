@@ -91,6 +91,7 @@ _KEYS = [
     "choice_list",
     "choices",
     "choices_per_submission",
+    "choice_filter",
     "variable_name",
     "question_text",
     "hint",
@@ -198,6 +199,14 @@ def test_select_choices_inline_with_own_list_name(by_name):
 
 def test_label_output_becomes_ref(by_name):
     assert by_name["phone"]["question_text"] == "Phone of ${owner}?"
+
+
+def test_form_text_loses_its_html():
+    from surveycto_python_dict.questions import plain_text
+
+    text = "<p> <strong> [plot]: </strong> Size of ${hh}&amp;co, <5 and >10 </p>"
+    assert plain_text(text) == "[plot]: Size of ${hh}&co, <5 and >10"
+    assert plain_text(None) is None
 
 
 def test_calculate_without_label_uses_calculation(by_name):

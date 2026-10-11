@@ -178,6 +178,9 @@ class Node:
     # Binaries only for the codes someone picked: the list is filtered per submission
     # (an itemset filter or a search() filter on a field), or kept in its dataset.
     choices_per_submission: bool = False
+    # The itemset's filter: {"expression", "per_submission", "items"}, the expression
+    # as compiled and items the list's length before a static filter applies.
+    choice_filter: dict | None = None
 
     @property
     def all_choices(self) -> list[dict]:
@@ -625,8 +628,9 @@ _ITEMSET = re.compile(r"^instance\('([^']+)'\)/root/item(?:\[(.*)\])?$", re.DOTA
 # A choice filter that reads the submission: current() or a path to a field.
 _READS_FORM = re.compile(r"current\(\)|(?<![\w)\]])/[A-Za-z_]")
 _QUOTED = re.compile(r"('[^']*'|\"[^\"]*\")")
-# A name in a static choice filter that is not a function call: an item's column.
-_BARE_NAME = re.compile(r"(?<![\w$'{-])([A-Za-z_][\w-]*)(?![\w-]|\s*\()")
+# A name in a choice filter that is neither a function call nor a path step: an
+# item's column.
+_BARE_NAME = re.compile(r"(?<![\w$'{/-])([A-Za-z_][\w-]*)(?![\w-]|\s*\()")
 _XPATH_WORDS = {"and", "or", "div", "mod"}
 
 
@@ -642,10 +646,12 @@ class _Item:
 
 def _itemset_choices(
     itemset, instances: dict, itext: dict[str, str]
-) -> tuple[list[dict], bool]:
-    """Return the choices an ``<itemset>`` lists, its filter applied when static.
-
-    The flag says the filter reads the submission, so each one sees part of the list.
+) -> tuple[list[dict], dict | None]:
+    """Return the choices an ``<itemset>`` lists, its filter applied when static, and
+    the filter: ``{"expression", "per_submission", "items"}`` (per_submission: it
+    reads the submission, so each one sees part of the list; items: how many the list
+    holds before a static filter). A choice carries the values of the item columns
+    the filter names, as ``filter_columns``.
     """
     nodeset = itemset.get("nodeset")
     match = _ITEMSET.match(nodeset)
@@ -654,6 +660,12 @@ def _itemset_choices(
     items = instances[match.group(1)]
     predicate = match.group(2)
     per_submission = bool(predicate and _READS_FORM.search(predicate))
+    columns = {k for item in items for k in item}
+    named = sorted(
+        {n for p in _QUOTED.split(predicate or "")[::2] for n in _BARE_NAME.findall(p)}
+        & columns
+    )
+    listed = len(items)
     if predicate and not per_submission:
         # Columns become ${column} refs, outside quoted literals. A column an item
         # lacks reads as empty, as a path to no node does on the device.
@@ -677,9 +689,16 @@ def _itemset_choices(
             else item[refs["label"]],
             "value": item[refs["value"]],
         }
+        | ({"filter_columns": {c: item.get(c, "") for c in named}} if named else {})
         for item in items
     ]
-    return choices, per_submission
+    if not predicate:
+        return choices, None
+    return choices, {
+        "expression": predicate,
+        "per_submission": per_submission,
+        "items": listed,
+    }
 
 
 def _default_itext(model) -> dict[str, str]:
@@ -787,6 +806,7 @@ def parse_contract(xml_path) -> FormContract:
     appearances: dict[str, str] = {}
     items: dict[str, list[dict]] = {}
     filtered: set[str] = set()  # selects whose list is filtered per submission
+    choice_filters: dict[str, dict] = {}  # select -> its itemset's filter
     labels: dict[str, str] = {}
     hints: dict[str, str] = {}
     mediatypes: dict[str, str] = {}
@@ -834,12 +854,12 @@ def parse_contract(xml_path) -> FormContract:
                     if _ln(it.tag) == "item"
                 ]
                 for itemset in (c for c in el if _ln(c.tag) == "itemset"):
-                    choices, per_submission = _itemset_choices(
-                        itemset, instances, itext
-                    )
+                    choices, choice_filter = _itemset_choices(itemset, instances, itext)
                     items[rel] += choices
-                    if per_submission:
-                        filtered.add(rel)
+                    if choice_filter:
+                        choice_filters[rel] = choice_filter
+                        if choice_filter["per_submission"]:
+                            filtered.add(rel)
             ap = el.get("appearance")
             if ap:
                 appearances[rel] = ap
@@ -890,6 +910,7 @@ def parse_contract(xml_path) -> FormContract:
             preload_params=b.get("preloadParams"),
             data_source=source,
             choices_per_submission=path in filtered or searched_by_field,
+            choice_filter=choice_filters.get(path),
             original=b.get("original"),
             field_type=b.get("fieldType"),
             label=labels.get(path),

@@ -239,7 +239,7 @@ def _within(data: _Data, repeat: str, parent: tuple, n_rows: int) -> list:
 def _eligibility(
     data: _Data,
     q: dict | None,
-    column: str,
+    column: str | None,
     iterations: tuple,
     n_rows: int,
     ragged: bool = False,
@@ -255,7 +255,8 @@ def _eligibility(
         return [True] * n_rows, composed, False, RAGGED_NOTE
     if q["disabled"]:
         return [False] * n_rows, composed, True, "disabled"
-    own = data.values[column]
+    # A question with no column has no value of its own: `.` reads as empty.
+    own = data.values[column] if column else [None] * n_rows
     try:
         # Each gate at its own repeat level: index() in a group's condition is the
         # index of that group's repeat, not the question's innermost one.
@@ -280,6 +281,57 @@ def _eligibility(
     except UnsupportedExpression as e:
         return [True] * n_rows, composed, False, f"{e}; counted over all rows"
     return eligible, composed, True, ""
+
+
+def reached(table, questions: list[dict], vardict: dict) -> dict[str, int | None]:
+    """Return how many submissions reach each question no submission answered: its
+    conditions hold, in some instance of its repeats. None when they cannot be
+    evaluated. The rows are the ones the dictionary counts ([submissions] exclude).
+    """
+    variables = vardict["variables"]
+    table = kept(table, vardict["dataset"]["exclude"])
+    data = _Data(table, {q["variable_name"]: q for q in questions}, variables)
+    n_rows = table.num_rows
+    answered = {v["question"] for v in variables.values()}
+    found: dict[str, int | None] = {}
+    for q in questions:
+        name = q["variable_name"]
+        if q["type"] == "repeat_count" or name in answered:
+            continue
+        try:
+            # Every instance its repeats can have on some row, level by level.
+            instances: list[tuple] = [()]
+            for repeat in data.repeat_chain(name):
+                instances = [
+                    (*parent, i)
+                    for parent in instances
+                    for i in range(
+                        1,
+                        int(
+                            max(
+                                (
+                                    c
+                                    for c in _within(data, repeat, parent, n_rows)
+                                    if c == c
+                                ),
+                                default=0,
+                            )
+                        )
+                        + 1,
+                    )
+                ]
+            rows = [False] * n_rows
+            for iterations in instances:
+                eligible, _, evaluated, _ = _eligibility(
+                    data, q, None, iterations, n_rows
+                )
+                if not evaluated:
+                    raise UnsupportedExpression(name)
+                rows = [a or b for a, b in zip(rows, eligible, strict=True)]
+            found[name] = sum(rows)
+        except UnsupportedExpression:
+            found[name] = None
+    return found
 
 
 def _fmt(x: float) -> float:

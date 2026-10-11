@@ -307,3 +307,33 @@ def test_an_exclude_that_does_not_parse_raises(tmp_path, analyzer):
     write_pull(cfg)
     with pytest.raises(ValueError, match=r"\[submissions\] exclude"):
         build(cfg, SENTINELS, analyzer)
+
+
+def test_reached_counts_the_submissions_a_question_with_no_column_reaches(tmp_path):
+    from surveycto_python_dict.cast import cast_wide
+    from surveycto_python_dict.dictionary import build_dictionary
+    from surveycto_python_dict.questions import build_questions
+    from surveycto_python_dict.stats import reached
+    from surveycto_python_dict.xml_contract import parse_contract
+
+    # Nobody answered visit or plot_size.
+    rows = [
+        {k: v for k, v in r.items() if k != "visit" and not k.startswith("plot_size")}
+        for r in ROWS
+    ]
+    path = tmp_path / "farm.xml"
+    path.write_text(XML, encoding="utf-8")
+    contract = parse_contract(path)
+    questions = build_questions(contract)
+    table = cast_wide(rows, contract)
+    vardict = build_dictionary(table, questions, contract, SENTINELS)
+    found = reached(table, questions, vardict)
+    assert found["visit"] == 2
+    # The plot repeat is asked when plots > 0, which holds on one submission.
+    assert found["plot_size"] == 1
+    size = next(q for q in questions if q["variable_name"] == "plot_size")
+    # index() is the plot instance: no submission has a third plot.
+    size["gates"].append({"group": None, "relevance": "index() = 3", "repeat_depth": 1})
+    assert reached(table, questions, vardict)["plot_size"] == 0
+    size["gates"][-1]["relevance"] = "${nowhere} = 1"
+    assert reached(table, questions, vardict)["plot_size"] is None

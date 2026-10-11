@@ -98,10 +98,12 @@ those columns go through the type rules and Presidio like any other. Set
 `no_personal_data = true` for a project that holds none (study metadata, say): every
 column, dataset column and `search()` list that is not blacklisted or collection
 metadata is `whitelisted` with basis `project`, and Presidio never runs. Collection
-metadata is `contains_pii` under any setting and any name: device columns
-(`username`, `deviceid`, ...), a field that preloads them, an enumerator field (it
-stores `"name (id)"`), a calculate that calls `enumerator-id()`, `enumerator-name()` or
-`username()`.
+metadata is `contains_pii` under any setting and any name, unless you whitelist it:
+device columns (`username`, `deviceid`, ...), a field that preloads them, an
+enumerator field (it stores `"name (id)"`), a calculate that calls `enumerator-id()`,
+`enumerator-name()` or `username()`. A calculate whose formula reads such a field or a
+blacklisted one, directly or through other calculates, is `contains_pii` too (basis
+`lineage:<field>`), and so is a `pulldata()` of a blacklisted `dataset.column`.
 
 A flag says where personal data may be, so it is handled carefully; the data stays
 whole. The parquet, the long tables and every view in `<project>.duckdb` keep every
@@ -182,8 +184,8 @@ parent = "household"
 
 The survey-expert skill fills them with you. Give it what describes the study: a
 pre-analysis plan, a replication paper, a protocol, a codebook. It reads them, lists the
-candidate keys the outputs carry (`get_project`: each dataset's key and each column the
-forms match on, with the forms, tables and datasets that hold it), proposes entities on
+candidate keys the outputs carry (`get_project`: each dataset's key and each column a
+`pulldata()` matches on, with the forms, tables and datasets that hold it), proposes entities on
 those keys and writes the sections once you confirm. The description is yours: the
 skill asks for it rather than writing one from the questions. Share only documents you
 are allowed to share with the agent: an embargoed plan or unpublished results may not

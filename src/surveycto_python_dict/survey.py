@@ -24,7 +24,8 @@ _LISTED = 20
 # The pii statuses whose values an agent may see.
 _SEEN = {"cleared_by_form", "whitelisted"}
 _TOKEN_RE = re.compile(r"\w+")
-_TAG_RE = re.compile(r"<[^>]+>")
+# An HTML tag: `<` then a letter or `/`, so `<5 and >10` is text.
+_TAG_RE = re.compile(r"</?[A-Za-z][^<>]*>")
 _REF_RE = re.compile(r"\$\{([^}]+)\}")
 
 
@@ -602,6 +603,10 @@ class SurveyStore:
         self.variables = dictionary["variables"]
         self.graph = load("variable_graph")
         self.columns = {n["id"]: n["columns"] for n in self.graph["nodes"]}
+        # Questions no submission answered: how many submissions reach them.
+        self.reached = {
+            n["id"]: n["reached"] for n in self.graph["nodes"] if "reached" in n
+        }
         self.repeat_of = {n["id"]: n["repeat_group"] for n in self.graph["nodes"]}
         self.dataset_columns = load("dataset_codebook")
         self.review_file = f"{form_id}_pii_review.xlsx"
@@ -723,6 +728,8 @@ class SurveyStore:
             )
         elif q["choices"]:
             lines.append(_choices_line(q))
+        if q["choice_filter"]:
+            lines.append(_filter_line(q))
         if q["choices_per_submission"] and q["type"] == "select_multiple":
             lines.append(
                 "Binaries: only for the codes someone picked (the form filters the "
@@ -749,7 +756,9 @@ class SurveyStore:
         if len(columns) > (_LISTED if listed is None else listed) and not all_columns:
             lines.append(self._columns_summary(q["variable_name"], columns))
         else:
-            lines.append("Columns:" if columns else "Columns: none in the data")
+            lines.append(
+                "Columns:" if columns else "Columns: none in the data" + self._reach(q)
+            )
             lines += [self._column_line(c) for c in columns]
         if any(self.variables[c]["pii"]["status"] in _FLAGGED for c in columns):
             lines.append(
@@ -790,22 +799,19 @@ class SurveyStore:
         listed = None if len(names) == 1 else 1
         return "\n\n".join(self.lookup_variable(n, columns, listed) for n in names)
 
-    def search_scored(
-        self, query: str
-    ) -> tuple[list[tuple[tuple[float, bool, float], str]], set[str]]:
-        """Rank questions by how many query words their name, label or hint holds,
-        then questions someone answers above calculates and repeat counts, then by
-        the words' IDF; a hint counts half. A question named exactly ``query`` comes
-        first. Also return the query words no question holds.
+    def search_matches(self, query: str) -> tuple[dict, dict]:
+        """Return, per query word, the questions whose name or label hold it and
+        those whose hint or listed choice labels do (and not the first).
         """
         docs = {
             n: set(_name_tokens(n)) | set(_tokens(_label(q)))
             for n, q in self.questions.items()
         }
-        hints = {n: set(_tokens(q["hint"] or "")) for n, q in self.questions.items()}
-        # One-letter words ("p" of "p-value") only count when alone.
-        words = set(_tokens(query))
-        words = {w for w in words if len(w) > 1} or words
+        hints = {
+            n: set(_tokens(q["hint"] or ""))
+            | {t for c in q["choices"] or [] for t in _tokens(c["label"])}
+            for n, q in self.questions.items()
+        }
 
         def holding(w: str, texts: dict[str, set[str]]) -> set[str]:
             # A word of four letters or more also matches the words it starts
@@ -816,28 +822,35 @@ class SurveyStore:
                 if w in toks or (len(w) >= 4 and any(t.startswith(w) for t in toks))
             }
 
-        matched = {w: holding(w, docs) for w in words}
-        hinted = {w: holding(w, hints) - matched[w] for w in words}
-        # Words in more than half the questions ("de", "the") only rank when alone.
-        terms = [
-            w for w in words if len(matched[w] | hinted[w]) <= len(docs) / 2
-        ] or list(words)
-        idf = {
-            w: math.log(len(docs) / len(matched[w] | hinted[w])) + 1
-            for w in terms
-            if matched[w] | hinted[w]
-        }
+        matched = {w: holding(w, docs) for w in _query_words(query)}
+        hinted = {w: holding(w, hints) - matched[w] for w in matched}
+        return matched, hinted
+
+    def search_scored(
+        self, query: str, idf: dict[str, float] | None = None
+    ) -> tuple[list[tuple[tuple[float, bool, float], str]], set[str]]:
+        """Rank questions by the query words their name, label, hint or listed
+        choice labels hold, each word weighed by its IDF (a rare word outranks a
+        common one) and a hint or choice label counting half; then questions someone
+        answers above calculates and repeat counts, then the number of words held. A
+        question named exactly ``query`` comes first. Also return the query words no
+        question holds. ``idf`` is the words' IDF over several forms; by default,
+        over this one.
+        """
+        matched, hinted = self.search_matches(query)
+        if idf is None:
+            idf = _idf(matched, [(matched, hinted, len(self.questions))])
         # Each word counts once per question, so long texts do not win on common words.
         scores = {}
-        for n in docs:
+        for n in self.questions:
             weights = {
                 w: 1.0 if n in matched[w] else 0.5 if n in hinted[w] else 0.0
                 for w in idf
             }
             scores[n] = (
-                sum(weights.values()),
-                self.questions[n]["type"] not in ("calculate", "repeat_count"),
                 sum(idf[w] * weight for w, weight in weights.items()),
+                self.questions[n]["type"] not in ("calculate", "repeat_count"),
+                sum(weights.values()),
             )
         if query.strip() in scores:
             scores[query.strip()] = (math.inf, True, math.inf)
@@ -845,7 +858,7 @@ class SurveyStore:
             ((s, n) for n, s in scores.items() if s[0] > 0),
             key=lambda x: (-x[0][0], -x[0][1], -x[0][2], x[1]),
         )
-        return ranked, {w for w in words if not matched[w] | hinted[w]}
+        return ranked, {w for w in matched if not matched[w] | hinted[w]}
 
     def search_line(self, name: str) -> str:
         """Return a search hit: the question's name, type and short text, and its
@@ -889,6 +902,14 @@ class SurveyStore:
         )
         if own:
             lines[0] += f", asked if {own['relevance']}"
+        # The groups it sits in gate it too, outermost first.
+        path = members[0]["group_path"]
+        outer = path[: path.index(group)]
+        lines += [
+            f"  inside {g['group']}, asked if {g['relevance']}"
+            for g in members[0]["gates"]
+            if g["group"] in outer
+        ]
         shown: set[str] = set()
         for q in members:
             inner = q["group_path"][q["group_path"].index(group) + 1 :]
@@ -902,6 +923,21 @@ class SurveyStore:
             lines.append(f"  {q['variable_name']} ({q['type']}){where}{when}")
         return "\n".join(lines)
 
+    def _reach(self, q: dict) -> str:
+        """Return whether a question no submission answered was reached."""
+        name = q["variable_name"]
+        if name not in self.reached:
+            return ""
+        n = self.reached[name]
+        if n is None:
+            return "; whether it was reached is not evaluated (its conditions)"
+        if n == 0:
+            return "; never reached: its conditions held for no submission"
+        return (
+            f"; reached in {n} of {self.dataset['n_observations']} submissions, "
+            "never answered"
+        )
+
     def get_choice_list(self, name: str) -> str:
         """List a select question's choices."""
         q = self.questions.get(name)
@@ -909,18 +945,28 @@ class SurveyStore:
             return self.lookup_variable(name)
         if q["choices_withheld"]:
             return "\n".join(self._withheld_lines(q))
-        if not q["choices"]:
+        if q["type"] not in ("select_one", "select_multiple"):
             return f"{name} ({q['type']}) is not a select question."
         lists: dict[str, list[dict]] = {}
         for c in q["choices"]:
             lists.setdefault(_when(c), []).append(c)
         lines = [f"{name} ({q['type']}):"]
+        if q["choice_filter"]:
+            lines.append(f"  {_filter_line(q)}")
         for when, choices in lists.items():
             pad = "  "
             if when:
                 lines.append(f"  where {when}:")
                 pad = "    "
-            lines += [f"{pad}{c['value']} = {c['label']}" for c in choices]
+            lines += [
+                f"{pad}{c['value']} = {c['label']}"
+                + (
+                    f"  [{_columns_text(c['filter_columns'])}]"
+                    if "filter_columns" in c
+                    else ""
+                )
+                for c in choices
+            ]
         return "\n".join(lines)
 
     def _qualifies_lines(self, name: str) -> list[str]:
@@ -1365,9 +1411,33 @@ def _unmatched_lines(words: set[str]) -> list[str]:
     return [f"No question holds: {', '.join(sorted(words))}; ranked on the rest."]
 
 
+def _query_words(query: str) -> set[str]:
+    """Return the query's words; one-letter words ("p" of "p-value") only when alone."""
+    words = set(_tokens(query))
+    return {w for w in words if len(w) > 1} or words
+
+
+def _idf(words, forms: list[tuple[dict, dict, int]]) -> dict[str, float]:
+    """Return each word's IDF over ``forms`` (each: the questions holding each word
+    in text, in hints, and the number of questions). A word in more than half the
+    questions ("de", "the") only counts when no other word is rarer.
+    """
+    n = sum(size for _, _, size in forms)
+    held = {w: sum(len(m[w] | h[w]) for m, h, _ in forms) for w in words}
+    terms = [w for w in words if held[w] <= n / 2] or list(words)
+    return {w: math.log(n / held[w]) + 1 for w in terms if held[w]}
+
+
 def search_forms(stores: dict, query: str, max_results: int = 20) -> str:
-    """Search every form's questions; each form ranks its own, best first."""
-    scored = {form: store.search_scored(query) for form, store in stores.items()}
+    """Search every form's questions, best first; a word's IDF is over every form,
+    so scores compare across them.
+    """
+    matches = [
+        (*store.search_matches(query), len(store.questions))
+        for store in stores.values()
+    ]
+    idf = _idf(_query_words(query), matches)
+    scored = {form: store.search_scored(query, idf) for form, store in stores.items()}
     ranked = sorted(
         (
             (score, form, name)
@@ -1413,6 +1483,7 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
     """
     lines: list[str] = []
     seen: set[tuple[str, str]] = set()
+    lists: dict[tuple, str] = {}
 
     def column(d: dict, col: str, depth: int) -> None:
         pad = "  " * depth
@@ -1495,7 +1566,7 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
             refs = [r for r in refs if r not in keys]
         elif calculation:
             lines.append(
-                f"{pad}{form}.{name} = {_short(calculation, 160)}"
+                f"{pad}{form}.{name} = {calculation}"
                 + (
                     f" (a default of this {q['type']}; the user can change it)"
                     if q["calculation_is_default"]
@@ -1503,10 +1574,19 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
                 )
             )
         else:
+            withheld = q["choices_withheld"] and not source
             lines.append(
                 f"{pad}{form}.{name} ({q['type']}): {_short(q['question_text'])}"
-                + ("" if source else _choices_text(q))
+                + (_choices_text(q) if withheld else "")
             )
+            if q["choices"] and not source and not withheld:
+                # Selects sharing a list print it once.
+                listed = tuple((c["value"], c["label"]) for c in q["choices"])
+                if listed in lists:
+                    lines.append(f"{pad}  choices as {lists[listed]} above")
+                else:
+                    lists[listed] = f"{form}.{name}"
+                    lines.append(f"{pad}  {_choices_line(q)}")
         if source and source["kind"] == "enumerator":
             d, _ = store.read(source["dataset"], _path(q))
             line = f'{pad}  picks a row of {d["id"]}; stores its name and id as "name (id)"'
@@ -1545,6 +1625,22 @@ def _not_unique(column: dict) -> str | None:
     if column["distinct"] == column["non_null"] == column["rows"]:
         return None
     return f"not unique: {column['distinct']} distinct in {column['non_null']} rows"
+
+
+def _columns_text(columns: dict[str, str]) -> str:
+    return ", ".join(f"{k} = {v}" for k, v in columns.items())
+
+
+def _filter_line(q: dict) -> str:
+    """Return a select's choice filter: applied to the list when static, or which
+    choices each submission sees when it reads the form.
+    """
+    f = q["choice_filter"]
+    if f["per_submission"]:
+        how = "per submission: each sees the choices it passes"
+    else:
+        how = f"applied: {len(q['choices'])} of {f['items']} choices pass"
+    return f"Choice filter: {f['expression']} ({how})"
 
 
 def _choices_line(q: dict) -> str:

@@ -151,7 +151,7 @@ def test_dictionary_is_json_serialisable(built):
 
 @pytest.fixture
 def graph(built):
-    return build_graph(built[1], built[2])
+    return build_graph(built[1], built[2], {})
 
 
 def _edges(graph, kind):

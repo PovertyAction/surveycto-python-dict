@@ -70,6 +70,35 @@ def test_choice_list(store):
     assert "not a select" in store.get_choice_list("owner")
 
 
+def test_a_choice_filter_shows_with_each_choices_filter_values(store):
+    crop = store.questions["crop"]
+    crop["choices"] = [
+        dict(c, filter_columns={"season": "dry"}) for c in crop["choices"]
+    ]
+    crop["choice_filter"] = {
+        "expression": "season = 'dry'",
+        "per_submission": False,
+        "items": len(crop["choices"]) + 1,
+    }
+    passed = len(crop["choices"])
+    line = (
+        f"Choice filter: season = 'dry' (applied: {passed} of {passed + 1} "
+        "choices pass)"
+    )
+    assert line in store.lookup_variable("crop")
+    out = store.get_choice_list("crop").splitlines()
+    assert out[1] == f"  {line}"
+    assert out[2].endswith("  [season = dry]")
+    # A filter that reads the form leaves each submission part of the list.
+    crop["choice_filter"]["per_submission"] = True
+    assert "(per submission: each sees the choices it passes)" in (
+        store.get_choice_list("crop")
+    )
+    # A filter no choice passes still lists as a select.
+    crop["choices"] = []
+    assert store.get_choice_list("crop").splitlines()[0] == "crop (select_one):"
+
+
 def test_gate_chain_includes_group_and_upstream_gates(store):
     out = store.get_gate_chain("plot_size")
     assert "${plots} > 0" in out
@@ -427,6 +456,10 @@ def test_survey_info_lists_questions_with_no_column(tmp_path, analyzer):
     build(cfg, SENTINELS, analyzer)
     store = SurveyStore(cfg.form_dir("farm"), "farm")
     assert store.summary["questions_without_columns"] == ["visit"]
+    assert (
+        "Columns: none in the data; reached in 2 of 2 submissions, never answered"
+        in store.lookup_variable("visit")
+    )
     assert "no submission holds a value: 1 (visit)" in store.get_survey_info()
 
 
@@ -445,6 +478,11 @@ def test_group_lists_its_questions_in_order(store):
     assert lines[2:4] == [
         "  -- measured: if ${plot_crop} != ''",
         "  plot_size (decimal) [measured]",
+    ]
+    # A nested group says which groups it sits in and when they are asked.
+    assert store.get_group("measured").splitlines()[:2] == [
+        "measured: 1 questions, asked if ${plot_crop} != ''",
+        "  inside plot, asked if ${plots} > 0",
     ]
     assert store.get_group("plt").startswith("No group named 'plt'. Close: plot")
 
@@ -477,6 +515,36 @@ def test_search_matches_name_parts_and_word_starts_and_drops_one_letters(store):
     store.questions["per_plot"]["question_text"] = "Area per plot, in hectares"
     # "hectare" starts "hectares"; "a" alone of one letter is dropped.
     assert store.search_questions("a hectare").splitlines()[0].startswith("per_plot")
+
+
+def test_search_weighs_rare_words_and_finds_choice_labels(store):
+    names = [n for n in store.questions if n != "per_plot"][:3]
+    for n in names:
+        store.questions[n]["question_text"] = f"Study note {n}"
+    store.questions["per_plot"].update(
+        type="calculate", calculation="${plots}", question_text="Informal sector"
+    )
+    # "sector" is rarer than "study", so the one calculate holding it comes first.
+    assert store.search_questions("study sector").splitlines()[0].startswith("per_plot")
+    assert store.search_questions("maize").splitlines()[0].startswith("crop")
+
+
+def test_search_across_forms_weighs_words_over_every_form(store):
+    import copy
+
+    from surveycto_python_dict.survey import search_forms
+
+    # "study" is rare in one form and common in the other; "sector" is rarer overall.
+    first = next(iter(store.questions))
+    store.questions[first]["question_text"] = "Study design"
+    other = copy.copy(store)
+    other.questions = copy.deepcopy(store.questions)
+    names = list(other.questions)
+    for n in names[:6]:
+        other.questions[n]["question_text"] = f"Study note {n}"
+    other.questions[names[6]]["question_text"] = "Informal sector"
+    out = search_forms({"farm": store, "other": other}, "study sector")
+    assert out.splitlines()[0].startswith(f"other.{names[6]}")
 
 
 def test_search_skips_formulas_and_repeat_count_text_and_weighs_hints_half(store):

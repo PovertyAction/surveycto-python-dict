@@ -8,9 +8,11 @@ Each column gets ``{"status", "basis"[, "presidio"]}``; the first matching rule 
    false`` this rule is skipped and ``publishable`` is only noted in the basis.
 2. ``contains_pii``: device metadata columns; geo and attachment question types;
    whatever the name, a field that preloads device or user metadata (``username``,
-   ``deviceid``, ...), a calculate that calls ``enumerator-id()``,
-   ``enumerator-name()`` or ``username()``. This rule holds under
-   ``no_personal_data`` too.
+   ``deviceid``, ...), an enumerator field, a calculate that calls
+   ``enumerator-id()``, ``enumerator-name()`` or ``username()``; and a calculate
+   whose formula reads such a field or a blacklisted one, directly or through other
+   calculates (basis ``lineage:<field>``). This rule holds under
+   ``no_personal_data`` too; the whitelist outranks it.
 3. ``whitelisted``: system columns; integer, decimal, date, datetime and time
    questions; selects with inline choices; calculates whose every reference is
    cleared or whitelisted and that do not ``pulldata()``.
@@ -77,6 +79,7 @@ _METADATA_TYPES = {
 }
 _METADATA_CALLS = re.compile(r"(?<![\w-])(enumerator-id|enumerator-name|username)\(\)")
 _SELECT_TYPES = {"select_one", "select_multiple"}
+_REF = re.compile(r"\$\{([^}]+)\}")
 _CALL = re.compile(r"([A-Za-z][\w-]*)\s*\(")
 # Functions that make a value without reading the form or the device.
 _GENERATED_CALLS = {"once", "uuid", "now", "today", "random", "concat", "if"}
@@ -179,6 +182,7 @@ class _Rules:
         self.blacklist = blacklist
         self.trust_publishable = trust_publishable
         self._memo: dict[str, dict | None] = {}
+        self._carried: dict[str, str | None] = {}
 
     def static(self, name: str) -> dict | None:
         """Return the question's block when a rule decides it without data, else None."""
@@ -228,6 +232,34 @@ class _Rules:
         if calls:
             return f"calls:{calls.group(1)}()"
         return None
+
+    def carried(self, name: str | None) -> str | None:
+        """Return a field a calculate's formula reads, directly or through other
+        calculates, that is blacklisted or collection metadata, else None. A
+        whitelisted field carries nothing. A ``pulldata()`` holds its dataset column,
+        not its key: it carries the column when that is blacklisted.
+        """
+        q = self.by_name.get(name)
+        if q is None or q["type"] != "calculate":
+            return None
+        source = q["data_source"]
+        if source and source["kind"] == "pulldata":
+            column = f"{source['dataset']}.{source['column']}"
+            return column if column in self.blacklist else None
+        if name not in self._carried:
+            self._carried[name] = None  # a reference cycle carries nothing
+            for ref in dict.fromkeys(_REF.findall(q["calculation"] or "")):
+                if ref in self.whitelist:
+                    continue
+                found = (
+                    ref
+                    if ref in self.blacklist or self.personal(ref)
+                    else self.carried(ref)
+                )
+                if found:
+                    self._carried[name] = found
+                    break
+        return self._carried[name]
 
     def _safe(self, name: str) -> bool:
         block = self.static(name)
@@ -398,10 +430,12 @@ def classify(
     variables = vardict["variables"]
     question_names = {q["variable_name"] for q in questions}
     whitelist, blacklist = set(config.whitelist), set(config.blacklist)
+    # The blacklist keeps its dataset columns (dataset.column): a pulldata() of one
+    # carries it.
     rules = _Rules(
         questions,
         whitelist & question_names,
-        blacklist & question_names,
+        blacklist,
         config.trust_publishable,
     )
     keys = table.column("KEY").to_pylist()
@@ -422,6 +456,8 @@ def classify(
             block = {"status": "contains_pii", "basis": [f"device:{column}"]}
         elif basis := rules.personal(question):
             block = {"status": "contains_pii", "basis": [basis]}
+        elif carried := rules.carried(question):
+            block = {"status": "contains_pii", "basis": [f"lineage:{carried}"]}
         elif entry.get("system"):
             block = {"status": "whitelisted", "basis": ["system"]}
         elif config.no_personal_data:
