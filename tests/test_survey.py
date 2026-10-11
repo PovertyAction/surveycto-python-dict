@@ -484,6 +484,18 @@ def test_search_matches_name_parts_and_word_starts_and_drops_one_letters(store):
     assert store.search_questions("a hectare").splitlines()[0].startswith("per_plot")
 
 
+def test_search_weighs_rare_words_and_finds_choice_labels(store):
+    names = [n for n in store.questions if n != "per_plot"][:3]
+    for n in names:
+        store.questions[n]["question_text"] = f"Study note {n}"
+    store.questions["per_plot"].update(
+        type="calculate", calculation="${plots}", question_text="Informal sector"
+    )
+    # "sector" is rarer than "study", so the one calculate holding it comes first.
+    assert store.search_questions("study sector").splitlines()[0].startswith("per_plot")
+    assert store.search_questions("maize").splitlines()[0].startswith("crop")
+
+
 def test_search_skips_formulas_and_repeat_count_text_and_weighs_hints_half(store):
     q = store.questions["per_plot"]
     q.update(type="calculate", calculation="${area} * 2", question_text="${area} * 2")

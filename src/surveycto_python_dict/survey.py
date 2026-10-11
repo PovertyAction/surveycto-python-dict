@@ -794,16 +794,22 @@ class SurveyStore:
     def search_scored(
         self, query: str
     ) -> tuple[list[tuple[tuple[float, bool, float], str]], set[str]]:
-        """Rank questions by how many query words their name, label or hint holds,
-        then questions someone answers above calculates and repeat counts, then by
-        the words' IDF; a hint counts half. A question named exactly ``query`` comes
-        first. Also return the query words no question holds.
+        """Rank questions by the query words their name, label, hint or listed
+        choice labels hold, each word weighed by its IDF (a rare word outranks a
+        common one) and a hint or choice label counting half; then questions someone
+        answers above calculates and repeat counts, then the number of words held. A
+        question named exactly ``query`` comes first. Also return the query words no
+        question holds.
         """
         docs = {
             n: set(_name_tokens(n)) | set(_tokens(_label(q)))
             for n, q in self.questions.items()
         }
-        hints = {n: set(_tokens(q["hint"] or "")) for n, q in self.questions.items()}
+        hints = {
+            n: set(_tokens(q["hint"] or ""))
+            | {t for c in q["choices"] or [] for t in _tokens(c["label"])}
+            for n, q in self.questions.items()
+        }
         # One-letter words ("p" of "p-value") only count when alone.
         words = set(_tokens(query))
         words = {w for w in words if len(w) > 1} or words
@@ -836,9 +842,9 @@ class SurveyStore:
                 for w in idf
             }
             scores[n] = (
-                sum(weights.values()),
-                self.questions[n]["type"] not in ("calculate", "repeat_count"),
                 sum(idf[w] * weight for w, weight in weights.items()),
+                self.questions[n]["type"] not in ("calculate", "repeat_count"),
+                sum(weights.values()),
             )
         if query.strip() in scores:
             scores[query.strip()] = (math.inf, True, math.inf)
