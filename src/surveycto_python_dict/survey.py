@@ -890,6 +890,14 @@ class SurveyStore:
         )
         if own:
             lines[0] += f", asked if {own['relevance']}"
+        # The groups it sits in gate it too, outermost first.
+        path = members[0]["group_path"]
+        outer = path[: path.index(group)]
+        lines += [
+            f"  inside {g['group']}, asked if {g['relevance']}"
+            for g in members[0]["gates"]
+            if g["group"] in outer
+        ]
         shown: set[str] = set()
         for q in members:
             inner = q["group_path"][q["group_path"].index(group) + 1 :]

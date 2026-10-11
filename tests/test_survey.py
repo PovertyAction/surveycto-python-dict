@@ -446,6 +446,11 @@ def test_group_lists_its_questions_in_order(store):
         "  -- measured: if ${plot_crop} != ''",
         "  plot_size (decimal) [measured]",
     ]
+    # A nested group says which groups it sits in and when they are asked.
+    assert store.get_group("measured").splitlines()[:2] == [
+        "measured: 1 questions, asked if ${plot_crop} != ''",
+        "  inside plot, asked if ${plots} > 0",
+    ]
     assert store.get_group("plt").startswith("No group named 'plt'. Close: plot")
 
 
