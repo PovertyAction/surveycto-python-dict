@@ -179,8 +179,17 @@ def test_no_personal_data_keeps_blacklist_and_device_without_scanning(form):
         "basis": ["device:deviceid"],
     }
     assert blocks["owner"] == {"status": "whitelisted", "basis": ["project"]}
+    # concat(owner, phone) holds the blacklisted phone; the pulldata() keyed on it
+    # holds its dataset column instead.
+    assert blocks["tag"] == {"status": "contains_pii", "basis": ["lineage:phone"]}
     flagged = {c for c, b in blocks.items() if b["status"] == "contains_pii"}
-    assert flagged == {"phone", "deviceid"}
+    assert flagged == {"phone", "deviceid", "tag"}
+    config = PiiConfig(no_personal_data=True, blacklist=("prev_round.owner",))
+    blocks, _ = _classify(form, None, config)
+    assert blocks["prev"] == {
+        "status": "contains_pii",
+        "basis": ["lineage:prev_round.owner"],
+    }
 
 
 def test_missing_spacy_model_raises():
@@ -279,11 +288,17 @@ def test_collection_metadata_is_personal_whatever_its_name(tmp_path, analyzer):
         "status": "contains_pii",
         "basis": ["calls:enumerator-name()"],
     }
-    # A calculate reading it is not cleared by lineage: without no_personal_data it
-    # is scanned.
-    assert blocks["tagged"] == {"status": "whitelisted", "basis": ["project"]}
+    # A calculate reading it carries the flag, whatever the project setting.
+    carried = {"status": "contains_pii", "basis": ["lineage:my_user"]}
+    assert blocks["tagged"] == carried
     rules_blocks, _ = _classify(form, analyzer)
-    assert rules_blocks["tagged"]["basis"] == ["type:calculate"]
+    assert rules_blocks["tagged"] == carried
+    # A reviewed whitelist outranks collection metadata, and then nothing carries.
+    cleared, _ = _classify(
+        form, None, PiiConfig(no_personal_data=True, whitelist=("my_user",))
+    )
+    assert cleared["my_user"] == {"status": "whitelisted", "basis": ["reviewed"]}
+    assert cleared["tagged"] == {"status": "whitelisted", "basis": ["project"]}
 
 
 def test_a_calculate_that_generates_its_value_is_whitelisted():
