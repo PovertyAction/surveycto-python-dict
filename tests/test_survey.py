@@ -456,6 +456,10 @@ def test_survey_info_lists_questions_with_no_column(tmp_path, analyzer):
     build(cfg, SENTINELS, analyzer)
     store = SurveyStore(cfg.form_dir("farm"), "farm")
     assert store.summary["questions_without_columns"] == ["visit"]
+    assert (
+        "Columns: none in the data; reached in 2 of 2 submissions, never answered"
+        in store.lookup_variable("visit")
+    )
     assert "no submission holds a value: 1 (visit)" in store.get_survey_info()
 
 

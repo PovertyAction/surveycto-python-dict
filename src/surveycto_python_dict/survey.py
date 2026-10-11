@@ -603,6 +603,10 @@ class SurveyStore:
         self.variables = dictionary["variables"]
         self.graph = load("variable_graph")
         self.columns = {n["id"]: n["columns"] for n in self.graph["nodes"]}
+        # Questions no submission answered: how many submissions reach them.
+        self.reached = {
+            n["id"]: n["reached"] for n in self.graph["nodes"] if "reached" in n
+        }
         self.repeat_of = {n["id"]: n["repeat_group"] for n in self.graph["nodes"]}
         self.dataset_columns = load("dataset_codebook")
         self.review_file = f"{form_id}_pii_review.xlsx"
@@ -752,7 +756,9 @@ class SurveyStore:
         if len(columns) > (_LISTED if listed is None else listed) and not all_columns:
             lines.append(self._columns_summary(q["variable_name"], columns))
         else:
-            lines.append("Columns:" if columns else "Columns: none in the data")
+            lines.append(
+                "Columns:" if columns else "Columns: none in the data" + self._reach(q)
+            )
             lines += [self._column_line(c) for c in columns]
         if any(self.variables[c]["pii"]["status"] in _FLAGGED for c in columns):
             lines.append(
@@ -918,6 +924,21 @@ class SurveyStore:
             when = f"  if {q['relevance']}" if q["relevance"] else ""
             lines.append(f"  {q['variable_name']} ({q['type']}){where}{when}")
         return "\n".join(lines)
+
+    def _reach(self, q: dict) -> str:
+        """Return whether a question no submission answered was reached."""
+        name = q["variable_name"]
+        if name not in self.reached:
+            return ""
+        n = self.reached[name]
+        if n is None:
+            return "; whether it was reached is not evaluated (its conditions)"
+        if n == 0:
+            return "; never reached: its conditions held for no submission"
+        return (
+            f"; reached in {n} of {self.dataset['n_observations']} submissions, "
+            "never answered"
+        )
 
     def get_choice_list(self, name: str) -> str:
         """List a select question's choices."""

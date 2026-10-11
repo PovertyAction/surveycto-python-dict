@@ -395,8 +395,14 @@ def build_dictionary(
     }
 
 
-def build_graph(questions: list[dict], vardict: dict) -> dict:
-    """Return the question graph as node-link JSON plus the repeat-group tree."""
+def build_graph(
+    questions: list[dict], vardict: dict, reached: dict[str, int | None]
+) -> dict:
+    """Return the question graph as node-link JSON plus the repeat-group tree.
+
+    A question no submission answered carries ``reached``: how many submissions its
+    conditions hold for (``stats.reached``), None when they cannot be evaluated.
+    """
     names = {q["variable_name"] for q in questions}
     repeats = {
         q["repeat_group_name"]: q for q in questions if q["type"] == "repeat_count"
@@ -423,6 +429,7 @@ def build_graph(questions: list[dict], vardict: dict) -> dict:
                 "repeat_group": chain[-1] if chain else None,
                 "columns": columns.get(name, []),
             }
+            | ({"reached": reached[name]} if name in reached else {})
         )
         if chain:
             members.setdefault(chain[-1], []).append(name)

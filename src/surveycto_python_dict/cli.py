@@ -60,6 +60,7 @@ from surveycto_python_dict.questions import (
     withheld_choices,
     write_sections,
 )
+from surveycto_python_dict.stats import reached
 from surveycto_python_dict.survey import render_mermaid
 from surveycto_python_dict.xml_contract import FormContract, parse_contract
 
@@ -357,7 +358,11 @@ def build_form(
         # The two largest outputs, read by programs: compact is a third smaller and
         # several times faster to write.
         write_json(vardict, paths["dictionary"], indent=None)
-        write_json(build_graph(questions, vardict), paths["graph"], indent=None)
+        write_json(
+            build_graph(questions, vardict, reached(table, questions, vardict)),
+            paths["graph"],
+            indent=None,
+        )
         write_pii_review(table, vardict, paths["pii_review"])
         codebook = dataset_codebook(datasets, questions, cfg.pii, analyzer, scanned)
         write_json(codebook, paths["dataset_codebook"])
