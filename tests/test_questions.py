@@ -200,6 +200,14 @@ def test_label_output_becomes_ref(by_name):
     assert by_name["phone"]["question_text"] == "Phone of ${owner}?"
 
 
+def test_form_text_loses_its_html():
+    from surveycto_python_dict.questions import plain_text
+
+    text = "<p> <strong> [plot]: </strong> Size of ${hh}&amp;co, <5 and >10 </p>"
+    assert plain_text(text) == "[plot]: Size of ${hh}&co, <5 and >10"
+    assert plain_text(None) is None
+
+
 def test_calculate_without_label_uses_calculation(by_name):
     assert by_name["dur"]["question_text"] == "duration()"
     assert by_name["dur"]["calculation"] == "duration()"

@@ -6,6 +6,7 @@ syntax; choices are the select's inline items, and a select's ``choice_list`` is
 own name. Each repeat gets a synthetic ``{repeat}_count`` entry before its fields.
 """
 
+import html
 import json
 import re
 from collections import defaultdict
@@ -47,6 +48,17 @@ _PRELOAD_TYPES = {
 }
 _MEDIA_TYPES = {"image": "image", "audio": "audio", "video": "video"}
 _REF_RE = re.compile(r"\$\{([^}]+)\}")
+# An HTML tag: `<` then a letter or `/`, so `<5 and >10` is text.
+_TAG_RE = re.compile(r"</?[A-Za-z][^<>]*>")
+
+
+def plain_text(text: str | None) -> str | None:
+    """Return form text without its HTML: tags dropped, entities decoded, whitespace
+    collapsed. ``${name}`` references stay.
+    """
+    if text is None:
+        return None
+    return " ".join(html.unescape(_TAG_RE.sub(" ", text)).split())
 
 
 def _xlsform_type(node: Node) -> str:
@@ -179,7 +191,7 @@ def build_questions(contract: FormContract) -> list[dict]:
         return [{"group": None, "relevance": relevance, "repeat_depth": depth}]
 
     def label(node: Node) -> str:
-        return refs(node.label) or ""
+        return plain_text(refs(node.label)) or ""
 
     # A repeat counted by an expression has a compiled `<repeat>_count` calculate
     # beside it; the repeat's count entry describes that field instead of repeating it.
@@ -246,7 +258,7 @@ def build_questions(contract: FormContract) -> list[dict]:
                 "choice_list": node.name if is_select else None,
                 "choices": (
                     [
-                        {"value": c["value"], "label": refs(c["label"])}
+                        {"value": c["value"], "label": plain_text(refs(c["label"]))}
                         | ({"when": c["when"]} if "when" in c else {})
                         for c in node.choice_items
                     ]
@@ -260,8 +272,8 @@ def build_questions(contract: FormContract) -> list[dict]:
                 "variable_name": node.name,
                 "question_text": label(node)
                 or (calculation if qtype == "calculate" else ""),
-                "hint": refs(node.hint),
-                "constraint_message": refs(node.constraint_message),
+                "hint": plain_text(refs(node.hint)),
+                "constraint_message": plain_text(refs(node.constraint_message)),
                 "disabled": parent_disabled or relevance == "0",
                 "constraint": constraint,
                 "relevance": relevance,
@@ -299,7 +311,7 @@ def withheld_choices(contract: FormContract) -> list[dict]:
         {
             "question": node.name,
             "value": c["value"],
-            "label": refs(c["label"]),
+            "label": plain_text(refs(c["label"])),
             "when": json.dumps(c["when"]) if "when" in c else None,
             "withheld": ", ".join(node.choices_withheld),
         }

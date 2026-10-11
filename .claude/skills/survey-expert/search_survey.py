@@ -24,7 +24,8 @@ _LISTED = 20
 # The pii statuses whose values an agent may see.
 _SEEN = {"cleared_by_form", "whitelisted"}
 _TOKEN_RE = re.compile(r"\w+")
-_TAG_RE = re.compile(r"<[^>]+>")
+# An HTML tag: `<` then a letter or `/`, so `<5 and >10` is text.
+_TAG_RE = re.compile(r"</?[A-Za-z][^<>]*>")
 _REF_RE = re.compile(r"\$\{([^}]+)\}")
 
 
