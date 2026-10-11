@@ -1422,6 +1422,7 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
     """
     lines: list[str] = []
     seen: set[tuple[str, str]] = set()
+    lists: dict[tuple, str] = {}
 
     def column(d: dict, col: str, depth: int) -> None:
         pad = "  " * depth
@@ -1504,7 +1505,7 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
             refs = [r for r in refs if r not in keys]
         elif calculation:
             lines.append(
-                f"{pad}{form}.{name} = {_short(calculation, 160)}"
+                f"{pad}{form}.{name} = {calculation}"
                 + (
                     f" (a default of this {q['type']}; the user can change it)"
                     if q["calculation_is_default"]
@@ -1512,10 +1513,19 @@ def trace_lineage(stores: dict, form: str, name: str) -> str:
                 )
             )
         else:
+            withheld = q["choices_withheld"] and not source
             lines.append(
                 f"{pad}{form}.{name} ({q['type']}): {_short(q['question_text'])}"
-                + ("" if source else _choices_text(q))
+                + (_choices_text(q) if withheld else "")
             )
+            if q["choices"] and not source and not withheld:
+                # Selects sharing a list print it once.
+                listed = tuple((c["value"], c["label"]) for c in q["choices"])
+                if listed in lists:
+                    lines.append(f"{pad}  choices as {lists[listed]} above")
+                else:
+                    lists[listed] = f"{form}.{name}"
+                    lines.append(f"{pad}  {_choices_line(q)}")
         if source and source["kind"] == "enumerator":
             d, _ = store.read(source["dataset"], _path(q))
             line = f'{pad}  picks a row of {d["id"]}; stores its name and id as "name (id)"'

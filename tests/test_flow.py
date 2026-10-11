@@ -641,3 +641,39 @@ def test_an_enumerator_field_needs_the_form_lists_enumerator_dataset(tmp_path):
     contract = parse_contract(tmp_path / "tally.xml")
     with pytest.raises(UnresolvedDataset, match="picker is an enumerator field"):
         attach_enumerators(contract, form_entry(_tally_list(""), "tally"))
+
+
+# visit asks two selects sharing a list and joins them in a long calculate.
+_VISIT_PAIR = """<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml">
+  <h:head><model>
+    <instance><visit id="visit" version="1"><first/><second/><both/></visit></instance>
+    <bind nodeset="/visit/first" type="select1"/>
+    <bind nodeset="/visit/second" type="select1"/>
+    <bind nodeset="/visit/both" type="string"
+      calculate="concat( /visit/first , '-',  /visit/second , 'LONG')"/>
+  </model></h:head>
+  <h:body>
+    <select1 ref="/visit/first"><label>First</label>
+      <item><label>Yes</label><value>1</value></item>
+      <item><label>No</label><value>0</value></item>
+    </select1>
+    <select1 ref="/visit/second"><label>Second</label>
+      <item><label>Yes</label><value>1</value></item>
+      <item><label>No</label><value>0</value></item>
+    </select1>
+  </h:body>
+</h:html>
+""".replace("LONG", "x" * 200)
+
+
+def test_lineage_prints_formulas_whole_and_a_shared_list_once(tmp_path):
+    xmls = {"listing": _LISTING, "visit": _VISIT_PAIR}
+    stores = _stores(tmp_path, _flow(tmp_path, xmls), xmls)
+    assert trace_lineage(stores, "visit", "both").splitlines() == [
+        "visit.both = concat(${first}, '-', ${second}, '" + "x" * 200 + "')",
+        "  visit.first (select_one): First",
+        "    Choices: 1 = Yes; 0 = No",
+        "  visit.second (select_one): Second",
+        "    choices as visit.first above",
+    ]
