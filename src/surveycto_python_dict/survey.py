@@ -799,15 +799,9 @@ class SurveyStore:
         listed = None if len(names) == 1 else 1
         return "\n\n".join(self.lookup_variable(n, columns, listed) for n in names)
 
-    def search_scored(
-        self, query: str
-    ) -> tuple[list[tuple[tuple[float, bool, float], str]], set[str]]:
-        """Rank questions by the query words their name, label, hint or listed
-        choice labels hold, each word weighed by its IDF (a rare word outranks a
-        common one) and a hint or choice label counting half; then questions someone
-        answers above calculates and repeat counts, then the number of words held. A
-        question named exactly ``query`` comes first. Also return the query words no
-        question holds.
+    def search_matches(self, query: str) -> tuple[dict, dict]:
+        """Return, per query word, the questions whose name or label hold it and
+        those whose hint or listed choice labels do (and not the first).
         """
         docs = {
             n: set(_name_tokens(n)) | set(_tokens(_label(q)))
@@ -818,9 +812,6 @@ class SurveyStore:
             | {t for c in q["choices"] or [] for t in _tokens(c["label"])}
             for n, q in self.questions.items()
         }
-        # One-letter words ("p" of "p-value") only count when alone.
-        words = set(_tokens(query))
-        words = {w for w in words if len(w) > 1} or words
 
         def holding(w: str, texts: dict[str, set[str]]) -> set[str]:
             # A word of four letters or more also matches the words it starts
@@ -831,20 +822,27 @@ class SurveyStore:
                 if w in toks or (len(w) >= 4 and any(t.startswith(w) for t in toks))
             }
 
-        matched = {w: holding(w, docs) for w in words}
-        hinted = {w: holding(w, hints) - matched[w] for w in words}
-        # Words in more than half the questions ("de", "the") only rank when alone.
-        terms = [
-            w for w in words if len(matched[w] | hinted[w]) <= len(docs) / 2
-        ] or list(words)
-        idf = {
-            w: math.log(len(docs) / len(matched[w] | hinted[w])) + 1
-            for w in terms
-            if matched[w] | hinted[w]
-        }
+        matched = {w: holding(w, docs) for w in _query_words(query)}
+        hinted = {w: holding(w, hints) - matched[w] for w in matched}
+        return matched, hinted
+
+    def search_scored(
+        self, query: str, idf: dict[str, float] | None = None
+    ) -> tuple[list[tuple[tuple[float, bool, float], str]], set[str]]:
+        """Rank questions by the query words their name, label, hint or listed
+        choice labels hold, each word weighed by its IDF (a rare word outranks a
+        common one) and a hint or choice label counting half; then questions someone
+        answers above calculates and repeat counts, then the number of words held. A
+        question named exactly ``query`` comes first. Also return the query words no
+        question holds. ``idf`` is the words' IDF over several forms; by default,
+        over this one.
+        """
+        matched, hinted = self.search_matches(query)
+        if idf is None:
+            idf = _idf(matched, [(matched, hinted, len(self.questions))])
         # Each word counts once per question, so long texts do not win on common words.
         scores = {}
-        for n in docs:
+        for n in self.questions:
             weights = {
                 w: 1.0 if n in matched[w] else 0.5 if n in hinted[w] else 0.0
                 for w in idf
@@ -860,7 +858,7 @@ class SurveyStore:
             ((s, n) for n, s in scores.items() if s[0] > 0),
             key=lambda x: (-x[0][0], -x[0][1], -x[0][2], x[1]),
         )
-        return ranked, {w for w in words if not matched[w] | hinted[w]}
+        return ranked, {w for w in matched if not matched[w] | hinted[w]}
 
     def search_line(self, name: str) -> str:
         """Return a search hit: the question's name, type and short text, and its
@@ -1413,9 +1411,33 @@ def _unmatched_lines(words: set[str]) -> list[str]:
     return [f"No question holds: {', '.join(sorted(words))}; ranked on the rest."]
 
 
+def _query_words(query: str) -> set[str]:
+    """Return the query's words; one-letter words ("p" of "p-value") only when alone."""
+    words = set(_tokens(query))
+    return {w for w in words if len(w) > 1} or words
+
+
+def _idf(words, forms: list[tuple[dict, dict, int]]) -> dict[str, float]:
+    """Return each word's IDF over ``forms`` (each: the questions holding each word
+    in text, in hints, and the number of questions). A word in more than half the
+    questions ("de", "the") only counts when no other word is rarer.
+    """
+    n = sum(size for _, _, size in forms)
+    held = {w: sum(len(m[w] | h[w]) for m, h, _ in forms) for w in words}
+    terms = [w for w in words if held[w] <= n / 2] or list(words)
+    return {w: math.log(n / held[w]) + 1 for w in terms if held[w]}
+
+
 def search_forms(stores: dict, query: str, max_results: int = 20) -> str:
-    """Search every form's questions; each form ranks its own, best first."""
-    scored = {form: store.search_scored(query) for form, store in stores.items()}
+    """Search every form's questions, best first; a word's IDF is over every form,
+    so scores compare across them.
+    """
+    matches = [
+        (*store.search_matches(query), len(store.questions))
+        for store in stores.values()
+    ]
+    idf = _idf(_query_words(query), matches)
+    scored = {form: store.search_scored(query, idf) for form, store in stores.items()}
     ranked = sorted(
         (
             (score, form, name)

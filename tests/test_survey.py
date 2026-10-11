@@ -529,6 +529,24 @@ def test_search_weighs_rare_words_and_finds_choice_labels(store):
     assert store.search_questions("maize").splitlines()[0].startswith("crop")
 
 
+def test_search_across_forms_weighs_words_over_every_form(store):
+    import copy
+
+    from surveycto_python_dict.survey import search_forms
+
+    # "study" is rare in one form and common in the other; "sector" is rarer overall.
+    first = next(iter(store.questions))
+    store.questions[first]["question_text"] = "Study design"
+    other = copy.copy(store)
+    other.questions = copy.deepcopy(store.questions)
+    names = list(other.questions)
+    for n in names[:6]:
+        other.questions[n]["question_text"] = f"Study note {n}"
+    other.questions[names[6]]["question_text"] = "Informal sector"
+    out = search_forms({"farm": store, "other": other}, "study sector")
+    assert out.splitlines()[0].startswith(f"other.{names[6]}")
+
+
 def test_search_skips_formulas_and_repeat_count_text_and_weighs_hints_half(store):
     q = store.questions["per_plot"]
     q.update(type="calculate", calculation="${area} * 2", question_text="${area} * 2")
