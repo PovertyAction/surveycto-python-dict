@@ -724,6 +724,8 @@ class SurveyStore:
             )
         elif q["choices"]:
             lines.append(_choices_line(q))
+        if q["choice_filter"]:
+            lines.append(_filter_line(q))
         if q["choices_per_submission"] and q["type"] == "select_multiple":
             lines.append(
                 "Binaries: only for the codes someone picked (the form filters the "
@@ -924,18 +926,28 @@ class SurveyStore:
             return self.lookup_variable(name)
         if q["choices_withheld"]:
             return "\n".join(self._withheld_lines(q))
-        if not q["choices"]:
+        if q["type"] not in ("select_one", "select_multiple"):
             return f"{name} ({q['type']}) is not a select question."
         lists: dict[str, list[dict]] = {}
         for c in q["choices"]:
             lists.setdefault(_when(c), []).append(c)
         lines = [f"{name} ({q['type']}):"]
+        if q["choice_filter"]:
+            lines.append(f"  {_filter_line(q)}")
         for when, choices in lists.items():
             pad = "  "
             if when:
                 lines.append(f"  where {when}:")
                 pad = "    "
-            lines += [f"{pad}{c['value']} = {c['label']}" for c in choices]
+            lines += [
+                f"{pad}{c['value']} = {c['label']}"
+                + (
+                    f"  [{_columns_text(c['filter_columns'])}]"
+                    if "filter_columns" in c
+                    else ""
+                )
+                for c in choices
+            ]
         return "\n".join(lines)
 
     def _qualifies_lines(self, name: str) -> list[str]:
@@ -1570,6 +1582,22 @@ def _not_unique(column: dict) -> str | None:
     if column["distinct"] == column["non_null"] == column["rows"]:
         return None
     return f"not unique: {column['distinct']} distinct in {column['non_null']} rows"
+
+
+def _columns_text(columns: dict[str, str]) -> str:
+    return ", ".join(f"{k} = {v}" for k, v in columns.items())
+
+
+def _filter_line(q: dict) -> str:
+    """Return a select's choice filter: applied to the list when static, or which
+    choices each submission sees when it reads the form.
+    """
+    f = q["choice_filter"]
+    if f["per_submission"]:
+        how = "per submission: each sees the choices it passes"
+    else:
+        how = f"applied: {len(q['choices'])} of {f['items']} choices pass"
+    return f"Choice filter: {f['expression']} ({how})"
 
 
 def _choices_line(q: dict) -> str:

@@ -70,6 +70,35 @@ def test_choice_list(store):
     assert "not a select" in store.get_choice_list("owner")
 
 
+def test_a_choice_filter_shows_with_each_choices_filter_values(store):
+    crop = store.questions["crop"]
+    crop["choices"] = [
+        dict(c, filter_columns={"season": "dry"}) for c in crop["choices"]
+    ]
+    crop["choice_filter"] = {
+        "expression": "season = 'dry'",
+        "per_submission": False,
+        "items": len(crop["choices"]) + 1,
+    }
+    passed = len(crop["choices"])
+    line = (
+        f"Choice filter: season = 'dry' (applied: {passed} of {passed + 1} "
+        "choices pass)"
+    )
+    assert line in store.lookup_variable("crop")
+    out = store.get_choice_list("crop").splitlines()
+    assert out[1] == f"  {line}"
+    assert out[2].endswith("  [season = dry]")
+    # A filter that reads the form leaves each submission part of the list.
+    crop["choice_filter"]["per_submission"] = True
+    assert "(per submission: each sees the choices it passes)" in (
+        store.get_choice_list("crop")
+    )
+    # A filter no choice passes still lists as a select.
+    crop["choices"] = []
+    assert store.get_choice_list("crop").splitlines()[0] == "crop (select_one):"
+
+
 def test_gate_chain_includes_group_and_upstream_gates(store):
     out = store.get_gate_chain("plot_size")
     assert "${plots} > 0" in out

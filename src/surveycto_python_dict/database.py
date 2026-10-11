@@ -137,7 +137,8 @@ _DESCRIPTIONS = {
     "questions": {"grain": "one row per question", "key": ["question"], "joins": []},
     "choices": {
         "grain": "one row per choice of a select, search() lists included; "
-        "filter_values: the search() filter values of its list; withheld: why "
+        "filter_values: the search() filter values of its list, or the values of "
+        "the item columns the select's choice_filter reads; withheld: why "
         "get_choice_list does not list it",
         "key": ["question", "filter_values", "value"],
         "joins": ["{s}.choices.question = {s}.questions.question"],
@@ -327,6 +328,7 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                     "publishable": q["publishable"],
                     "choices_withheld": q["choices_withheld"],
                     "choices_per_submission": q["choices_per_submission"],
+                    "choice_filter": (q["choice_filter"] or {}).get("expression"),
                 }
                 for q in questions
             ]
@@ -341,8 +343,10 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                             "question": q["variable_name"],
                             "value": c["value"],
                             "label": c["label"],
-                            "filter_values": json.dumps(c["when"])
-                            if "when" in c
+                            "filter_values": json.dumps(
+                                c.get("when") or c.get("filter_columns")
+                            )
+                            if "when" in c or "filter_columns" in c
                             else None,
                             "withheld": None,
                         }

@@ -735,17 +735,26 @@ def test_itemset_choices_with_static_and_field_filters(tmp_path):
     path = tmp_path / "shop.xml"
     path.write_text(_XML_ITEMSET, encoding="utf-8")
     nodes = parse_contract(path).nodes
+    # Each choice keeps the item columns the filter names.
     assert nodes["size"].choice_items == [
-        {"label": "Small", "value": "1"},
-        {"label": "Large", "value": "2"},
+        {"label": "Small", "value": "1", "filter_columns": {"filter": "1"}},
+        {"label": "Large", "value": "2", "filter_columns": {"filter": "2"}},
     ]
+    assert nodes["size"].choice_filter == {
+        "expression": "filter < 3",
+        "per_submission": False,
+        "items": 3,
+    }
     # zone <= /shop/n depends on the submission: every item is a possible choice.
     assert nodes["pick"].choice_items == [
-        {"label": "North", "value": "11"},
-        {"label": "South", "value": "21"},
+        {"label": "North", "value": "11", "filter_columns": {"zone": "1"}},
+        {"label": "South", "value": "21", "filter_columns": {"zone": "2"}},
     ]
+    assert nodes["pick"].choice_filter["per_submission"] is True
     # The kinds list has no filter column: every item reads it as empty, so none pass.
     assert nodes["kind"].choice_items == []
+    assert nodes["kind"].choice_filter["items"] == 2
+    assert nodes["n"].choice_filter is None
 
 
 # A calculate on a body control (a prefilled or hidden field), not on its bind.

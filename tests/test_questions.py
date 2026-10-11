@@ -91,6 +91,7 @@ _KEYS = [
     "choice_list",
     "choices",
     "choices_per_submission",
+    "choice_filter",
     "variable_name",
     "question_text",
     "hint",
