@@ -298,15 +298,15 @@ def test_an_exclude_can_keep_the_latest_submission_of_each_entity():
 
 
 def test_exclude_error_quotes_no_value():
-    table = pa.table({"KEY": ["a"], "resp_name": ["Quillon Varemba"]})
+    table = pa.table({"KEY": ["a"], "plot_keeper": ["Quillon Varemba"]})
     with pytest.raises(ValueError, match="ConversionException") as raised:
-        kept(table, "CAST(resp_name AS INTEGER) = 1")
+        kept(table, "CAST(plot_keeper AS INTEGER) = 1")
     assert "Quillon" not in str(raised.value)
     assert raised.value.__cause__ is None and raised.value.__suppress_context__
 
 
 def test_exclude_must_be_one_expression(tmp_path):
-    table = pa.table({"KEY": ["a"], "resp_name": ["Quillon Varemba"]})
+    table = pa.table({"KEY": ["a"], "plot_keeper": ["Quillon Varemba"]})
     target = (tmp_path / "copied.csv").as_posix()
     closes = (
         "false) AS excluded FROM submissions); "
