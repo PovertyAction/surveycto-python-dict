@@ -1,5 +1,5 @@
 # Copy to config.toml (git-ignored) and set your project's forms.
-# Distinct form ids, each with submissions on the server; not `main` or `dataset`.
+# Distinct form ids, fielded or not yet; not `main` or `dataset`.
 forms = ["my_form"]
 # Server datasets to pull besides the ones the forms read (optional).
 # server_datasets = ["my_dataset"]

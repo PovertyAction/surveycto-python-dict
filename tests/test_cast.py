@@ -355,3 +355,13 @@ def test_geo_and_time_columns_are_text_without_fallback(tmp_path):
         assert table.schema.field(name).type == pa.string()
         assert _fallback(table, name) == ""
         assert _col(table, name) == [row[name]]
+
+
+def test_no_submissions_is_the_columns_every_submission_carries(contract):
+    table = cast_wide([], contract)
+    assert table.num_rows == 0
+    assert [(f.name, f.type) for f in table.schema] == [
+        ("KEY", pa.string()),
+        ("SubmissionDate", pa.timestamp("ms", tz="UTC")),
+        ("formdef_version", pa.string()),
+    ]

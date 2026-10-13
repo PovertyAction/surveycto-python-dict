@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- A form with no submissions yet builds every output (#89): its questions, skip logic,
+  dictionary and flow are ready before fieldwork, and its tables and views hold the
+  columns every submission carries and no rows.
+
 ### Fixed
 
 - An int or decimal column parses only the numbers the server writes: `1_0`,
