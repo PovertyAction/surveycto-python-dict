@@ -343,6 +343,11 @@ def test_published_columns_carry_their_origin(tmp_path):
     assert households["origins"]["hhid"] == {"kind": "entered", "from": []}
     assert households["origin_counts"] == {"entered": 3, "carried": 1}
     assert "published by listing (3 entered, 1 carried from zones)" in render_flow(flow)
+    # The dataset as the flow names it, however the form spells it.
+    spelled = listing.replace("pulldata('zones'", "pulldata('Zones'")
+    flow = _flow(tmp_path / "spelled", {"listing": spelled, "visit": _VISIT})
+    households = next(d for d in flow["datasets"] if d["id"] == "households")
+    assert households["origins"]["village"] == {"kind": "carried", "from": ["zones"]}
 
 
 def test_mermaid_colours_datasets_by_how_they_are_filled(flow):

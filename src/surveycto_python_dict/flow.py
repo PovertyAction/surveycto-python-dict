@@ -87,8 +87,14 @@ def _copies(
     return copies
 
 
-def _origins(contract: FormContract) -> dict[str, tuple[str, set[str]]]:
-    """Return each field's origin and, when carried, the datasets it comes from."""
+def _origins(
+    contract: FormContract, sources: dict[str, DatasetSource], form: str
+) -> dict[str, tuple[str, set[str]]]:
+    """Return each field's origin and, when carried, the datasets it comes from.
+
+    A dataset goes by its flow id (the server id, or ``<form>/<file>``), so it joins
+    the flow's datasets however the form spells it.
+    """
     path_re = re.compile(rf"/{re.escape(contract.formid)}/([\w.-]+(?:/[\w.-]+)*)")
     origins: dict[str, tuple[str, set[str]]] = {}
 
@@ -100,7 +106,11 @@ def _origins(contract: FormContract) -> dict[str, tuple[str, set[str]]]:
         if node.preload:
             found = ("metadata", set())
         elif source and source["kind"] == "pulldata":
-            found = ("carried", {source["dataset"]})
+            read = sources[source["dataset"]]
+            dataset_id = (
+                read.ref if read.kind == "server_dataset" else f"{form}/{read.ref}"
+            )
+            found = ("carried", {dataset_id})
         elif node.calculate:
             refs = {
                 r
@@ -390,7 +400,10 @@ def build_flow(
                 }
             )
 
-    origin_of = {form: _origins(contract) for form, (contract, _) in forms.items()}
+    origin_of = {
+        form: _origins(contract, sources, form)
+        for form, (contract, sources) in forms.items()
+    }
     for node in datasets.values():
         if node["kind"] != "server_dataset":
             continue
