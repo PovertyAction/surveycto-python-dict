@@ -705,7 +705,8 @@ def _default_itext(model) -> dict[str, str]:
     """Return ``{text id: text}`` from the default translation, or {} without itext.
 
     The default is the translation marked ``default="true()"``, else the first one;
-    media forms (``<value form="image">``) are skipped.
+    media forms (``<value form="image">``) are skipped, so a text with only media is
+    "": its label has no words.
     """
     translations = [e for e in model.iter() if _ln(e.tag) == "translation"]
     if not translations:
@@ -715,8 +716,10 @@ def _default_itext(model) -> dict[str, str]:
     )
     texts = {}
     for text in default:
-        value = next(v for v in text if _ln(v.tag) == "value" and not v.get("form"))
-        texts[text.get("id")] = _label_text(value)
+        value = next(
+            (v for v in text if _ln(v.tag) == "value" and not v.get("form")), None
+        )
+        texts[text.get("id")] = "" if value is None else _label_text(value)
     return texts
 
 
