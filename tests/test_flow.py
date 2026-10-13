@@ -300,6 +300,13 @@ def test_a_form_republishing_its_own_dataset_publishes_it(tmp_path):
     assert flow["forms"][0]["stage"] == 1
 
 
+def test_forms_publishing_to_each_other_raise_closing_the_loop(tmp_path):
+    # visit fills every zones column, which listing reads.
+    visit = _VISIT.replace("<area/>", "<area/><zone_id/><zone_name/>")
+    with pytest.raises(ValueError, match="listing -> visit -> listing$"):
+        _flow(tmp_path, {"listing": _LISTING, "visit": visit})
+
+
 def test_published_by_must_name_a_covering_form_and_a_read_dataset(tmp_path):
     xmls = {"listing": _LISTING, "visit": _VISIT}
     with pytest.raises(ValueError, match="no column is a field of visit"):

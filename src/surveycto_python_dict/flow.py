@@ -452,7 +452,8 @@ def build_flow(
     def stage(form: str, path: tuple[str, ...]) -> int:
         if form in path:
             raise ValueError(
-                f"forms publish to each other in a cycle: {' -> '.join(path)}"
+                "forms publish to each other in a cycle: "
+                + " -> ".join(path[path.index(form) :] + (form,))
             )
         if form not in stages:
             stages[form] = 1 + max(
