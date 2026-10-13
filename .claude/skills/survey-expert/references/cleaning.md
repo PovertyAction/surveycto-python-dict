@@ -101,7 +101,7 @@ harder to find.
    ```python
    age = df.loc[asked, "age"]
    print("age above 100:", (age > 100).sum(), "of", len(age))
-   assert (age > 100).mean() <= 0.01   # up to 1%: typos the form's constraint let through
+   assert (age > 100).mean() <= 0.01  # up to 1%: typos the form's constraint let through
    ```
 4. **When a check fails, inspect before relaxing it:** list the contradicting rows,
    check the instrument (`questions.json`), then fix the code or the check, and say
@@ -153,8 +153,8 @@ harder to find.
    then holds only real values, and `<var>_dk` keeps which non-response it was.
    ```python
    dk = df["income"].isin([-99, -88])
-   df["income_dk"] = df["income"].where(dk)   # -99 or -88 where it was a code
-   df.loc[dk, "income"] = None                # income now holds real values only
+   df["income_dk"] = df["income"].where(dk)  # -99 or -88 where it was a code
+   df.loc[dk, "income"] = None  # income now holds real values only
    ```
    Do it before any arithmetic, and on the full sample.
 4. **Recode before any arithmetic, division first.** `1 / -55 = -0.018` is a plausible
@@ -199,7 +199,7 @@ To learn what a gate opens or what a calculate reads, start with
    off.
    ```python
    df["loan_size_all"] = df["loan_size"]
-   df.loc[df["has_loan"] == 0, "loan_size_all"] = 0   # no loan: size 0
+   df.loc[df["has_loan"] == 0, "loan_size_all"] = 0  # no loan: size 0
    # Rows where has_loan is missing stay missing; `!= 1` would zero them too.
    ```
 5. **Never fill zeros from missingness.** `fillna(0)` erases "doesn't own" vs refused.
@@ -228,7 +228,9 @@ To learn what a gate opens or what a calculate reads, start with
    text = df["water_osp"].str.lower().str.strip()
    df["water_osp_class"] = None
    df.loc[text.str.contains("well|borehole", na=False), "water_osp_class"] = "improved"
-   df.loc[text.str.contains("mixed|several", na=False), "water_osp_class"] = None  # ambiguous wins
+   df.loc[text.str.contains("mixed|several", na=False), "water_osp_class"] = (
+       None  # ambiguous wins
+   )
    ```
    Later lines overwrite earlier ones, so write the lowest priority first and the
    highest last, and say so in a comment. Without
@@ -283,8 +285,7 @@ To learn what a gate opens or what a calculate reads, start with
    ```python
    con = duckdb.connect("data/out/<project>/<project>.duckdb", read_only=True)
    roster = con.sql(
-       "SELECT KEY, roster_index AS member, member_name, member_age "
-       "FROM baseline.roster"
+       "SELECT KEY, roster_index AS member, member_name, member_age FROM baseline.roster"
    ).df()
    assert not roster.duplicated(["KEY", "member"]).any()
 
