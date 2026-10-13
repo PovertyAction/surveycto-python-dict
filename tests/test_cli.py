@@ -216,11 +216,146 @@ def built(tmp_path, analyzer):
     return build(cfg, SENTINELS, analyzer)["farm"], cfg.out_dir / "farm"
 
 
-def test_build_form_without_submissions_raises(tmp_path, analyzer):
-    cfg = load_config(_config(tmp_path))
+def test_a_form_with_no_submissions_builds_every_output(
+    tmp_path, analyzer, monkeypatch
+):
+    import duckdb
+    from test_agent_outputs import _tool_answers
+
+    from surveycto_python_dict.cli import outputs_main
+    from surveycto_python_dict.survey import SurveyStore
+
+    config = _config(tmp_path)
+    cfg = load_config(config)
     write_pull(cfg, rows=[])
-    with pytest.raises(ValueError, match="farm: no submissions on the server"):
-        build(cfg, SENTINELS, analyzer)
+    outputs = build(cfg, SENTINELS, analyzer)["farm"]
+    assert all(p.exists() for p in outputs.values())
+    assert (cfg.out_dir / "flow.json").exists()
+    table = pq.read_table(outputs["parquet"])
+    assert (table.num_rows, table.schema.names) == (
+        0,
+        ["KEY", "SubmissionDate", "formdef_version"],
+    )
+    vardict = json.loads(outputs["dictionary"].read_text(encoding="utf-8"))
+    questions = json.loads(outputs["questions"].read_text(encoding="utf-8"))
+    assert vardict["dataset"]["n_observations"] == 0
+    assert vardict["summary"]["questions_without_columns"] == [
+        q["variable_name"] for q in questions if q["type"] != "repeat_count"
+    ]
+    assert {v["pii"]["status"] for v in vardict["variables"].values()} == {
+        "whitelisted"
+    }
+
+    monkeypatch.setenv("SCTO_SENTINELS", "-99=Don't know;-88=Refused")
+    outputs_main(["--config", str(config)])
+    form_dir = cfg.form_dir("farm")
+    stats = (form_dir / "farm_summary_stats.csv").read_text(encoding="utf-8-sig")
+    assert [line.split(",")[8:10] for line in stats.splitlines()[1:]] == [
+        ["0", "0"]
+    ] * 3  # rows, eligible
+    assert (form_dir / "farm_codebook.xlsx").exists()
+    con = duckdb.connect(str(cfg.out_dir / "out.duckdb"), read_only=True)
+    assert con.sql("SELECT count(*) FROM farm.submissions").fetchone() == (0,)
+    assert con.sql("SELECT * FROM farm.submissions").columns == table.schema.names
+    assert con.sql("SELECT * FROM farm.plot").columns == ["KEY", "plot_index"]
+    assert con.sql("SELECT count(*) FROM farm.plot").fetchone() == (0,)
+    con.close()
+
+    store = SurveyStore(form_dir, "farm")
+    answers = _tool_answers(store)
+    assert "submissions: 0" in answers["get_survey_info"]
+    assert answers["lookup_variable(owner)"].endswith(
+        "Columns: none in the data; no submissions to reach it"
+    )
+
+
+_REVISIT = """<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml">
+  <h:head><model>
+    <instance><revisit id="revisit" version="1"><place/><farm_plots/></revisit></instance>
+    <bind nodeset="/revisit/place" type="string"/>
+    <bind nodeset="/revisit/farm_plots" type="string" calculate="pulldata('farms', 'plots', 'village',  /revisit/place )"/>
+  </model></h:head>
+  <h:body><input ref="/revisit/place"><label>Place</label></input></h:body>
+</h:html>
+"""
+
+_REVISIT_ROWS = [
+    {
+        "SubmissionDate": "Apr 2, 2025 9:00:00 AM",
+        "place": "Villa Ficticia Uno",
+        "farm_plots": "2",
+        "formdef_version": "1",
+        "KEY": "uuid:ccc",
+    }
+]
+
+
+@pytest.mark.parametrize("empty", ["farm", "revisit"])
+def test_an_empty_form_chains_through_the_dataset_it_publishes_or_reads(
+    tmp_path, analyzer, empty
+):
+    import duckdb
+
+    from surveycto_python_dict import codebook, database
+    from surveycto_python_dict.cli import dataset_csvs
+    from surveycto_python_dict.stats import write_form_stats
+    from surveycto_python_dict.survey import SurveyStore, trace_lineage
+
+    config = tmp_path / "config.toml"
+    config.write_text('forms = ["farm", "revisit"]\nout_dir = "out"\n', "utf-8")
+    cfg = load_config(config)
+    write_pull(cfg, rows=[] if empty == "farm" else ROWS)
+    (cfg.raw_dir / "formList.xml").write_bytes(
+        FORM_LIST.replace(
+            b"</xforms>",
+            b'<xform><formID>revisit</formID><version>1</version><datasets>{"datasets":'
+            b'[{"id":"farms"}]}</datasets><files>{"files":[]}</files></xform></xforms>',
+        )
+    )
+    (cfg.raw_dir / "datasets.json").write_text(
+        '[{"id": "farms", "title": "Farms", "uniqueRecordField": "village"}]', "utf-8"
+    )
+    (cfg.raw_dir / "datasets").mkdir()
+    (cfg.raw_dir / "datasets" / "farms.csv").write_text(
+        "village,plots\nVilla Ficticia Uno,2\n", "utf-8"
+    )
+    revisit = cfg.form_raw("revisit")
+    revisit.mkdir(parents=True)
+    (revisit / "form.xml").write_text(_REVISIT, encoding="utf-8")
+    rows = [] if empty == "revisit" else _REVISIT_ROWS
+    (revisit / "wide.json").write_text(json.dumps(rows), encoding="utf-8")
+
+    build(cfg, SENTINELS, analyzer)
+    flow = json.loads((cfg.out_dir / "flow.json").read_text(encoding="utf-8"))
+    assert [(f["form_id"], f["stage"]) for f in flow["forms"]] == [
+        ("farm", 1),
+        ("revisit", 2),
+    ]
+    (farms,) = [d for d in flow["datasets"] if d["id"] == "farms"]
+    assert (farms["published_by"], farms["read_by"]) == ("farm", ["revisit"])
+
+    for form in cfg.forms:
+        form_dir = cfg.form_dir(form)
+        codebook.write_codebook(
+            form_dir, form, write_form_stats(form_dir, form, SENTINELS)
+        )
+    database.write_database(
+        cfg.out_dir, cfg.project, list(cfg.forms), dataset_csvs(cfg, flow), {}
+    )
+    con = duckdb.connect(str(cfg.out_dir / "out.duckdb"), read_only=True)
+    assert con.sql(f"SELECT count(*) FROM {empty}.submissions").fetchone() == (0,)
+    assert con.sql(
+        "SELECT reader_field, dataset_column, publisher_form, publisher_field "
+        "FROM main.joins"
+    ).fetchall() == [("place", "village", "farm", "village")]
+    con.close()
+
+    stores = {f: SurveyStore(cfg.form_dir(f), f) for f in cfg.forms}
+    assert trace_lineage(stores, "revisit", "farm_plots").splitlines()[1:] == [
+        "  farms.plots: published by farm",
+        "    farm.plots (integer): Plots",
+    ]
 
 
 def test_build_writes_every_output(built):

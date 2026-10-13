@@ -345,12 +345,6 @@ def build_form(
     contract = _contract(cfg, form)
     datasets = form_datasets(cfg, form)
     rows = json.loads((raw / "wide.json").read_text(encoding="utf-8"))
-    # The outputs are built from the submissions' columns, so a form needs some.
-    if not rows:
-        raise ValueError(
-            f"{form}: no submissions on the server; leave it out of forms until it "
-            "has some"
-        )
     screen_search_choices(contract, datasets, cfg.pii, analyzer, rows)
     questions = build_questions(contract)
     table = cast_wide(rows, contract)
