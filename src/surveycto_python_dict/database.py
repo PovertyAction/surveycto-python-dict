@@ -533,7 +533,10 @@ def _write_datasets(
                 f"WHERE {complete} GROUP BY ALL HAVING count(*) > 1)), "
                 f"(SELECT count(*) FROM {view} WHERE NOT ({complete}))"
             ).fetchone()
-            assert repeated == 0, f"{did}: key {key} repeats in {repeated} groups"
+            if repeated:
+                raise ValueError(
+                    f"[datasets.{did}] key {key} repeats in {repeated} groups of rows"
+                )
             if partial:
                 grain += f"; {partial} rows lack part of the key"
         # The joins each reading form's pulldata()/search() use, the dataset column on

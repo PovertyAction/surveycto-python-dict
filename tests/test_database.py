@@ -349,7 +349,9 @@ def test_declared_dataset_key_is_checked_and_named(database):
         "3000000001,Fictional Owner,008\n",
         encoding="utf-8",
     )
-    with pytest.raises(AssertionError, match="repeats"):
+    with pytest.raises(
+        ValueError, match=r"\[datasets.farm/prev_round.csv\] key \['owner'\] repeats"
+    ):
         _write(cfg, {"farm/prev_round.csv": ["owner"]})
 
 
