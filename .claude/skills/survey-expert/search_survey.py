@@ -1022,6 +1022,9 @@ class SurveyStore:
         if name not in self.reached:
             return ""
         n = self.reached[name]
+        # With no submissions counted, nothing is reached, gated or not.
+        if self.dataset["n_observations"] == 0:
+            return "; no submissions to reach it"
         if n is None:
             return "; whether it was reached is not evaluated (its conditions)"
         if n == 0:

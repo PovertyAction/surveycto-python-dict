@@ -7,8 +7,9 @@ unchosen binary is 0 when any sibling was chosen, else null; every choice gets i
 column, except where the form filters the list per submission: there only the choices
 someone picked at that instance do, since an unoffered choice is not unchosen. A column that cannot be typed (a value that does not parse, a column the
 form does not define) is kept as text, with the reason in its ``cast_fallback``
-field metadata; the reason never quotes a value. A note's or a group's column empty
-in every row is dropped (the export writes field-list groups once per repeat
+field metadata; the reason never quotes a value. A form with no submissions yet
+has the columns every submission carries (``SUBMISSION_COLUMNS``). A note's or a
+group's column empty in every row is dropped (the export writes field-list groups once per repeat
 instance), and the table's metadata counts them.
 """
 
@@ -31,6 +32,9 @@ _TIMESTAMP = pa.timestamp("ms", tz="UTC")
 DROPPED = "empty_notes_and_groups_dropped"
 _SYSTEM_TIMESTAMPS = {"SubmissionDate", "CompletionDate", "starttime", "endtime"}
 _SYSTEM_INTS = {"duration"}
+# The columns the server writes on every submission, whatever the form: a form with
+# no submissions yet has these alone.
+SUBMISSION_COLUMNS = ("KEY", "SubmissionDate", "formdef_version")
 
 _XML_TYPES = {
     "int": pa.int64(),
@@ -271,6 +275,8 @@ def cast_wide(rows: list[dict], contract: FormContract) -> pa.Table:
     """Return the submissions as a typed table, system columns first, then form order."""
     rows = _split_raw_multiples(rows, contract)
     names = list(dict.fromkeys(name for row in rows for name in row))
+    if not rows:
+        names = list(SUBMISSION_COLUMNS)
     columns = _columns(names, contract)
     groups: dict[tuple, list[str]] = {}
     for c in columns:
