@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- A form with no submissions yet builds every output (#89): its questions, skip logic,
+  dictionary and flow are ready before fieldwork, and its tables and views hold the
+  columns every submission carries and no rows.
+
 ## 0.1.0 (2026-10-13)
 
 First public release.

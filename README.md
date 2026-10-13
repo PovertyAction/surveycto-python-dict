@@ -77,7 +77,8 @@ copied as they are. Rerun `scto-skill` after updating the package, so the skill'
 
 `config.toml` names the project. `forms` (a list of distinct form ids) and `out_dir` are
 required; `config.example.toml` documents every other key. A form with no submissions
-on the server stops the build: leave it out of `forms` until it has some.
+yet builds: its questions, skip logic and dictionary are ready before fieldwork, and
+its tables hold no rows.
 
 A project is one connected study: one or more forms on one server that chain through
 the server datasets they publish and read. It gets one `out_dir`, one `flow.json` and
