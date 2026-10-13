@@ -49,8 +49,14 @@ def choice_labels(choices: list[dict]) -> dict[str, str]:
     return {value: " | ".join(found) for value, found in labels.items()}
 
 
-def _when(choice: dict) -> str:
-    return ", ".join(f"{k} = {v}" for k, v in choice.get("when", {}).items())
+def _filter_fields(q: dict) -> list[str]:
+    """Return the fields (``${name}``) whose values in a submission filter a
+    ``search()`` select's list.
+    """
+    source = q["data_source"]
+    if not source or source["kind"] != "search":
+        return []
+    return [m["value"] for m in source["match"] if m["value"].startswith("${")]
 
 
 def gates(q: dict) -> list[str]:
@@ -714,20 +720,10 @@ class SurveyStore:
                 lines.append(f"Group relevance ({gate['group']}): {gate['relevance']}")
         if q["choices_withheld"]:
             lines.append(_withheld(q))
-        elif q["choices"] and any("when" in c for c in q["choices"]):
-            lists = list(dict.fromkeys(w for c in q["choices"] if (w := _when(c))))
-            every = [c["value"] for c in q["choices"] if not _when(c)]
+        elif q["choices"] and _filter_fields(q):
             lines.append(
-                f"Choices: {len(q['choices'])} in {len(lists)} lists, by the dataset "
-                f"rows the submissions reach ({'; '.join(lists[:_LISTED])}"
-                + (f"; ... {len(lists) - _LISTED} more" if len(lists) > _LISTED else "")
-                + ")"
-                + (
-                    f", plus {len(every)} in every list ({', '.join(every)})"
-                    if every
-                    else ""
-                )
-                + "; get_choice_list shows them"
+                f"Choices: {len(q['choices'])}, from the dataset rows the submissions "
+                f"reach; {self._lists_text(q)}; get_choice_list lists them"
             )
         elif q["choices"]:
             lines.append(_choices_line(q))
@@ -950,27 +946,32 @@ class SurveyStore:
             return "\n".join(self._withheld_lines(q))
         if q["type"] not in ("select_one", "select_multiple"):
             return f"{name} ({q['type']}) is not a select question."
-        lists: dict[str, list[dict]] = {}
-        for c in q["choices"]:
-            lists.setdefault(_when(c), []).append(c)
         lines = [f"{name} ({q['type']}):"]
         if q["choice_filter"]:
             lines.append(f"  {_filter_line(q)}")
-        for when, choices in lists.items():
-            pad = "  "
-            if when:
-                lines.append(f"  where {when}:")
-                pad = "    "
-            lines += [
-                f"{pad}{c['value']} = {c['label']}"
-                + (
-                    f"  [{_columns_text(c['filter_columns'])}]"
-                    if "filter_columns" in c
-                    else ""
-                )
-                for c in choices
-            ]
+        if _filter_fields(q):
+            lines.append(f"  {self._lists_text(q)}")
+        lines += [
+            f"  {c['value']} = {c['label']}"
+            + (
+                f"  [{_columns_text(c['filter_columns'])}]"
+                if "filter_columns" in c
+                else ""
+            )
+            for c in q["choices"]
+        ]
         return "\n".join(lines)
+
+    def _lists_text(self, q: dict) -> str:
+        """Return where a ``search()`` list filtered by fields keeps each choice's
+        list: its filter values are the fields' values in the submissions.
+        """
+        return (
+            f"one list per value of {', '.join(_filter_fields(q))} in the "
+            f"submissions; each choice's filter values: SELECT value, label, "
+            f"filter_values FROM {self.form_id}.choices WHERE question = "
+            f"'{q['variable_name']}'"
+        )
 
     def _qualifies_lines(self, name: str) -> list[str]:
         """Return the questions whose conditions or text read ``name``: an answer that

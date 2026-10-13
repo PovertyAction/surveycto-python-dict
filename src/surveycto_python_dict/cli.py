@@ -57,7 +57,7 @@ from surveycto_python_dict.pii import (
 )
 from surveycto_python_dict.questions import (
     build_questions,
-    withheld_choices,
+    search_choices,
     write_sections,
 )
 from surveycto_python_dict.stats import reached
@@ -367,7 +367,7 @@ def build_form(
         write_pii_review(table, vardict, paths["pii_review"])
         write_json(codebook, paths["dataset_codebook"])
         pq.write_table(
-            pa.Table.from_pylist(withheld_choices(contract), schema=SEARCH_CHOICES),
+            pa.Table.from_pylist(search_choices(contract), schema=SEARCH_CHOICES),
             paths["search_choices"],
         )
         parquet.result()

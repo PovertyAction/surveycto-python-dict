@@ -277,6 +277,11 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
         }
 
     n_columns = Counter(v["question"] for v in variables.values())
+    # The search() lists' choices, with their filter values, and the withheld lists'
+    # come from the build's parquet: questions.json lists them without filter values
+    # or refers to them without listing them.
+    searched = pq.read_table(form_dir / f"{form}_search_choices.parquet").to_pandas()
+    listed = set(searched["question"])
     tables = {
         "dictionary": pd.DataFrame(
             [
@@ -333,8 +338,6 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                 for q in questions
             ]
         ),
-        # The withheld search() lists' choices come from the build's parquet:
-        # questions.json refers to those lists without listing them.
         "choices": pd.concat(
             [
                 pd.DataFrame(
@@ -343,22 +346,20 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                             "question": q["variable_name"],
                             "value": c["value"],
                             "label": c["label"],
-                            "filter_values": json.dumps(
-                                c.get("when") or c.get("filter_columns")
-                            )
-                            if "when" in c or "filter_columns" in c
+                            "filter_values": json.dumps(c["filter_columns"])
+                            if "filter_columns" in c
                             else None,
                             "withheld": None,
                         }
                         for q in questions
-                        if q["choices"] and not q["choices_withheld"]
+                        if q["choices"]
+                        and not q["choices_withheld"]
+                        and q["variable_name"] not in listed
                         for c in q["choices"]
                     ],
                     columns=["question", "value", "label", "filter_values", "withheld"],
                 ),
-                pq.read_table(form_dir / f"{form}_search_choices.parquet")
-                .to_pandas()
-                .rename(columns={"when": "filter_values"}),
+                searched.rename(columns={"when": "filter_values"}),
             ],
             ignore_index=True,
         ),

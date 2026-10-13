@@ -459,16 +459,31 @@ def test_lookup_shows_appearance_and_no_formula_as_text(store):
     assert "Calculation: 1 + 1" in out
 
 
-def test_reached_choices_count_only_filtered_lists(store):
-    store.questions["crop"]["choices"] = [
-        {"value": "1", "label": "A", "when": {"list": "x"}},
-        {"value": "2", "label": "B", "when": {"list": "y"}},
-        {"value": "-66", "label": "Other"},
-    ]
+def test_a_list_filtered_by_a_field_refers_to_its_filter_values(store):
+    store.questions["crop"].update(
+        choices=[{"value": "1", "label": "A"}, {"value": "-66", "label": "Other"}],
+        data_source={
+            "kind": "search",
+            "dataset": "crops",
+            "mode": "matches",
+            "match": [{"column": "list", "value": "${phone}"}],
+        },
+    )
+    lists = (
+        "one list per value of ${phone} in the submissions; each choice's filter "
+        "values: SELECT value, label, filter_values FROM farm.choices WHERE question "
+        "= 'crop'"
+    )
     assert (
-        "Choices: 3 in 2 lists, by the dataset rows the submissions reach "
-        "(list = x; list = y), plus 1 in every list (-66); get_choice_list shows them"
+        f"Choices: 2, from the dataset rows the submissions reach; {lists}; "
+        "get_choice_list lists them"
     ) in store.lookup_variable("crop")
+    assert store.get_choice_list("crop").splitlines() == [
+        "crop (select_one):",
+        f"  {lists}",
+        "  1 = A",
+        "  -66 = Other",
+    ]
 
 
 def test_project_commands_need_no_form(store, capsys):
