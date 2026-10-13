@@ -30,14 +30,10 @@ Pure stdlib (`xml.etree.ElementTree`).
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 
 from surveycto_python_dict.xpath import compile_expression
 
-# pulldata()/search() args are parsed by the balanced, quote-aware
-# _split_call_args walker below (a node value at the group level is still a
-# stored column, so we key the model by the leaf token name and keep the full
-# path for disambiguation).
 _SELECT_CONTROL = {"select": "select_multiple", "select1": "select_one"}
 
 # Wide columns that are SurveyCTO transport/metadata, not form nodes.
@@ -92,10 +88,8 @@ _SANITISE_RE = re.compile(r"[^A-Za-z0-9_]")
 def _coerce_choice_value(value: str):
     """Return a bare-integer choice value as an int, anything else unchanged.
 
-    The dictionary has always carried numeric choice codes as ints, so both
-    decode paths run through this -- otherwise `-88` would come back as `-88` when
-    the choice CSV shipped and `-88` as an int when it did not, i.e. a type that
-    depends on the environment rather than on the form.
+    Both decode paths run through this, so a numeric code's type depends on the
+    form, not on whether the choice CSV shipped.
 
     A LEADING ZERO stays a string: `01` and `1` are distinct choice codes in
     SurveyCTO, and int() would silently merge them.
@@ -141,7 +135,6 @@ class Node:
     required: bool = False
     readonly: bool = False
     publishable: bool = False  # SurveyCTO: unencrypted on encrypted forms
-    pulldata: dict | None = None  # {dataset, value, key} from pulldata() calc
     preload: str | None = None  # jr:preload (system source, e.g. property)
     preload_params: str | None = None  # jr:preloadParams (e.g. username, deviceid)
     original: str | None = None  # SurveyCTO bind `original` (XLSForm type, e.g. "note")
@@ -155,7 +148,8 @@ class Node:
     appearance: str | None = None  # body control appearance
     repeat_count: str | None = None  # <repeat jr:count>, on the repeat's node
     # Where the field's content/options come from, parsed from search()/pulldata():
-    #   {kind:"search", dataset, mode, filter} | {kind:"pulldata", dataset, value, key}
+    #   {kind:"search", dataset, mode, filter, match}
+    #   | {kind:"pulldata", dataset, value, key, match}
     data_source: dict | None = None
     # The select's `<item>` pairs verbatim from the body. For a plain select these
     # are literal choices; for a `search()` select the value/label instead NAME the
@@ -337,11 +331,8 @@ class FormContract:
         # (node path, its choice list) -> {sanitised token: (value, label) | None};
         # see `_universe`.
         self._universes: dict[tuple, dict] = {}
-        # leaf token -> [paths], used to resolve a de-indexed wide base name.
-        # Built from sorted paths so resolution is DETERMINISTIC: nodes is keyed
-        # off a set union (hash-seed-dependent iteration), so without sorting the
-        # candidate order — and thus which node a homonym column maps to — would
-        # vary between processes. Sorted path order gives a stable tie-break.
+        # leaf token -> [paths], used to resolve a de-indexed wide base name. Sorted
+        # paths decide which of two homonym nodes a column maps to.
         self._by_name: dict[str, list[str]] = {}
         for path in sorted(nodes):
             self._by_name.setdefault(nodes[path].name, []).append(path)
@@ -375,20 +366,15 @@ class FormContract:
     def _resolve_node(self, col: str):
         """Pick (name, node, suffix tokens) for a wide column, or None.
 
-        Scores every (name prefix, node) pair rather than committing to the
-        longest name first, because NAME LENGTH ALONE PICKS IMPOSSIBLE NODES.
-        Two ways that went wrong, both found by adversarial review of the first
-        version of this parser:
+        Scores every (name prefix, node) pair, since name length alone picks
+        impossible nodes:
 
-        - A node literally named `x_1` sitting two repeats deep would steal the
-          column `x_1` from a depth-0 select_multiple named `x`. A depth-2 node's
-          column always carries exactly two trailing index tokens (`x_1_1_1`), so
-          bare `x_1` cannot be its column at all -- while it is exactly `x`'s
-          choice-1 binary.
-        - Scoring by token COUNT ignored whether a token could be an integer.
-          With a homonym leaf inside a repeat, `langs_ES` resolved to the depth-1
-          `hh/langs` and lost the choice entirely, because `n_tokens == depth`
-          scored a perfect fit without ever asking whether `ES` is a number.
+        - A node named `x_1` two repeats deep cannot own the column `x_1`: its
+          columns carry two trailing index tokens (`x_1_1_1`). Bare `x_1` is the
+          choice-1 binary of a depth-0 select_multiple named `x`.
+        - A token must be an integer to be an index: with a homonym leaf inside a
+          repeat, `langs_ES` is the choice `ES` of the depth-0 `langs`, not the
+          depth-1 `hh/langs` at iteration `ES`.
 
         So feasibility comes first: a node needs at least `repeat_depth` trailing
         INTEGER tokens available, or it cannot own the column. Among feasible
@@ -416,9 +402,7 @@ class FormContract:
                     score = 1  # choice binary
                 else:
                     score = 2  # string key, or formdef index drift
-                # Longer name wins ties, matching the previous longest-first rule;
-                # `_by_name` is built from sorted paths, so the final tie-break is
-                # deterministic across processes.
+                # The longer name wins a tie, then the first path in sorted order.
                 key = (score, -len(name), path)
                 if best is None or key < best[0]:
                     best = (key, name, node, toks)
@@ -455,18 +439,14 @@ class FormContract:
         sentinel (`_66` -> `-66`), since a leading underscore is impossible in a
         bare number. Anything else is carried verbatim.
 
-        The verbatim fallback is NOT "never wrong about which choice it is", as an
-        earlier version of this docstring claimed. When two declared values
-        sanitise to one token the index records it as ambiguous (a `None` entry),
-        and this returns no value at all -- because the fallback would otherwise
-        hand back a token that is itself one of the colliding values, silently
-        picking a winner.
+        When two declared values sanitise to one token the index records it as
+        ambiguous (a `None` entry), and this returns no value, since the token can
+        itself be one of the colliding values.
 
         The third element says whether the index resolved it, so the caller can
         trust an index hit instead of second-guessing it as unknowable.
 
-        Both paths finish through the same coercion, so a numeric code does not
-        change type depending on whether the choice CSV happened to ship.
+        Both paths finish through `_coerce_choice_value`.
         """
         universe = self._universe(node)
         if token in universe:
@@ -483,20 +463,14 @@ class FormContract:
         """Resolve a wide column to its node + repeat iterations + choice code.
 
         Returns {kind, ...}. kind is one of: 'system', 'matched', 'unmapped'.
-        For 'matched': node_path, repeat_iterations (list of (group, index)),
+        For 'matched': node_path, name, repeat_iterations (list of (group, index)),
         choice_code (int|str|None), is_select_multiple, and optionally
         choice_label, string_key, ambiguous_choice, ragged.
 
         Anchors on the NODE first, then on its repeat depth: exactly `depth`
         trailing integer tokens are iteration indices, and whatever precedes them
-        is the (sanitised) choice value. The previous parser instead peeled EVERY
-        trailing integer and required the remainder to be a node name, which holds
-        only when the choice value is a bare positive integer -- so a string-valued
-        choice (`langs_ES`, or a `search()`-sourced key whose own digits look like
-        suffixes) fell into a fallback that hardcoded `choice_code = None` and,
-        worse, reported the value's own digits as the repeat iteration. `vardict`
-        gates per-choice resolution on `choice_code`, so those binaries were
-        labelled with their question's whole choice list instead of their choice.
+        is the (sanitised) choice value, so a text choice (`langs_ES`) or one whose
+        own digits look like suffixes keeps its code.
         """
         if is_system_column(col):
             return {"kind": "system"}
@@ -504,7 +478,7 @@ class FormContract:
         picked = self._resolve_node(col)
         if picked is None:
             return {"kind": "unmapped", "base": col, "indices": []}
-        name, node, toks = picked
+        _, node, toks = picked
         depth = node.repeat_depth
 
         # Consume trailing integer tokens as repeat indices, at most `depth` of them.
@@ -524,8 +498,8 @@ class FormContract:
         token = "_".join(head) if head else None
         # A token made only of underscores is not a choice value: sanitisation maps
         # a real value's characters into the alphabet, so at least one alphanumeric
-        # survives. `x___` was reporting a choice of `__`. A negative sentinel's
-        # `_66` keeps its digits and is unaffected.
+        # survives, so `x___` has no choice. A negative sentinel's `_66` keeps its
+        # digits.
         if token is not None and not token.strip("_"):
             token = None
 
@@ -559,10 +533,8 @@ class FormContract:
                     # choice: a real numeric value sanitises to exactly ONE token.
                     # This is the same drift as above but on a select_multiple,
                     # where the choice/index boundary is unknowable from the
-                    # contract. Abstain rather than emit a fabricated code.
-                    # Gated on `not from_index`: when the universe actually
-                    # contains a value like `1_2`, that is a real choice and
-                    # discarding it would throw away the answer we just looked up.
+                    # contract, so no code is given. Gated on `not from_index`: a
+                    # value like `1_2` in the select's choices is a real choice.
                     choice, label, ambiguous_choice = None, None, True
             else:
                 # Per-study dynamic calculates: `<node>_<id>`, no choice.
@@ -575,38 +547,24 @@ class FormContract:
             "repeat_iterations": iters,
             "choice_code": choice,
             "is_select_multiple": node.is_select_multiple,
-            "ambiguous": len(self._by_name[name]) > 1,
         }
         if label is not None:
             result["choice_label"] = label
         if string_key is not None:
             result["string_key"] = string_key
         if ambiguous_choice:
-            # Load-bearing, not decorative: without it a select_multiple with
-            # choice_code None is indistinguishable from the parent column, which
-            # is the confusion this whole change exists to remove.
+            # Without it a select_multiple binary with choice_code None reads as the
+            # parent column.
             result["ambiguous_choice"] = True
         # Ragged: the column CARRIED a different number of repeat indices than the
-        # node's depth. SurveyCTO normally emits exactly one index per level, so a
-        # mismatch is flagged rather than silently truncated (over-indexed) or
-        # under-assigned (#23.2 / review #11). Counted from what the column
-        # supplied, not from what was consumed: the drift branch above absorbs the
-        # surplus index deliberately, and counting consumed tokens there would
-        # report a tidy match for the very shape the flag exists to surface.
+        # node's depth. SurveyCTO emits exactly one index per level, so a mismatch is
+        # flagged rather than truncated (over-indexed) or under-assigned. Counted
+        # from what the column supplied, not from what was consumed: the drift
+        # branch above absorbs the surplus index, and counting consumed tokens would
+        # report a tidy match for the shape the flag surfaces.
         if (len(toks) if drift else n) != depth:
             result["ragged"] = True
         return result
-
-    def to_dict(self) -> dict:
-        """Return a JSON-serialisable dict of the contract (form id, version, nodes)."""
-        return {
-            "formid": self.formid,
-            "formdef_version": self.formdef_version,
-            "n_nodes": len(self.nodes),
-            "n_repeat_groups": len(self.repeat_groups),
-            "repeat_groups": self.repeat_groups,
-            "nodes": {p: asdict(n) for p, n in self.nodes.items()},
-        }
 
 
 def _label_text(label) -> str:
@@ -908,7 +866,6 @@ def parse_contract(xml_path) -> FormContract:
             readonly=str(b.get("readonly", "")).strip() in ("true()", "true", "1"),
             publishable=str(b.get("publishable", "")).strip()
             in ("true()", "true", "1"),
-            pulldata=_parse_pulldata(calculate),
             preload=b.get("preload"),
             preload_params=b.get("preloadParams"),
             data_source=source,
@@ -927,16 +884,16 @@ def parse_contract(xml_path) -> FormContract:
     # A dataset named through a field (`search(${list_name})`) is that field's
     # literal calculate, `string('roster')` or `'roster'`.
     for node in nodes.values():
-        for source in (node.data_source, node.pulldata):
-            if source and source["dataset"].startswith(prefix):
-                named_by = nodes[source["dataset"][len(prefix) :]]
-                literal = _STRING_LITERAL.match((named_by.calculate or "").strip())
-                if not literal:
-                    raise ValueError(
-                        f"{node.path} reads a dataset named by {named_by.path}, whose "
-                        f"calculate is not a string literal: {named_by.calculate!r}"
-                    )
-                source["dataset"] = literal.group(2).removesuffix(".csv")
+        source = node.data_source
+        if source and source["dataset"].startswith(prefix):
+            named_by = nodes[source["dataset"][len(prefix) :]]
+            literal = _STRING_LITERAL.match((named_by.calculate or "").strip())
+            if not literal:
+                raise ValueError(
+                    f"{node.path} reads a dataset named by {named_by.path}, whose "
+                    f"calculate is not a string literal: {named_by.calculate!r}"
+                )
+            source["dataset"] = literal.group(2).removesuffix(".csv")
 
     encrypted = any(
         _ln(el.tag) == "submission" and el.get("base64RsaPublicKey")

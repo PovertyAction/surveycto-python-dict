@@ -329,8 +329,10 @@ def render_structure_schema(project: str, objects: list[dict], schema: str) -> s
         )
     picked = [o for o in objects if _schema(o["name"]) == schema]
     if schema not in ("main", "dataset"):
-        # The datasets the form joins, with this form's joins only.
-        prefix = f"= {schema}."
+        # The datasets the form joins, with this form's joins only. A join line
+        # quotes its names, as SQL does.
+        quoted = '"' + schema.replace('"', '""') + '".'
+        prefix = f"= {quoted}"
         for o in objects:
             mine = [j for j in o["joins"] if prefix in j]
             if _schema(o["name"]) != "dataset" or not mine:
@@ -344,7 +346,7 @@ def render_structure_schema(project: str, objects: list[dict], schema: str) -> s
                 )
             picked.append({**o, "joins": mine})
         joins = next(o for o in objects if o["name"] == "joins")
-        mine = [j for j in joins["joins"] if f"{schema}." in j]
+        mine = [j for j in joins["joins"] if quoted in j]
         if mine:
             picked.append({**joins, "joins": mine})
     # A schema can hold dozens of tables: a table's columns are counted, listed by

@@ -228,7 +228,36 @@ def test_non_2xx_raises_with_status_and_url_no_retry(client, key_file, name, sta
     assert err.value.status == status
     assert str(status) in str(err.value)
     assert urlparse(url).path in str(err.value)
+    assert str(err.value).endswith(": server says no")
     assert len(responses.calls) == 1
+
+
+@responses.activate
+def test_an_error_carries_the_start_of_the_servers_reason(client):
+    reason = '{"error": {"code": 417, "message": "wait 300 seconds"}}' + " " * 400
+    responses.get(f"{BASE}/api/v2/forms/data/wide/json/{FORM}", status=417, body=reason)
+    with pytest.raises(SurveyCTOError) as err:
+        client.pull_wide_json(FORM)
+    assert err.value.reason == reason[:300]
+    assert "HTTP 417: " + reason[:300] == str(err.value).split(" -> ", 1)[1]
+
+
+@pytest.mark.parametrize("name", ["wide", "datasets"])
+@responses.activate
+def test_a_body_that_is_not_json_raises_naming_the_url(client, name):
+    url, call = {
+        "wide": (
+            f"{BASE}/api/v2/forms/data/wide/json/{FORM}",
+            lambda c: c.pull_wide_json(FORM),
+        ),
+        "datasets": (f"{BASE}/api/v2/datasets", lambda c: c.list_datasets()),
+    }[name]
+    body = "<html>Sign in, Qzorvane</html>"
+    responses.get(url, status=200, body=body, content_type="text/html")
+    with pytest.raises(SurveyCTOError, match="body is not JSON") as err:
+        call(client)
+    assert urlparse(url).path in str(err.value)
+    assert "Qzorvane" not in str(err.value)
 
 
 @responses.activate

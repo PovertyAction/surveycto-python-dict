@@ -89,10 +89,34 @@ def test_env_sentinels_missing_raises_naming_the_variable(monkeypatch):
         env_sentinels()
 
 
-@pytest.mark.parametrize("raw", ["-99", "-99=", "dk=Don't know"])
-def test_env_sentinels_malformed_raises(monkeypatch, raw):
+@pytest.mark.parametrize(
+    ("raw", "error"),
+    [
+        ("-99", r"'-99' is not code=meaning"),
+        ("-99=", r"'-99=' is not code=meaning"),
+        ("dk=Don't know", r"\"dk=Don't know\": the code is not an integer"),
+        ("-99.5=x", r"'-99.5=x': the code is not an integer"),
+        ("-99=Don't know;-99=Refused", r"'-99=Refused': code -99 is given twice"),
+    ],
+)
+def test_env_sentinels_malformed_raises_naming_the_pair(monkeypatch, raw, error):
+    monkeypatch.delenv("SCTO_DATE_SENTINELS", raising=False)
     monkeypatch.setenv("SCTO_SENTINELS", raw)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=f"^SCTO_SENTINELS: {error}"):
+        env_sentinels()
+
+
+@pytest.mark.parametrize(
+    ("raw", "error"),
+    [
+        ("1900-13-01=Don't know", r"\"1900-13-01=Don't know\": the date is not "),
+        ("1900-01-01=a;1900-01-01=b", r"'1900-01-01=b': date 1900-01-01 is given"),
+    ],
+)
+def test_env_date_sentinels_malformed_raises_naming_the_pair(monkeypatch, raw, error):
+    monkeypatch.setenv("SCTO_SENTINELS", "-99=Don't know")
+    monkeypatch.setenv("SCTO_DATE_SENTINELS", raw)
+    with pytest.raises(ValueError, match=f"^SCTO_DATE_SENTINELS: {error}"):
         env_sentinels()
 
 

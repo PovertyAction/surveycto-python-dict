@@ -7,6 +7,8 @@ SurveyCTO ``publishable`` bind attribute.
 import csv
 import json
 import xml.etree.ElementTree as ET
+from collections import Counter
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -88,10 +90,34 @@ def attach_enumerators(contract: FormContract, entry: FormEntry) -> None:
         node.data_source = {"kind": "enumerator", "dataset": entry.enumerators}
 
 
+@contextmanager
+def naming_decode_errors(csv_path: Path):
+    """Raise a dataset CSV that is not UTF-8 as a ValueError naming the file."""
+    try:
+        yield
+    except UnicodeDecodeError as e:
+        raise ValueError(f"{csv_path}: not UTF-8 (byte {e.start}: {e.reason})") from e
+
+
+def checked_header(csv_path: Path, header: list[str] | None) -> list[str]:
+    """Return a dataset CSV's header; raise when it is empty or names a column twice,
+    since a row read by name then keeps only the last of them.
+    """
+    if not header:
+        raise ValueError(f"{csv_path}: no header row")
+    twice = sorted(c for c, n in Counter(header).items() if n > 1)
+    if twice:
+        raise ValueError(f"{csv_path}: columns named twice in the header: {twice}")
+    return header
+
+
 def dataset_header(csv_path: Path) -> list[str]:
     """Return a dataset CSV's columns, reading no row."""
-    with open(csv_path, encoding="utf-8-sig", newline="") as f:
-        return next(csv.reader(f))
+    with (
+        naming_decode_errors(csv_path),
+        open(csv_path, encoding="utf-8-sig", newline="") as f,
+    ):
+        return checked_header(csv_path, next(csv.reader(f), None))
 
 
 class DatasetTable:
@@ -100,10 +126,13 @@ class DatasetTable:
     def __init__(self, csv_path: Path):
         """Read ``csv_path`` (UTF-8, with or without BOM)."""
         self.name = Path(csv_path).name
-        with open(csv_path, encoding="utf-8-sig", newline="") as f:
+        with (
+            naming_decode_errors(csv_path),
+            open(csv_path, encoding="utf-8-sig", newline="") as f,
+        ):
             reader = csv.DictReader(f)
+            self.header = checked_header(csv_path, reader.fieldnames)
             self.rows = list(reader)
-        self.header = reader.fieldnames
         self._index: dict[str, dict[str, list[int]]] = {}
 
     def where(self, column: str, values: list[str]) -> list[dict]:

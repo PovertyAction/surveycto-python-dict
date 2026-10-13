@@ -1,6 +1,7 @@
 """SurveyCTO API client: form list, XForm XML, wide JSON, datasets, attachments.
 
-Every non-2xx response raises ``SurveyCTOError`` with status and URL; nothing retries.
+Every non-2xx response raises ``SurveyCTOError`` with the status, the URL and the start
+of the server's reason; nothing retries.
 Endpoint shapes are recorded in ``docs/api-endpoints.md``.
 """
 
@@ -21,14 +22,15 @@ class MissingEnvVar(RuntimeError):
 
 
 class SurveyCTOError(RuntimeError):
-    """The server answered a request with a non-2xx status."""
+    """The server answered a request with a non-2xx status or a body that is not JSON."""
 
-    def __init__(self, method: str, url: str, status: int):
-        """Record the failed request."""
-        super().__init__(f"{method} {url} -> HTTP {status}")
+    def __init__(self, method: str, url: str, status: int, reason: str):
+        """Record the failed request and why it failed."""
+        super().__init__(f"{method} {url} -> HTTP {status}: {reason}")
         self.method = method
         self.url = url
         self.status = status
+        self.reason = reason
 
 
 def _env(name: str) -> str:
@@ -64,8 +66,23 @@ class Client:
     def _send(self, method: str, url: str, **kwargs) -> requests.Response:
         resp = requests.request(method, url, auth=self._auth, **kwargs)
         if not resp.ok:
-            raise SurveyCTOError(method, url, resp.status_code)
+            # The server explains a refusal in the body ("wait 300 seconds").
+            raise SurveyCTOError(method, url, resp.status_code, resp.text[:300])
         return resp
+
+    def _send_json(self, method: str, url: str, **kwargs):
+        resp = self._send(method, url, **kwargs)
+        try:
+            return resp.json()
+        except requests.exceptions.JSONDecodeError as e:
+            # A body cut short can hold submissions: its type and size, not its text.
+            raise SurveyCTOError(
+                method,
+                url,
+                resp.status_code,
+                f"the body is not JSON ({resp.headers.get('Content-Type')}, "
+                f"{len(resp.content)} bytes)",
+            ) from e
 
     def pull_form_list(self) -> bytes:
         """Return the OpenRosa form list XML."""
@@ -93,19 +110,19 @@ class Client:
         date = 1 if since is None else int(since.timestamp())
         url = f"{self.base_url}/api/v2/forms/data/wide/json/{form_id}?date={date}"
         if key_path is None:
-            return self._send("GET", url).json()
+            return self._send_json("GET", url)
         key = Path(key_path).read_bytes()
-        return self._send(
+        return self._send_json(
             "POST", url, files={"private_key": ("private_key.pem", key)}
-        ).json()
+        )
 
     def list_datasets(self) -> list[dict]:
         """Return every server dataset's metadata (no records), following ``nextCursor``."""
         url = f"{self.base_url}/api/v2/datasets"
-        page = self._send("GET", url).json()
+        page = self._send_json("GET", url)
         datasets = page["data"]
         while page["nextCursor"]:
-            page = self._send("GET", url, params={"cursor": page["nextCursor"]}).json()
+            page = self._send_json("GET", url, params={"cursor": page["nextCursor"]})
             datasets += page["data"]
         return datasets
 

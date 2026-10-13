@@ -2,9 +2,28 @@
 
 ## Unreleased
 
+### Added
+
 - A form with no submissions yet builds every output (#89): its questions, skip logic,
   dictionary and flow are ready before fieldwork, and its tables and views hold the
   columns every submission carries and no rows.
+
+### Fixed
+
+- An int or decimal column parses only the numbers the server writes: `1_0`,
+  `nan`, `inf` or ` 3 ` stay text with a `cast_fallback` (#94).
+- The join lines in `<project>_db.json` and `_db.sql` quote every name, so a line
+  runs as written when a dataset, form or column name holds `/`, `-` or `.` (#92).
+- Errors name the input they reject: a dataset CSV that is empty, names a column
+  twice or is not UTF-8; a malformed or repeated `SCTO_SENTINELS` or
+  `SCTO_DATE_SENTINELS` pair; an HTTP error, which now carries the start of the
+  server's reason; a response body that is not JSON. A repeated `[datasets.<id>]`
+  key raises a `ValueError` instead of an assertion (#91).
+
+### Changed
+
+- `xml_contract` drops `Node.pulldata` (read `data_source`), `map_column`'s
+  `ambiguous` and `FormContract.to_dict` (#93).
 
 ## 0.1.0 (2026-10-13)
 

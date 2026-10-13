@@ -81,9 +81,28 @@ def _parse_binary(value: str) -> int:
     return 1
 
 
+# The numbers the server writes: ASCII digits, an optional minus, and for a decimal
+# a fraction and the exponent Java writes for large and small values ("1.0E-4"). The
+# rest of what int() and float() accept ("1_0", "nan", " 3 ") is text.
+_INT = re.compile(r"-?[0-9]+")
+_DECIMAL = re.compile(r"-?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][-+]?[0-9]+)?")
+
+
+def _parse_int(value: str) -> int:
+    if not _INT.fullmatch(value):
+        raise ValueError("not an integer")
+    return int(value)
+
+
+def _parse_decimal(value: str) -> float:
+    if not _DECIMAL.fullmatch(value):
+        raise ValueError("not a decimal")
+    return float(value)
+
+
 _PARSERS = {
-    pa.int64(): int,
-    pa.float64(): float,
+    pa.int64(): _parse_int,
+    pa.float64(): _parse_decimal,
     pa.date32(): _parse_date,
     _TIMESTAMP: _parse_timestamp,
     pa.string(): str,

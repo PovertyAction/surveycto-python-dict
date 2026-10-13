@@ -128,6 +128,27 @@ def test_unparseable_value_keeps_column_as_text(contract):
     assert table.schema.field("area").metadata[b"node_path"] == b"area"
 
 
+@pytest.mark.parametrize("value", ["1_0", "1_000", "nan", "inf", " 3 ", "+3", "٣"])
+def test_python_literal_syntax_is_not_a_number(contract, value):
+    table = cast_wide([dict(_ROWS[0], plots=value, area=value)], contract)
+    assert _col(table, "plots") == [value]
+    assert _col(table, "area") == [value]
+    assert _fallback(table, "plots") == "1 of 1 values do not parse as int64"
+    assert _fallback(table, "area") == "1 of 1 values do not parse as double"
+
+
+def test_numbers_as_the_server_writes_them_parse(contract):
+    rows = [
+        dict(_ROWS[0], plots="-99", area="0.75"),
+        dict(_ROWS[0], plots="0", area="-1.5"),
+        dict(_ROWS[0], plots="12", area="1.2345678E7"),
+        dict(_ROWS[0], plots="3", area="1.0E-4"),
+    ]
+    table = cast_wide(rows, contract)
+    assert _col(table, "plots") == [-99, 0, 12, 3]
+    assert _col(table, "area") == [0.75, -1.5, 12345678.0, 0.0001]
+
+
 def test_fallback_reason_never_quotes_a_value(contract):
     table = cast_wide([dict(_ROWS[0], plots="two", area="about two")], contract)
     reasons = " ".join(_fallback(table, n) for n in table.schema.names)
