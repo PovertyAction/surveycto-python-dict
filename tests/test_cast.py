@@ -290,3 +290,39 @@ def test_raw_select_multiple_named_with_trailing_digits_is_split(tmp_path):
     assert "s5_2_1" not in table.schema.names
     assert (_col(table, "s4_1_1"), _col(table, "s4_1_2")) == ([1], [1])
     assert (_col(table, "s5_2_1_1"), _col(table, "s5_2_2_1")) == ([0], [1])
+
+
+_GEO_XML = """<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml">
+  <h:head><model>
+    <instance><f id="f" version="1"><gps/><path/><area/><at/></f></instance>
+    <bind nodeset="/f/gps" type="geopoint"/>
+    <bind nodeset="/f/path" type="geotrace"/>
+    <bind nodeset="/f/area" type="geoshape"/>
+    <bind nodeset="/f/at" type="time"/>
+  </model></h:head>
+  <h:body>
+    <input ref="/f/gps"><label>GPS</label></input>
+    <input ref="/f/path"><label>Path</label></input>
+    <input ref="/f/area"><label>Area</label></input>
+    <input ref="/f/at"><label>At</label></input>
+  </h:body>
+</h:html>
+"""
+
+
+def test_geo_and_time_columns_are_text_without_fallback(tmp_path):
+    path = tmp_path / "f.xml"
+    path.write_text(_GEO_XML, encoding="utf-8")
+    row = {
+        "KEY": "k1",
+        "gps": "4.6 -74.1 2600 5",
+        "path": "4.6 -74.1 0 0;4.7 -74.2 0 0",
+        "area": "4.6 -74.1 0 0;4.7 -74.2 0 0;4.6 -74.1 0 0",
+        "at": "09:30:00.000-05:00",
+    }
+    table = cast_wide([row], parse_contract(path))
+    for name in ("gps", "path", "area", "at"):
+        assert table.schema.field(name).type == pa.string()
+        assert _fallback(table, name) == ""
+        assert _col(table, name) == [row[name]]

@@ -41,6 +41,11 @@ _XML_TYPES = {
     "select1": pa.string(),  # integer-coded selects become int64 (_select_one_type)
     "select": pa.string(),
     "binary": pa.string(),  # attachment URL
+    # Text by nature: coordinates separated by spaces and ";", a time with its offset.
+    "geopoint": pa.string(),
+    "geotrace": pa.string(),
+    "geoshape": pa.string(),
+    "time": pa.string(),
 }
 
 
