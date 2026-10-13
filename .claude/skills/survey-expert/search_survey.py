@@ -91,8 +91,8 @@ def _label(q: dict) -> str:
 
 
 def _name_tokens(name: str) -> list[str]:
-    """Return a field name's parts and the name itself, lowercased: ``refugeePop``
-    gives ``refugee``, ``pop`` and ``refugeepop``.
+    """Return a field name's parts and the name itself, lowercased: ``plotArea``
+    gives ``plot``, ``area`` and ``plotarea``.
     """
     spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name)
     return [*_tokens(spaced.replace("_", " ").replace(".", " ")), name.lower()]

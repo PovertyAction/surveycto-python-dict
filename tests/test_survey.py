@@ -511,7 +511,7 @@ def test_datasets_summarise_columns_and_list_them_on_request(store, monkeypatch)
 def test_search_matches_name_parts_and_word_starts_and_drops_one_letters(store):
     from surveycto_python_dict.survey import _name_tokens
 
-    assert _name_tokens("refugeePop_v2") == ["refugee", "pop", "v2", "refugeepop_v2"]
+    assert _name_tokens("plotArea_v2") == ["plot", "area", "v2", "plotarea_v2"]
     store.questions["per_plot"]["question_text"] = "Area per plot, in hectares"
     # "hectare" starts "hectares"; "a" alone of one letter is dropped.
     assert store.search_questions("a hectare").splitlines()[0].startswith("per_plot")
