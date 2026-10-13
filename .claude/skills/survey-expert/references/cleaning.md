@@ -8,8 +8,7 @@ decide what applies to their study. Each suggestion is followed by its reason.
 
 Write for the person who reviews it, not for the computer.
 
-- **A plain script, top to bottom,** read like a do-file: load, check, change, check,
-  save. No helper functions or classes unless the same lines repeat many times.
+- **A plain script, read top to bottom:** load, check, change, check, save. No helper functions or classes unless the same lines repeat many times.
 - **Look before you write.** The MCP tools (or `scto-survey`), the summary stats and the
   data tell you the codes, the skip logic and what is missing. Write for what is there,
   not for cases that have not happened.
@@ -95,7 +94,7 @@ harder to find.
    assert not df["hhid"].duplicated().any(), "hhid is not unique"
    assert (df["age"].dropna() >= 0).all(), "age has negative values"
    ```
-2. **Tolerances are shares over the relevant denominator** (gate-eligible rows for
+3. **Tolerances are shares over the relevant denominator** (gate-eligible rows for
    sub-questions): about 1% by default, 1.5-2% for DK on hard questions, 5-10% for known
    instrument problems, above 10% only documented, above 25% the column may be
    unusable. Print a warning even inside tolerance and comment the rationale.
@@ -104,10 +103,10 @@ harder to find.
    print("age above 100:", (age > 100).sum(), "of", len(age))
    assert (age > 100).mean() <= 0.01   # up to 1%: typos the form's constraint let through
    ```
-3. **When a check fails, inspect before relaxing it:** list the contradicting rows,
+4. **When a check fails, inspect before relaxing it:** list the contradicting rows,
    check the instrument (`questions.json`), then fix the code or the check, and say
    which in a comment.
-4. **Let errors surface:** no `errors="coerce"`, `errors="ignore"`, `if col in df`,
+5. **Let errors surface:** no `errors="coerce"`, `errors="ignore"`, `if col in df`,
    bare `except` or `try`/`except` that carries on. A schema change or a bad value
    should stop the run, not turn into missing data.
 
@@ -217,8 +216,9 @@ To learn what a gate opens or what a calculate reads, start with
    select_multiple. Stripping an untranslatable clause from a top-level `and` only
    broadens the condition; inside `not(...)` it narrows it, so drop the whole `not`.
 9. **Cross-check related variables:** gate "no" implies frequency 0; more detail rows
-   than the headline count raises the count; platform totals match your own within a
-   tolerance; treatment arm and strata agree across modules.
+   than the headline count raises the count; totals recorded elsewhere (an admin
+   or platform record) match your own within a tolerance; treatment arm and strata agree across modules.
+
 ## 5. Recoding and other-specify
 
 1. **Classify other-specify text by priority:** lowercase and trim; one regex per
@@ -230,16 +230,14 @@ To learn what a gate opens or what a calculate reads, start with
    df.loc[text.str.contains("well|borehole", na=False), "water_osp_class"] = "improved"
    df.loc[text.str.contains("mixed|several", na=False), "water_osp_class"] = None  # ambiguous wins
    ```
-   Later lines overwrite earlier ones, so the highest priority goes last. Without
+   Later lines overwrite earlier ones, so write the lowest priority first and the
+   highest last, and say so in a comment. Without
    `na=False`, `str.contains` returns NaN for empty text.
 2. **Keep a QC table** of every distinct trimmed text, its mapping and count, and
    review it when new data arrives. It prints free text: only where PII may be read.
-3. **Priority order:** with one `.loc` line per category, later lines overwrite earlier
-   ones, so write the lowest priority first and the highest last, and say so in a
-   comment.
-4. **Ordinal categories:** prefer mutually exclusive conditions and assert each row
+3. **Ordinal categories:** prefer mutually exclusive conditions and assert each row
    falls in exactly one: `assert (low.astype(int) + mid.astype(int) + high.astype(int) == 1).all()`.
-5. **A `search()` select's labels** are the form's own choices plus its list's dataset
+4. **A `search()` select's labels** are the form's own choices plus its list's dataset
    rows (`choice_columns` names the value and label columns, `data_source` the
    filter). Where a dataset row's label is empty, keep the form's label.
 5. **One-off corrections by signature, not ID:** match on a value signature, assert the
@@ -348,7 +346,7 @@ To learn what a gate opens or what a calculate reads, start with
    (`np.isclose`), not a file hash. Take a fresh "before" snapshot for each change.
 4. **Randomness:** pass one `np.random.default_rng(seed)` around; never the global seed;
    the lockfile pins numpy.
-5. **Measure coverage on the delivered data.** A target field counts as filled when the
+5. **Measure coverage on the delivered data.** An output field counts as filled when the
    output has values, not when a mapping to a question exists. List the fields that
    are mapped but empty, each with its reason: never answered, its gate never true, or
    a question only an older form version had.
@@ -389,8 +387,7 @@ To learn what a gate opens or what a calculate reads, start with
    decision goes in `[pii] whitelist`, or `[pii] blacklist` for columns that are
    personal even when the form marks them publishable.
 3. **Sharing is decided at delivery, by the team:** free text is reviewed before it
-   leaves the project, derived scores stay, and only the flagged other-specify columns
-   are PII.
+   leaves the project and derived scores stay.
 4. **Scan what you deliver,** derived columns included, and make the delivery step
    repeatable.
 5. **Tokenize IDs with an HMAC crosswalk** (`hmac.new(key, id.encode(), hashlib.sha256)`,
