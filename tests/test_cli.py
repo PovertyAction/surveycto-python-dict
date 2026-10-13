@@ -321,6 +321,14 @@ def test_install_skill_writes_the_skill_and_the_current_script(tmp_path):
     ).read_bytes()
 
 
+@pytest.mark.parametrize("form", ["main", "dataset"])
+def test_a_form_named_main_is_refused(tmp_path, form):
+    config = tmp_path / "config.toml"
+    config.write_text(f'forms = ["{form}"]\nout_dir = "out"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match=f"{form} is also a schema"):
+        load_config(config)
+
+
 def test_a_project_folder_named_like_a_form_raises(tmp_path):
     config = tmp_path / "config.toml"
     config.write_text('forms = ["farm"]\nout_dir = "out/farm"\n', encoding="utf-8")

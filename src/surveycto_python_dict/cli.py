@@ -159,8 +159,14 @@ def load_config(path: Path) -> Config:
         section["key"] = _columns(section["key"])
     if not data["forms"]:
         raise ValueError("forms is empty: name at least one form")
-    # <project>.duckdb holds a schema per form: a form named like the database makes
-    # every <form>.<table> ambiguous to DuckDB.
+    # <project>.duckdb holds a schema per form beside its own main and dataset, and a
+    # form named like the database makes every <form>.<table> ambiguous to DuckDB.
+    for form in data["forms"]:
+        if form in ("main", "dataset"):
+            raise ValueError(
+                f"forms: {form} is also a schema of <project>.duckdb, which holds the "
+                "project tables in main and the datasets in dataset"
+            )
     project_name = (Path(path).parent / data["out_dir"]).resolve().name
     if project_name in data["forms"]:
         raise ValueError(
