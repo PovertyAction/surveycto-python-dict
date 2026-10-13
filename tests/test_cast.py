@@ -256,3 +256,37 @@ def test_a_select_multiple_exported_raw_is_split_into_binaries(contract):
     assert "plot_crop_1" not in table.schema.names
     assert (_col(table, "tools_1"), _col(table, "tools_2")) == ([0], [1])
     assert (_col(table, "plot_crop_1_1"), _col(table, "plot_crop_2_1")) == ([1], [1])
+
+
+_DIGITS_XML = """<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml"
+        xmlns:jr="http://openrosa.org/javarosa">
+  <h:head><model>
+    <instance><f id="f" version="1"><s4_1/><r jr:template=""><s5_2/></r></f></instance>
+    <bind nodeset="/f/s4_1" type="select"/>
+    <bind nodeset="/f/r/s5_2" type="select"/>
+  </model></h:head>
+  <h:body>
+    <select ref="/f/s4_1"><label>S4</label>
+      <item><label>a</label><value>1</value></item><item><label>b</label><value>2</value></item>
+    </select>
+    <group ref="/f/r"><repeat nodeset="/f/r">
+      <select ref="/f/r/s5_2"><label>S5</label>
+        <item><label>a</label><value>1</value></item><item><label>b</label><value>2</value></item>
+      </select>
+    </repeat></group>
+  </h:body>
+</h:html>
+"""
+
+
+def test_raw_select_multiple_named_with_trailing_digits_is_split(tmp_path):
+    path = tmp_path / "f.xml"
+    path.write_text(_DIGITS_XML, encoding="utf-8")
+    table = cast_wide(
+        [{"KEY": "k1", "s4_1": "1 2", "s5_2_1": "2"}], parse_contract(path)
+    )
+    assert "s4_1" not in table.schema.names
+    assert "s5_2_1" not in table.schema.names
+    assert (_col(table, "s4_1_1"), _col(table, "s4_1_2")) == ([1], [1])
+    assert (_col(table, "s5_2_1_1"), _col(table, "s5_2_2_1")) == ([0], [1])

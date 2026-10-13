@@ -234,20 +234,15 @@ def _cast(
     return pa.array([v or None for v in raw], type=pa.string()), text
 
 
-_INSTANCES = re.compile(r"(_[0-9]+)*$")
-
-
 def _split_raw_multiples(rows: list[dict], contract: FormContract) -> list[dict]:
     """Return ``rows`` with each select_multiple exported raw (one column, the codes
     separated by spaces) rewritten as its per-choice binaries, as the export writes
-    the others.
+    the others. The contract resolves each column, since a select's own name can end
+    in ``_<digits>`` like a repeat instance.
     """
-    multiples = {
-        n.name for n in contract.nodes.values() if n.is_select_multiple and n.is_leaf
-    }
     raw: dict[str, tuple[Node, tuple[int, ...]]] = {}
     for name in dict.fromkeys(name for row in rows for name in row):
-        if _INSTANCES.sub("", name) not in multiples or is_system_column(name):
+        if is_system_column(name):
             continue
         m = contract.map_column(name)
         if m["kind"] != "matched" or m["choice_code"] is not None or m.get("ragged"):
