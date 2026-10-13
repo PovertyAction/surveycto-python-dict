@@ -202,6 +202,13 @@ def built(tmp_path, analyzer):
     return build(cfg, SENTINELS, analyzer)["farm"], cfg.out_dir / "farm"
 
 
+def test_build_form_without_submissions_raises(tmp_path, analyzer):
+    cfg = load_config(_config(tmp_path))
+    write_pull(cfg, rows=[])
+    with pytest.raises(ValueError, match="farm: no submissions on the server"):
+        build(cfg, SENTINELS, analyzer)
+
+
 def test_build_writes_every_output(built):
     outputs, form_dir = built
     assert (form_dir.parent / "flow.json").exists()
