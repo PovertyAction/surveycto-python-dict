@@ -54,6 +54,65 @@ def test_lookup_never_prints_flagged_values(store):
         assert value not in out
 
 
+def test_blacklisted_date_and_int_have_no_range(tmp_path, analyzer):
+    config = tmp_path / "config.toml"
+    config.write_text(
+        'forms = ["farm"]\nout_dir = "out"\n[pii]\nblacklist = ["visit", "plots"]\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(config)
+    write_pull(cfg)
+    build(cfg, SENTINELS, analyzer)
+    store = SurveyStore(cfg.form_dir("farm"), "farm")
+    dictionary = (cfg.form_dir("farm") / "farm_variable_dictionary.json").read_text(
+        encoding="utf-8"
+    )
+    assert "2025-03-06" not in dictionary and '"data_max": 2' not in dictionary
+    out = store.lookup_variables(["visit", "plots"])
+    assert "range" not in out and "2025-03-06" not in out
+    assert "range 1.5..1.5" in store.lookup_variable("area")
+
+
+def test_blacklisted_inline_select_labels_not_listed(tmp_path, analyzer):
+    from openpyxl import load_workbook
+
+    from surveycto_python_dict.codebook import write_codebook
+    from surveycto_python_dict.stats import write_form_stats
+
+    config = tmp_path / "config.toml"
+    config.write_text(
+        'forms = ["farm"]\nout_dir = "out"\n[pii]\nblacklist = ["tools"]\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(config)
+    write_pull(cfg)
+    build(cfg, SENTINELS, analyzer)
+    form_dir = cfg.form_dir("farm")
+    write_codebook(form_dir, "farm", write_form_stats(form_dir, "farm", SENTINELS))
+    store = SurveyStore(form_dir, "farm")
+    out = "\n".join(
+        [store.get_choice_list("tools"), store.lookup_variable("tools", columns=True)]
+    )
+    assert "choices not listed (reviewed); they are in farm.choices" in out
+    texts = [out] + [
+        (form_dir / f"farm_{name}.json").read_text(encoding="utf-8")
+        for name in ("questions", "variable_dictionary")
+    ]
+    workbook = load_workbook(form_dir / "farm_codebook.xlsx")
+    texts.append(
+        str(
+            [
+                c
+                for ws in workbook
+                for row in ws.iter_rows(values_only=True)
+                for c in row
+            ]
+        )
+    )
+    for text in texts:
+        assert "Hoe" not in text and "Plough" not in text
+
+
 def test_lookup_variables_batches(store):
     out = store.lookup_variables(["area", "plots"])
     assert "area (decimal)" in out and "plots (integer)" in out
@@ -285,7 +344,7 @@ def test_withheld_choices_say_how_to_decode_them_and_what_was_picked(
         store.questions["crop"],
         choices=[],
         choice_columns={"value": "crop_id", "label": "crop_name"},
-        choices_withheld=["presidio:PERSON"],
+        choices_withheld=["60 choices"],
         data_source={
             "kind": "search",
             "dataset": "crops",
@@ -302,7 +361,11 @@ def test_withheld_choices_say_how_to_decode_them_and_what_was_picked(
         },
     ]
     store.summary["withheld_choices"] = {
-        "crop": {"n_codes_picked": 3, "codes_not_in_list": ["9"]}
+        "crop": {
+            "n_codes_picked": 3,
+            "n_codes_not_in_list": 1,
+            "codes_not_in_list": ["9"],
+        }
     }
     lines = store.get_choice_list("crop").splitlines()
     assert lines[1:] == [
@@ -314,16 +377,68 @@ def test_withheld_choices_say_how_to_decode_them_and_what_was_picked(
         "farm.choices WHERE question = 'crop'",
         "  In the data: 3 codes picked; 1 not in the list: 9",
     ]
+    # A value column Presidio found nothing in shows its codes too.
+    store.dataset_columns[0]["pii"]["status"] = "no_hits"
+    assert store.get_choice_list("crop").splitlines()[-1] == (
+        "  In the data: 3 codes picked; 1 not in the list: 9"
+    )
     # Codes a flagged value column holds are counted, not shown.
     store.dataset_columns[0]["pii"]["status"] = "may_contain_pii"
     assert store.get_choice_list("crop").splitlines()[-1] == (
         "  In the data: 3 codes picked; 1 not in the list (codes not shown: crop_id is "
         "may_contain_pii)"
     )
+    # So does a flagged column of the select itself.
+    store.dataset_columns[0]["pii"]["status"] = "whitelisted"
+    store.variables["crop"]["pii"] = {"status": "contains_pii", "basis": ["reviewed"]}
+    assert store.get_choice_list("crop").splitlines()[-1] == (
+        "  In the data: 3 codes picked; 1 not in the list (codes not shown: crop is "
+        "contains_pii)"
+    )
+    # And a list withheld for what it holds.
+    store.variables["crop"]["pii"] = {"status": "whitelisted", "basis": ["reviewed"]}
+    store.questions["crop"]["choices_withheld"] = ["presidio:PERSON"]
+    assert store.get_choice_list("crop").splitlines()[-1] == (
+        "  In the data: 3 codes picked; 1 not in the list (codes not shown: the list "
+        "is withheld (presidio:PERSON))"
+    )
     store.summary["withheld_choices"] = {}
     assert store.get_choice_list("crop").splitlines()[-1] == (
         "  In the data: no submission picked a code"
     )
+
+
+def test_withheld_multiple_binaries_named_by_flagged_codes_are_not_printed(store):
+    """A withheld select_multiple's binaries are named by its codes."""
+    from surveycto_python_dict.survey import render_structure
+
+    for name in ("tools", "plot_crop"):
+        store.questions[name].update(choices=[], choices_withheld=["presidio:PERSON"])
+    out = store.lookup_variables(["tools", "plot_crop"], columns=True)
+    for column in ("tools_1", "tools_2", "tools_77", "plot_crop_1_1", "plot_crop_2_2"):
+        assert column not in out
+    for shown in ("tools_<1>", "tools_<3>", "plot_crop_<1>_1", "plot_crop_<2>_2"):
+        assert shown in out
+    assert "Column names: 3 are named by the codes of its withheld list" in out
+    assert "tools_<1> ... tools_<3>" in store.lookup_variables(["tools", "area"])
+    close = store.lookup_variable("tools_7")
+    assert "tools_1" not in close and "tools_77" not in close
+    # The structure map shows them as the build names them.
+    objects = [
+        {
+            "name": "farm.submissions",
+            "kind": "view",
+            "grain": "one row per submission",
+            "key": ["KEY"],
+            "joins": [],
+            "columns": [
+                {"name": "KEY", "type": "VARCHAR"},
+                {"name": "tools_77", "type": "TINYINT", "shown_as": "tools_<3>"},
+            ],
+        }
+    ]
+    out = render_structure("out", objects)
+    assert "tools_77" not in out and "tools_<3> TINYINT" in out
 
 
 def test_lookup_shows_where_a_value_comes_from(store):
@@ -424,16 +539,31 @@ def test_lookup_shows_appearance_and_no_formula_as_text(store):
     assert "Calculation: 1 + 1" in out
 
 
-def test_reached_choices_count_only_filtered_lists(store):
-    store.questions["crop"]["choices"] = [
-        {"value": "1", "label": "A", "when": {"list": "x"}},
-        {"value": "2", "label": "B", "when": {"list": "y"}},
-        {"value": "-66", "label": "Other"},
-    ]
+def test_a_list_filtered_by_a_field_refers_to_its_filter_values(store):
+    store.questions["crop"].update(
+        choices=[{"value": "1", "label": "A"}, {"value": "-66", "label": "Other"}],
+        data_source={
+            "kind": "search",
+            "dataset": "crops",
+            "mode": "matches",
+            "match": [{"column": "list", "value": "${phone}"}],
+        },
+    )
+    lists = (
+        "one list per value of ${phone} in the submissions; each choice's filter "
+        "values: SELECT value, label, filter_values FROM farm.choices WHERE question "
+        "= 'crop'"
+    )
     assert (
-        "Choices: 3 in 2 lists, by the dataset rows the submissions reach "
-        "(list = x; list = y), plus 1 in every list (-66); get_choice_list shows them"
+        f"Choices: 2, from the dataset rows the submissions reach; {lists}; "
+        "get_choice_list lists them"
     ) in store.lookup_variable("crop")
+    assert store.get_choice_list("crop").splitlines() == [
+        "crop (select_one):",
+        f"  {lists}",
+        "  1 = A",
+        "  -66 = Other",
+    ]
 
 
 def test_project_commands_need_no_form(store, capsys):
@@ -511,7 +641,7 @@ def test_datasets_summarise_columns_and_list_them_on_request(store, monkeypatch)
 def test_search_matches_name_parts_and_word_starts_and_drops_one_letters(store):
     from surveycto_python_dict.survey import _name_tokens
 
-    assert _name_tokens("refugeePop_v2") == ["refugee", "pop", "v2", "refugeepop_v2"]
+    assert _name_tokens("plotArea_v2") == ["plot", "area", "v2", "plotarea_v2"]
     store.questions["per_plot"]["question_text"] = "Area per plot, in hectares"
     # "hectare" starts "hectares"; "a" alone of one letter is dropped.
     assert store.search_questions("a hectare").splitlines()[0].startswith("per_plot")
@@ -581,3 +711,14 @@ def test_neighborhood_collapses_a_group_gate(store):
     out = store.get_variable_neighborhood("plots")
     assert "plots gates group plot (2 questions)" in out
     assert "(group_gated_by)" not in out
+
+
+def test_survey_shows_values_as_pii_does():
+    """survey.py keeps its own copy of the flagged statuses: it ships standalone."""
+    from surveycto_python_dict import pii, survey
+
+    assert survey._FLAGGED == pii.FLAGGED
+    statuses = [*pii.FLAGGED, "no_hits", "cleared_by_form", "whitelisted"]
+    assert [survey._shows_values(s) for s in statuses] == [
+        pii.shows_values(s) for s in statuses
+    ]

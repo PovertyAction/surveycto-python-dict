@@ -6,13 +6,15 @@ Each column gets ``{"status", "basis"[, "presidio"]}``; the first matching rule 
    blacklist; ``whitelisted`` / ``reviewed``: on the whitelist.
 1. ``cleared_by_form``: the question is ``publishable``. With ``trust_publishable =
    false`` this rule is skipped and ``publishable`` is only noted in the basis.
-2. ``contains_pii``: device metadata columns; geo and attachment question types;
-   whatever the name, a field that preloads device or user metadata (``username``,
-   ``deviceid``, ...), an enumerator field, a calculate that calls
-   ``enumerator-id()``, ``enumerator-name()`` or ``username()``; and a calculate
-   whose formula reads such a field or a blacklisted one, directly or through other
-   calculates (basis ``lineage:<field>``). This rule holds under
-   ``no_personal_data`` too; the whitelist outranks it.
+2. ``contains_pii``: device metadata columns; whatever the name, a field that
+   preloads device or user metadata (``username``, ``deviceid``, ...), an enumerator
+   field, a calculate that calls ``enumerator-id()``, ``enumerator-name()`` or
+   ``username()``; and a calculate whose formula reads such a field, a geo or
+   attachment field or a blacklisted one, directly or through other calculates (basis
+   ``lineage:<field>``). This rule holds under ``no_personal_data`` too, except for
+   geo and attachment fields; the whitelist outranks it. Geo and attachment fields
+   themselves are ``contains_pii`` by their type (rule 3's ``static``), which
+   ``no_personal_data`` overrides.
 3. ``whitelisted``: system columns; integer, decimal, date, datetime and time
    questions; selects with inline choices; calculates whose every reference is
    cleared or whitelisted and that do not ``pulldata()``.
@@ -44,6 +46,7 @@ from surveycto_python_dict.contract import (
     dataset_header,
     search_universe,
 )
+from surveycto_python_dict.survey import code_reasons
 from surveycto_python_dict.xml_contract import FormContract
 
 if TYPE_CHECKING:
@@ -83,15 +86,23 @@ _REF = re.compile(r"\$\{([^}]+)\}")
 _CALL = re.compile(r"([A-Za-z][\w-]*)\s*\(")
 # Functions that make a value without reading the form or the device.
 _GENERATED_CALLS = {"once", "uuid", "now", "today", "random", "concat", "if"}
-# The statuses whose values may be read, and those that hold or may hold PII.
+# The statuses that clear a calculate reading the field (lineage), and those that hold
+# or may hold PII.
 SAFE = {"cleared_by_form", "whitelisted"}
 FLAGGED = {"contains_pii", "may_contain_pii"}
-# Enough KEYs to find examples; the review parquet has every flagged row.
+# Enough KEYs to find examples; the review workbook has every flagged row.
 _MAX_HIT_KEYS = 5
 # A search() list longer than this stays in its dataset: a filter on a field can leave
 # every row of a large dataset as a possible choice, copied into each column.
-# A longer search() list stays in its dataset: the outputs name its columns.
 MAX_INLINE_CHOICES = 50
+
+
+def shows_values(status: str) -> bool:
+    """Return whether an output an agent reads may show a column's values (range,
+    quartiles, frequencies, codes) for its pii ``status``: every status but a flagged
+    one. Counts, null rates and ``KEY``s are shown for every column.
+    """
+    return status not in FLAGGED
 
 
 class MissingSpacyModel(RuntimeError):
@@ -176,11 +187,15 @@ class _Rules:
         whitelist: set[str],
         blacklist: set[str],
         trust_publishable: bool,
+        no_personal_data: bool = False,
     ):
         self.by_name = {q["variable_name"]: q for q in questions}
         self.whitelist = whitelist
         self.blacklist = blacklist
         self.trust_publishable = trust_publishable
+        # In a project declared to hold no personal data, geo and attachment fields are
+        # whitelisted, so they carry nothing.
+        self.personal_types = set() if no_personal_data else _CONTAINS_TYPES
         self._memo: dict[str, dict | None] = {}
         self._carried: dict[str, str | None] = {}
 
@@ -235,9 +250,11 @@ class _Rules:
 
     def carried(self, name: str | None) -> str | None:
         """Return a field a calculate's formula reads, directly or through other
-        calculates, that is blacklisted or collection metadata, else None. A
-        whitelisted field carries nothing. A ``pulldata()`` holds its dataset column,
-        not its key: it carries the column when that is blacklisted.
+        calculates, that is blacklisted, collection metadata or of a type that holds
+        personal data (a geopoint, an image, ...), else None: ``selected-at(${gps},
+        0)`` holds the latitude. A whitelisted field carries nothing. A
+        ``pulldata()`` holds its dataset column, not its key: it carries the column
+        when that is blacklisted.
         """
         q = self.by_name.get(name)
         if q is None or q["type"] != "calculate":
@@ -253,7 +270,9 @@ class _Rules:
                     continue
                 found = (
                     ref
-                    if ref in self.blacklist or self.personal(ref)
+                    if ref in self.blacklist
+                    or self.personal(ref)
+                    or self.by_name.get(ref, {}).get("type") in self.personal_types
                     else self.carried(ref)
                 )
                 if found:
@@ -318,12 +337,20 @@ def screen_search_choices(
     unscanned. A filter on a field keeps the rows
     matching the values the field takes in ``rows`` (the submissions); a filter on
     anything but a plain field withholds the list.
+
+    A blacklisted select with inline choices is withheld too (``reviewed``), its
+    choices kept in ``node.choice_universe``: the blacklist says its list holds
+    personal data, so the outputs refer to it instead of listing it.
     """
     submitted = SubmissionValues(contract, rows)
     tables: dict[str, DatasetTable] = {}
     for node in contract.nodes.values():
         source = node.data_source
         if not source or source["kind"] != "search":
+            if node.choice_items and node.name in config.blacklist:
+                node.choice_universe = node.choice_items
+                node.choices_withheld = ["reviewed"]
+                node.choice_items = []
             continue
         header = dataset_header(datasets[source["dataset"]])
         named = [i for i in node.choice_items if i["value"] in header]
@@ -437,6 +464,7 @@ def classify(
         whitelist & question_names,
         blacklist,
         config.trust_publishable,
+        config.no_personal_data,
     )
     keys = table.column("KEY").to_pylist()
 
@@ -575,8 +603,24 @@ def warn_unknown_names(config: PiiConfig, known: set[str]) -> None:
         warnings.warn(f"`{name}` cannot be found", UserWarning, stacklevel=2)
 
 
-def attach(vardict: dict, blocks: dict[str, dict]) -> None:
-    """Add each column's block to the dictionary and a status count to its summary."""
+def attach(
+    vardict: dict, blocks: dict[str, dict], questions: list[dict], codebook: list[dict]
+) -> None:
+    """Add each column's block to the dictionary and a status count to its summary.
+
+    A column whose values are not shown (``shows_values``) loses its range
+    (``data_min``, ``data_max``). The codes a withheld list lacks are only counted
+    when its codes are not shown (``survey.code_reasons``): its list is withheld for
+    what it holds, or a column of its select or its dataset's value column is flagged.
+    """
+    variables = vardict["variables"]
     for column, block in blocks.items():
-        vardict["variables"][column]["pii"] = block
+        variables[column]["pii"] = block
+        if not shows_values(block["status"]):
+            for key in ("data_min", "data_max"):
+                variables[column].pop(key, None)
     vardict["summary"]["pii"] = dict(Counter(b["status"] for b in blocks.values()))
+    by_name = {q["variable_name"]: q for q in questions}
+    for name, picked in vardict["summary"]["withheld_choices"].items():
+        if code_reasons(by_name[name], variables, codebook):
+            del picked["codes_not_in_list"]

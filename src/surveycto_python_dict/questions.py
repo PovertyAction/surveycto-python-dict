@@ -22,7 +22,8 @@ from surveycto_python_dict.xml_contract import (
 # Metadata the export writes as a system column when the field has its reserved name
 # (starttime, deviceid, ...); under any other name the field is a question.
 _METADATA_TYPES = {"start", "end", "deviceid", "username", "simserial", "phonenumber"}
-_EXCLUDED_PREFIXES = ("instanceID", "instanceName", "KEY", "SET-OF-")
+# The form's own meta fields, matched whole: a field named KEY_INF is a question.
+_EXCLUDED_NAMES = {"instanceID", "instanceName"}
 
 _INPUT_TYPES = {
     "string": "text",
@@ -157,7 +158,7 @@ def _excluded(name: str, qtype: str) -> bool:
         return True
     if qtype in _METADATA_TYPES:
         return is_system_column(name)
-    return name.startswith(_EXCLUDED_PREFIXES)
+    return name in _EXCLUDED_NAMES
 
 
 def build_questions(contract: FormContract) -> list[dict]:
@@ -257,17 +258,19 @@ def build_questions(contract: FormContract) -> list[dict]:
             {
                 "type": qtype,
                 "choice_list": node.name if is_select else None,
+                # A search() filtered by a field lists each choice once: its filter
+                # values are the values the field takes in the submissions, so they
+                # stay in <form>_search_choices.parquet.
                 "choices": (
-                    [
+                    _unique(
                         {"value": c["value"], "label": plain_text(refs(c["label"]))}
-                        | ({"when": c["when"]} if "when" in c else {})
                         | (
                             {"filter_columns": c["filter_columns"]}
                             if "filter_columns" in c
                             else {}
                         )
                         for c in node.choice_items
-                    ]
+                    )
                     if is_select
                     else None
                 ),
@@ -312,12 +315,20 @@ def build_questions(contract: FormContract) -> list[dict]:
     return questions
 
 
-def withheld_choices(contract: FormContract) -> list[dict]:
-    """Return every choice of the withheld ``search()`` lists, one row per choice.
+def _unique(choices) -> list[dict]:
+    """Return ``choices`` without repeats, in order."""
+    return list({json.dumps(c, sort_keys=True): c for c in choices}.values())
 
-    ``questions.json`` refers to these lists without listing them; scripts read them
-    from ``<form>.choices`` in the database, ``withheld`` saying why. A list filtered
-    by an expression has no choices known before a submission, so no rows.
+
+def search_choices(contract: FormContract) -> list[dict]:
+    """Return every choice of the ``search()`` lists and the withheld lists, one row
+    per choice and filter value.
+
+    ``when`` holds a list's filter values, the values a field takes in the
+    submissions, which ``questions.json`` leaves out; ``withheld`` says why
+    ``questions.json`` refers to a list without listing it. Scripts read both from
+    ``<form>.choices`` in the database. A list filtered by an expression has no
+    choices known before a submission, so no rows.
     """
     refs = _Refs(contract)
     return [
@@ -326,10 +337,12 @@ def withheld_choices(contract: FormContract) -> list[dict]:
             "value": c["value"],
             "label": plain_text(refs(c["label"])),
             "when": json.dumps(c["when"]) if "when" in c else None,
-            "withheld": ", ".join(node.choices_withheld),
+            "withheld": ", ".join(node.choices_withheld)
+            if node.choices_withheld
+            else None,
         }
         for node in contract.nodes.values()
-        if node.choices_withheld and node.choice_universe is not None
+        if node.choice_universe is not None
         for c in node.choice_universe
     ]
 

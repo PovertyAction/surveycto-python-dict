@@ -1,4 +1,5 @@
 # Copy to config.toml (git-ignored) and set your project's forms.
+# Distinct form ids, each with submissions on the server; not `main` or `dataset`.
 forms = ["my_form"]
 # Server datasets to pull besides the ones the forms read (optional).
 # server_datasets = ["my_dataset"]
@@ -11,14 +12,19 @@ whitelist = []
 blacklist = []
 # false: publishable fields are not cleared; they go through the type rules and Presidio.
 # trust_publishable = true
-# true: the project holds no personal data (study metadata, say): every column not
-# blacklisted or device metadata is whitelisted with basis "project"; Presidio never runs.
+# true: the project holds no personal data: every column not blacklisted or collection
+# metadata is whitelisted with basis "project"; Presidio never runs.
 # no_personal_data = false
+# Presidio's spaCy model per language; a model added here must be installed.
 # languages = { es = "es_core_news_lg", en = "en_core_web_lg" }
+# The entities Presidio looks for, and extra ones by regex.
+# entities = ["PERSON", "PHONE_NUMBER", "EMAIL_ADDRESS", "LOCATION"]
+# id_patterns = { NATIONAL_ID = '\b\d{8,10}\b' }
+# The lowest Presidio score that counts as a hit (bare phone numbers score 0.4).
 # score_threshold = 0.4
+# A column with more distinct values is scanned on a sample of this size, drawn with seed.
 # max_distinct = 1000
 # seed = 0
-# id_patterns = { NATIONAL_ID = '\b\d{8,10}\b' }
 
 # The columns that identify a dataset's rows (checked unique), by its flow.json id,
 # and the form that publishes it when the build cannot tell from the columns.
@@ -26,7 +32,7 @@ blacklist = []
 # key = ["hhid", "round"]
 # published_by = "my_form"
 
-# Submissions the project does not use (tests, say), as an SQL condition on the
+# Submissions the project does not use (tests, say), as one SQL condition on the
 # parquet's columns: left out of the dictionary's counts and the stats; the parquet
 # keeps them. A window over the rows of `submissions` keeps each entity's latest:
 # "row_number() OVER (PARTITION BY hhid ORDER BY SubmissionDate DESC) > 1".

@@ -48,7 +48,7 @@ import pyarrow.parquet as pq
 from dotenv import load_dotenv
 
 from surveycto_python_dict.stats import SQL_TYPES
-from surveycto_python_dict.survey import render_structure
+from surveycto_python_dict.survey import coded_names, render_structure
 
 
 def _ident(name: str) -> str:
@@ -107,6 +107,22 @@ def _long_table(
         return pa.schema(list(zip(keys, types, strict=True))).empty_table()
     long = pa.concat_tables(parts, promote_options="permissive")
     return long.sort_by([(k, "ascending") for k in keys])
+
+
+def _check_view(con, view: str, expected: list[str]) -> None:
+    """Raise when ``view``'s columns are not ``expected``.
+
+    DuckDB ignores case in names and renames the later of two that clash (``Age``,
+    ``age`` -> ``Age``, ``Age_1``; a dataset column ``row`` -> ``row_1``), so a query
+    by the clashing name would read the other column.
+    """
+    got = con.sql(f"SELECT * FROM {view} LIMIT 0").columns
+    if got != expected:
+        renamed = [f"{e} to {g}" for e, g in zip(expected, got, strict=True) if e != g]
+        raise ValueError(
+            f"{view}: DuckDB ignores case in column names, so it renamed "
+            f"{', '.join(renamed)} to keep it apart from a column of the same name"
+        )
 
 
 _ORIGIN_KINDS = ("entered", "calculated", "carried", "metadata")
@@ -212,6 +228,14 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
     questions = _load(form_dir / f"{form}_questions.json")
     graph = _load(form_dir / f"{form}_variable_graph.json")
     codebook = _load(form_dir / f"{form}_dataset_codebook.json")
+    # A repeat's view sits in the form's schema beside submissions and the
+    # description tables, so it cannot share their names.
+    for repeat in graph["repeat_groups"]:
+        if repeat == "submissions" or repeat in _DESCRIPTIONS:
+            raise ValueError(
+                f"{form}: the repeat {repeat!r} has the name of the {form}.{repeat} "
+                "table the database writes"
+            )
     variables = dictionary["variables"]
     repeat_of = {node["id"]: node["repeat_group"] for node in graph["nodes"]}
     # The view each column is read from: its repeat's long view, or submissions.
@@ -231,6 +255,12 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
         for c, v in variables.items()
     }
     wide = [c for c in variables if table_of[c] == "submissions"]
+    # Columns named by codes an agent is not shown: the map shows them by position.
+    coded = {
+        c: shown
+        for q in questions
+        for c, shown in coded_names(q, variables, codebook).items()
+    }
 
     con.execute(f"CREATE SCHEMA {_ident(form)}")
     parquet = (form_dir / f"{form}.parquet").resolve().as_posix()
@@ -241,10 +271,12 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
         + ", ".join(_ident(c) for c in wide)
         + f" FROM read_parquet({_literal(parquet)})"
     )
+    _check_view(con, _q(form, "submissions"), wide)
     structure[f"{form}.submissions"] = {
         "grain": "one row per submission",
         "key": ["KEY"],
         "joins": [],
+        "shown_as": {c: coded[c] for c in wide if c in coded},
     }
 
     groups = graph["repeat_groups"]
@@ -261,11 +293,13 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
             if table_of[c] == repeat
         }
         long_path = long_dir / f"{repeat}.parquet"
-        pq.write_table(_long_table(table, columns, keys), long_path)
+        long = _long_table(table, columns, keys)
+        pq.write_table(long, long_path)
         source = _literal(long_path.resolve().as_posix())
         con.execute(
             f"CREATE VIEW {_q(form, repeat)} AS SELECT * FROM read_parquet({source})"
         )
+        _check_view(con, _q(form, repeat), long.column_names)
         # An instance joins its parent on the parent's keys, named alike in both.
         this = f"{form}.{repeat}"
         parent = f"{form}.{group['parent'] or 'submissions'}"
@@ -274,9 +308,20 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
             "grain": f"one row per instance of the repeat {repeat} that has any value",
             "key": keys,
             "joins": [f"{on}  (many to one)"],
+            # A long view's column drops the instance suffix, and so does its name.
+            "shown_as": {
+                view_column[c]: coded[c].removesuffix(c[len(view_column[c]) :])
+                for c in columns
+                if c in coded
+            },
         }
 
     n_columns = Counter(v["question"] for v in variables.values())
+    # The search() lists' choices, with their filter values, and the withheld lists'
+    # come from the build's parquet: questions.json lists them without filter values
+    # or refers to them without listing them.
+    searched = pq.read_table(form_dir / f"{form}_search_choices.parquet").to_pandas()
+    listed = set(searched["question"])
     tables = {
         "dictionary": pd.DataFrame(
             [
@@ -333,8 +378,6 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                 for q in questions
             ]
         ),
-        # The withheld search() lists' choices come from the build's parquet:
-        # questions.json refers to those lists without listing them.
         "choices": pd.concat(
             [
                 pd.DataFrame(
@@ -343,22 +386,20 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
                             "question": q["variable_name"],
                             "value": c["value"],
                             "label": c["label"],
-                            "filter_values": json.dumps(
-                                c.get("when") or c.get("filter_columns")
-                            )
-                            if "when" in c or "filter_columns" in c
+                            "filter_values": json.dumps(c["filter_columns"])
+                            if "filter_columns" in c
                             else None,
                             "withheld": None,
                         }
                         for q in questions
-                        if q["choices"] and not q["choices_withheld"]
+                        if q["choices"]
+                        and not q["choices_withheld"]
+                        and q["variable_name"] not in listed
                         for c in q["choices"]
                     ],
                     columns=["question", "value", "label", "filter_values", "withheld"],
                 ),
-                pq.read_table(form_dir / f"{form}_search_choices.parquet")
-                .to_pandas()
-                .rename(columns={"when": "filter_values"}),
+                searched.rename(columns={"when": "filter_values"}),
             ],
             ignore_index=True,
         ),
@@ -467,6 +508,7 @@ def _write_datasets(
             f"CREATE VIEW {view} AS SELECT row_number() OVER () AS row, * "
             f"FROM read_csv({source}, header = true, all_varchar = true)"
         )
+        _check_view(con, view, ["row", *d["columns"]])
         entries = [
             c
             for form in d["read_by"]
@@ -732,6 +774,16 @@ def write_database(
     """
     out_dir = Path(out_dir)
     flow = _load(out_dir / "flow.json")
+    # A key on a dataset the flow lacks is a typo: that dataset would fall back to row.
+    known = [d["id"] for d in flow["datasets"]]
+    unknown = sorted(set(dataset_keys) - set(known))
+    if unknown:
+        raise ValueError(
+            "; ".join(
+                f"[datasets.{d}] key: no dataset {d} in flow.json" for d in unknown
+            )
+            + f" (its datasets: {', '.join(known) or 'none'})"
+        )
     ids = {
         form: {
             r["name_in_form"]: r["dataset"] for r in flow["reads"] if r["form"] == form
@@ -764,13 +816,16 @@ def write_database(
         "SELECT table_schema, table_name, table_type FROM information_schema.tables"
     ).fetchall():
         name = table_name if schema == "main" else f"{schema}.{table_name}"
+        shown = structure[name].get("shown_as", {})
         objects.append(
             {
                 "name": name,
                 "kind": "view" if kind == "VIEW" else "table",
-                **structure[name],
+                **{k: v for k, v in structure[name].items() if k != "shown_as"},
                 "columns": [
-                    {"name": c, "type": t} for c, t in columns_of[schema, table_name]
+                    {"name": c, "type": t}
+                    | ({"shown_as": shown[c]} if c in shown else {})
+                    for c, t in columns_of[schema, table_name]
                 ],
             }
         )

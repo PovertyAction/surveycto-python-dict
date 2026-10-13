@@ -17,7 +17,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 
 from surveycto_python_dict.dictionary import kept
-from surveycto_python_dict.pii import FLAGGED
+from surveycto_python_dict.pii import shows_values
 from surveycto_python_dict.survey import choice_labels, gates, rule
 from surveycto_python_dict.xpath import (
     UnsupportedExpression,
@@ -425,7 +425,7 @@ def summary_stats(
             answered_when_skipped="" if ragged else outside,
             n_valid=len(valid),
         )
-        if pii not in FLAGGED and valid:
+        if shows_values(pii) and valid:
             out.update(_describe(valid, entry, q, is_binary))
         rows.append(out)
     return rows
@@ -439,14 +439,14 @@ def _describe(valid: list, entry: dict, q: dict | None, is_binary: bool) -> dict
         return {"selected": selected, "selected_share": _fmt(selected / len(valid))}
     # A select_one gets frequencies whether its codes are stored as text or integers.
     if q is not None and q["type"] == "select_one":
-        # A list kept in its dataset has no labels here, only the codes found.
+        # A withheld list has no labels here, only the codes found.
         labels = {} if q["choices_withheld"] else choice_labels(q["choices"])
         counts = {code: 0 for code in labels}
         for v in valid:
             counts[str(v)] = counts.get(str(v), 0) + 1
         return {
             "frequencies": "; ".join(
-                f"{code} {labels.get(code, '(in the dataset)' if q['choices_withheld'] else '(not a choice)')}: "
+                f"{code} {labels.get(code, '(not listed)' if q['choices_withheld'] else '(not a choice)')}: "
                 f"{n} ({n / len(valid):.1%})"
                 for code, n in counts.items()
             )

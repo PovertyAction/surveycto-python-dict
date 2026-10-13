@@ -152,6 +152,14 @@ def test_choice_code_not_in_form_is_text_and_counts_as_answered(contract):
     )
 
 
+def test_cast_fallback_never_quotes_a_code(contract):
+    """A code can be a value from the data: a picked name no longer in the list."""
+    table = cast_wide([dict(_ROWS[1], tools_Qzorvane="1")], contract)
+    assert _fallback(table, "tools_Qzorvane") == (
+        "a choice code not among the form's choices"
+    )
+
+
 def test_unmapped_column_is_text_at_the_end(contract):
     table = cast_wide([dict(_ROWS[0], mystery="x")], contract)
     assert _col(table, "mystery") == ["x"]
@@ -256,3 +264,73 @@ def test_a_select_multiple_exported_raw_is_split_into_binaries(contract):
     assert "plot_crop_1" not in table.schema.names
     assert (_col(table, "tools_1"), _col(table, "tools_2")) == ([0], [1])
     assert (_col(table, "plot_crop_1_1"), _col(table, "plot_crop_2_1")) == ([1], [1])
+
+
+_DIGITS_XML = """<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml"
+        xmlns:jr="http://openrosa.org/javarosa">
+  <h:head><model>
+    <instance><f id="f" version="1"><s4_1/><r jr:template=""><s5_2/></r></f></instance>
+    <bind nodeset="/f/s4_1" type="select"/>
+    <bind nodeset="/f/r/s5_2" type="select"/>
+  </model></h:head>
+  <h:body>
+    <select ref="/f/s4_1"><label>S4</label>
+      <item><label>a</label><value>1</value></item><item><label>b</label><value>2</value></item>
+    </select>
+    <group ref="/f/r"><repeat nodeset="/f/r">
+      <select ref="/f/r/s5_2"><label>S5</label>
+        <item><label>a</label><value>1</value></item><item><label>b</label><value>2</value></item>
+      </select>
+    </repeat></group>
+  </h:body>
+</h:html>
+"""
+
+
+def test_raw_select_multiple_named_with_trailing_digits_is_split(tmp_path):
+    path = tmp_path / "f.xml"
+    path.write_text(_DIGITS_XML, encoding="utf-8")
+    table = cast_wide(
+        [{"KEY": "k1", "s4_1": "1 2", "s5_2_1": "2"}], parse_contract(path)
+    )
+    assert "s4_1" not in table.schema.names
+    assert "s5_2_1" not in table.schema.names
+    assert (_col(table, "s4_1_1"), _col(table, "s4_1_2")) == ([1], [1])
+    assert (_col(table, "s5_2_1_1"), _col(table, "s5_2_2_1")) == ([0], [1])
+
+
+_GEO_XML = """<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml">
+  <h:head><model>
+    <instance><f id="f" version="1"><gps/><path/><area/><at/></f></instance>
+    <bind nodeset="/f/gps" type="geopoint"/>
+    <bind nodeset="/f/path" type="geotrace"/>
+    <bind nodeset="/f/area" type="geoshape"/>
+    <bind nodeset="/f/at" type="time"/>
+  </model></h:head>
+  <h:body>
+    <input ref="/f/gps"><label>GPS</label></input>
+    <input ref="/f/path"><label>Path</label></input>
+    <input ref="/f/area"><label>Area</label></input>
+    <input ref="/f/at"><label>At</label></input>
+  </h:body>
+</h:html>
+"""
+
+
+def test_geo_and_time_columns_are_text_without_fallback(tmp_path):
+    path = tmp_path / "f.xml"
+    path.write_text(_GEO_XML, encoding="utf-8")
+    row = {
+        "KEY": "k1",
+        "gps": "4.6 -74.1 2600 5",
+        "path": "4.6 -74.1 0 0;4.7 -74.2 0 0",
+        "area": "4.6 -74.1 0 0;4.7 -74.2 0 0;4.6 -74.1 0 0",
+        "at": "09:30:00.000-05:00",
+    }
+    table = cast_wide([row], parse_contract(path))
+    for name in ("gps", "path", "area", "at"):
+        assert table.schema.field(name).type == pa.string()
+        assert _fallback(table, name) == ""
+        assert _col(table, name) == [row[name]]

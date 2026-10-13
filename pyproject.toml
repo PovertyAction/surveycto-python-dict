@@ -1,10 +1,17 @@
 [project]
 name = "surveycto-python-dict"
 version = "0.1.0"
-description = "Pull a SurveyCTO form's XML and wide JSON over the API and build typed parquet, a variable dictionary and a per-variable PII signal."
+description = "Pull a SurveyCTO project's forms, submissions and server datasets over the API and build typed parquet, variable dictionaries, PII flags, cross-form lineage, a DuckDB database and an MCP server for cleaning."
+authors = [{ name = "Innovations for Poverty Action" }]
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 dependencies = [
     "requests>=2.31,<3",
     "pandas>=2.3.0,<4",
@@ -17,6 +24,10 @@ dependencies = [
     "openpyxl>=3.1,<4",
     "duckdb>=1.1,<2",
 ]
+
+[project.urls]
+Repository = "https://github.com/PovertyAction/surveycto-python-dict"
+Issues = "https://github.com/PovertyAction/surveycto-python-dict/issues"
 
 [dependency-groups]
 dev = ["codespell>=2.4.1", "pre-commit>=4.2.0", "pytest", "responses", "ruff"]
@@ -64,7 +75,6 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D"]
-"scripts/**" = ["D"]
 
 [tool.ruff.format]
 docstring-code-format = true

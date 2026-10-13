@@ -1,4 +1,5 @@
-"""``scto-pull``, ``scto-build`` and ``scto-run``.
+"""``scto-pull``, ``scto-build``, ``scto-run`` (pull, then build), ``scto-flow``,
+``scto-outputs`` and ``scto-skill``.
 
 Configuration is a TOML file (``--config``, default ``config.toml``)::
 
@@ -10,9 +11,13 @@ Configuration is a TOML file (``--config``, default ``config.toml``)::
     whitelist = ["village_name"]
     blacklist = ["respondent_id"]
 
+``[datasets.<id>]``, ``[submissions]``, ``[project]`` and ``[entities.<name>]`` are
+documented in ``config.example.toml``.
+
 Credentials and the study's sentinel codes come from the environment or ``.env``:
 ``SCTO_SERVER``, ``SCTO_USER``, ``SCTO_PASSWORD``, ``SCTO_KEY_PATH`` for encrypted forms,
-and ``SCTO_SENTINELS`` (``"-99=Don't know;-88=Refused"``) for building.
+``SCTO_SENTINELS`` (``"-99=Don't know;-88=Refused"``), which every command from build
+to outputs reads, and the optional ``SCTO_DATE_SENTINELS`` (``"1900-01-01=Don't know"``).
 
 Layout under ``out_dir``: ``raw/`` holds the form list, the server's dataset list
 (``datasets.json``) and every server dataset pulled (``raw/datasets/<id>.csv``), each
@@ -57,7 +62,7 @@ from surveycto_python_dict.pii import (
 )
 from surveycto_python_dict.questions import (
     build_questions,
-    withheld_choices,
+    search_choices,
     write_sections,
 )
 from surveycto_python_dict.stats import reached
@@ -157,10 +162,19 @@ def load_config(path: Path) -> Config:
             f"[entities.{name}]", set(section), {"key", "description", "parent"}
         )
         section["key"] = _columns(section["key"])
-    if not data["forms"]:
-        raise ValueError("forms is empty: name at least one form")
-    # <project>.duckdb holds a schema per form: a form named like the database makes
-    # every <form>.<table> ambiguous to DuckDB.
+    if not isinstance(data["forms"], list) or not data["forms"]:
+        raise ValueError("forms: a list of form ids, at least one")
+    twice = sorted(f for f, n in Counter(data["forms"]).items() if n > 1)
+    if twice:
+        raise ValueError(f"forms: {', '.join(twice)} is listed twice")
+    # <project>.duckdb holds a schema per form beside its own main and dataset, and a
+    # form named like the database makes every <form>.<table> ambiguous to DuckDB.
+    for form in data["forms"]:
+        if form in ("main", "dataset"):
+            raise ValueError(
+                f"forms: {form} is also a schema of <project>.duckdb, which holds the "
+                "project tables in main and the datasets in dataset"
+            )
     project_name = (Path(path).parent / data["out_dir"]).resolve().name
     if project_name in data["forms"]:
         raise ValueError(
@@ -310,9 +324,7 @@ def pull(cfg: Config, client: Client) -> Path:
         )
 
     for dataset in sorted(wanted):
-        (raw / "datasets" / f"{dataset}.csv").write_text(
-            client.pull_dataset(dataset), encoding="utf-8"
-        )
+        (raw / "datasets" / f"{dataset}.csv").write_bytes(client.pull_dataset(dataset))
     print(f"[pull] {len(wanted)} server datasets -> {raw / 'datasets'}")
     return raw
 
@@ -333,12 +345,19 @@ def build_form(
     contract = _contract(cfg, form)
     datasets = form_datasets(cfg, form)
     rows = json.loads((raw / "wide.json").read_text(encoding="utf-8"))
+    # The outputs are built from the submissions' columns, so a form needs some.
+    if not rows:
+        raise ValueError(
+            f"{form}: no submissions on the server; leave it out of forms until it "
+            "has some"
+        )
     screen_search_choices(contract, datasets, cfg.pii, analyzer, rows)
     questions = build_questions(contract)
     table = cast_wide(rows, contract)
     vardict = build_dictionary(table, questions, contract, sentinels, cfg.exclude)
     blocks = classify(table, vardict, questions, cfg.pii, analyzer)
-    attach(vardict, blocks)
+    codebook = dataset_codebook(datasets, questions, cfg.pii, analyzer, scanned)
+    attach(vardict, blocks, questions, codebook)
 
     paths = {
         "questions": out / f"{form}_questions.json",
@@ -364,10 +383,9 @@ def build_form(
             indent=None,
         )
         write_pii_review(table, vardict, paths["pii_review"])
-        codebook = dataset_codebook(datasets, questions, cfg.pii, analyzer, scanned)
         write_json(codebook, paths["dataset_codebook"])
         pq.write_table(
-            pa.Table.from_pylist(withheld_choices(contract), schema=SEARCH_CHOICES),
+            pa.Table.from_pylist(search_choices(contract), schema=SEARCH_CHOICES),
             paths["search_choices"],
         )
         parquet.result()

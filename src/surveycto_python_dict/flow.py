@@ -5,7 +5,9 @@ list which ones it attaches and which enumerator dataset its enumerator fields p
 from. Neither says which form publishes to a dataset, so that
 is read off the columns: a form publishes a dataset when nearly every dataset column
 (``NEAR``) is one of the form's fields, by the field's own name or by its wide column
-(``score_2``). The columns no field explains are ``legacy_columns``: fields the form's
+(``score_2``). A field that copies a column of the dataset under the column's name
+(``village = pulldata('households', 'village', ...)``) does not count: the form reads
+that dataset. The columns no field explains are ``legacy_columns``: fields the form's
 current version no longer has, or columns added on the server. A field published from
 a repeat gives one dataset row per instance, under its own name. When several forms
 cover a dataset, its readers drop out (a form that re-asks the fields it reads); two
@@ -64,8 +66,35 @@ def _field(contract: FormContract, column: str) -> str | None:
     return m["node_path"]
 
 
-def _origins(contract: FormContract) -> dict[str, tuple[str, set[str]]]:
-    """Return each field's origin and, when carried, the datasets it comes from."""
+def _copies(
+    contract: FormContract, sources: dict[str, DatasetSource], dataset_id: str
+) -> set[str]:
+    """Return the paths of the fields that copy a column of server dataset
+    ``dataset_id`` under the column's own name, through ``pulldata()``.
+    """
+    copies = set()
+    for node in contract.nodes.values():
+        source = node.data_source
+        if not source or source["kind"] != "pulldata":
+            continue
+        read = sources[source["dataset"]]
+        if (
+            read.kind == "server_dataset"
+            and read.ref == dataset_id
+            and source["value"] in (f"'{node.name}'", f'"{node.name}"')
+        ):
+            copies.add(node.path)
+    return copies
+
+
+def _origins(
+    contract: FormContract, sources: dict[str, DatasetSource], form: str
+) -> dict[str, tuple[str, set[str]]]:
+    """Return each field's origin and, when carried, the datasets it comes from.
+
+    A dataset goes by its flow id (the server id, or ``<form>/<file>``), so it joins
+    the flow's datasets however the form spells it.
+    """
     path_re = re.compile(rf"/{re.escape(contract.formid)}/([\w.-]+(?:/[\w.-]+)*)")
     origins: dict[str, tuple[str, set[str]]] = {}
 
@@ -77,7 +106,11 @@ def _origins(contract: FormContract) -> dict[str, tuple[str, set[str]]]:
         if node.preload:
             found = ("metadata", set())
         elif source and source["kind"] == "pulldata":
-            found = ("carried", {source["dataset"]})
+            read = sources[source["dataset"]]
+            dataset_id = (
+                read.ref if read.kind == "server_dataset" else f"{form}/{read.ref}"
+            )
+            found = ("carried", {dataset_id})
         elif node.calculate:
             refs = {
                 r
@@ -367,7 +400,10 @@ def build_flow(
                 }
             )
 
-    origin_of = {form: _origins(contract) for form, (contract, _) in forms.items()}
+    origin_of = {
+        form: _origins(contract, sources, form)
+        for form, (contract, sources) in forms.items()
+    }
     for node in datasets.values():
         if node["kind"] != "server_dataset":
             continue
@@ -375,7 +411,16 @@ def build_flow(
             form: {c: _field(contract, c) for c in node["columns"]}
             for form, (contract, _) in forms.items()
         }
-        share = {f: sum(1 for p in m.values() if p) for f, m in covering.items()}
+        # A copy of the dataset's own column reads it, so a form preloading the
+        # dataset does not cover it.
+        copies = {
+            form: _copies(contract, sources, node["id"])
+            for form, (contract, sources) in forms.items()
+        }
+        share = {
+            f: sum(1 for p in m.values() if p and p not in copies[f])
+            for f, m in covering.items()
+        }
         form = _publisher(node, share, published_by.get(node["id"]))
         if form is None:
             closest = max(share, key=share.get, default=None)
@@ -420,7 +465,8 @@ def build_flow(
     def stage(form: str, path: tuple[str, ...]) -> int:
         if form in path:
             raise ValueError(
-                f"forms publish to each other in a cycle: {' -> '.join(path)}"
+                "forms publish to each other in a cycle: "
+                + " -> ".join(path[path.index(form) :] + (form,))
             )
         if form not in stages:
             stages[form] = 1 + max(

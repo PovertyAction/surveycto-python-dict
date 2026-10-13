@@ -178,7 +178,8 @@ def test_dictionary_says_what_a_column_without_a_question_is(tmp_path, analyzer)
 
 
 def test_withheld_choices_are_in_the_choices_table(project):
-    # A withheld search() list, as the build writes it.
+    # A withheld search() list and a listed one filtered by a field, as the build
+    # writes them: the parquet holds the filter values, questions.json does not.
     rows = [
         {
             "question": "seller",
@@ -186,7 +187,14 @@ def test_withheld_choices_are_in_the_choices_table(project):
             "label": "Seven",
             "when": None,
             "withheld": "reviewed",
-        }
+        },
+        {
+            "question": "crop",
+            "value": "01",
+            "label": "Maize",
+            "when": '{"zone": "1"}',
+            "withheld": None,
+        },
     ]
     pq.write_table(
         pa.Table.from_pylist(rows, schema=SEARCH_CHOICES),
@@ -196,9 +204,12 @@ def test_withheld_choices_are_in_the_choices_table(project):
     assert con.sql(
         "SELECT value, label, withheld FROM farm.choices WHERE question = 'seller'"
     ).fetchall() == [("7", "Seven", "reviewed")]
+    assert con.sql(
+        "SELECT value, filter_values, withheld FROM farm.choices WHERE question = 'crop'"
+    ).fetchall() == [("01", '{"zone": "1"}', None)]
     assert (
         con.sql(
-            "SELECT count(*) FROM farm.choices WHERE question = 'crop' AND withheld IS NULL"
+            "SELECT count(*) FROM farm.choices WHERE question = 'tools' AND withheld IS NULL"
         ).fetchone()[0]
         > 0
     )
@@ -335,6 +346,13 @@ def test_declared_dataset_key_is_checked_and_named(database):
     )
     with pytest.raises(AssertionError, match="repeats"):
         _write(cfg, {"farm/prev_round.csv": ["owner"]})
+
+
+def test_dataset_key_naming_no_dataset_raises(database):
+    con, cfg = database
+    con.close()
+    with pytest.raises(ValueError, match=r"\[datasets.farm/prev_rnd.csv\] key"):
+        _write(cfg, {"farm/prev_rnd.csv": ["phone"]})
 
 
 def test_a_match_column_missing_from_the_dataset_is_reported(database):
@@ -506,6 +524,42 @@ def test_a_project_that_reads_no_dataset(tmp_path, analyzer):
     con = duckdb.connect(str(_write(cfg)), read_only=True)
     assert con.sql("SELECT count(*) FROM main.datasets").fetchone() == (0,)
     con.close()
+
+
+def test_a_repeat_named_like_a_description_table_raises(tmp_path, analyzer):
+    from farm_form import XML
+
+    config = tmp_path / "config.toml"
+    config.write_text('forms = ["farm"]\nout_dir = "out"\n', encoding="utf-8")
+    cfg = load_config(config)
+    xml = (
+        XML.replace('"/farm/plot"', '"/farm/questions"')
+        .replace("/farm/plot/", "/farm/questions/")
+        .replace("<plot jr:", "<questions jr:")
+        .replace("</plot>", "</questions>")
+    )
+    write_pull(cfg, xml=xml)
+    build(cfg, SENTINELS, analyzer)
+    form_dir = cfg.form_dir("farm")
+    write_csv(
+        summary_stats(form_dir, "farm", SENTINELS), form_dir / "farm_summary_stats.csv"
+    )
+    with pytest.raises(ValueError, match="farm: the repeat 'questions'"):
+        _write(cfg)
+
+
+def test_a_dataset_column_named_row_raises(tmp_path, analyzer):
+    config = tmp_path / "config.toml"
+    config.write_text('forms = ["farm"]\nout_dir = "out"\n', encoding="utf-8")
+    cfg = load_config(config)
+    write_pull(cfg, "phone,owner,row\n3000000000,Fictional Owner,7\n")
+    build(cfg, SENTINELS, analyzer)
+    form_dir = cfg.form_dir("farm")
+    write_csv(
+        summary_stats(form_dir, "farm", SENTINELS), form_dir / "farm_summary_stats.csv"
+    )
+    with pytest.raises(ValueError, match="renamed row to row_1"):
+        _write(cfg)
 
 
 def test_an_empty_table_types_its_text_columns_as_text():

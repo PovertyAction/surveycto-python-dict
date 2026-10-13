@@ -19,3 +19,6 @@ config.toml
 
 # Local MCP config points at a real form's outputs; ship only the example
 .mcp.json
+
+# Agent worktrees
+.claude/worktrees/

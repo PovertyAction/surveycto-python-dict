@@ -294,6 +294,14 @@ def test_withheld_lists_count_the_codes_picked_and_those_not_in_the_list(tmp_pat
     contract.nodes["tools"].choice_universe = [{"value": "1", "label": "x"}]
     summary = build_dictionary(table, questions, contract, SENTINELS)["summary"]
     assert summary["withheld_choices"] == {
-        "crop": {"n_codes_picked": 2, "codes_not_in_list": ["02"]},
-        "tools": {"n_codes_picked": 1, "codes_not_in_list": ["2"]},
+        "crop": {
+            "n_codes_picked": 2,
+            "n_codes_not_in_list": 1,
+            "codes_not_in_list": ["02"],
+        },
+        "tools": {
+            "n_codes_picked": 1,
+            "n_codes_not_in_list": 1,
+            "codes_not_in_list": ["2"],
+        },
     }
