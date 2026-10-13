@@ -50,6 +50,20 @@ def test_load_config_without_forms_raises(tmp_path):
         load_config(path)
 
 
+@pytest.mark.parametrize(
+    ("forms", "message"),
+    [
+        ('"farm"', "forms: a list of form ids"),
+        ('["farm", "farm"]', "forms: farm is listed twice"),
+    ],
+)
+def test_load_config_bad_forms_raises(tmp_path, forms, message):
+    path = tmp_path / "config.toml"
+    path.write_text(f'forms = {forms}\nout_dir = "out"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match=message):
+        load_config(path)
+
+
 def test_load_config_pii(tmp_path):
     cfg = load_config(
         _config(

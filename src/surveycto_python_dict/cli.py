@@ -157,8 +157,11 @@ def load_config(path: Path) -> Config:
             f"[entities.{name}]", set(section), {"key", "description", "parent"}
         )
         section["key"] = _columns(section["key"])
-    if not data["forms"]:
-        raise ValueError("forms is empty: name at least one form")
+    if not isinstance(data["forms"], list) or not data["forms"]:
+        raise ValueError("forms: a list of form ids, at least one")
+    twice = sorted(f for f, n in Counter(data["forms"]).items() if n > 1)
+    if twice:
+        raise ValueError(f"forms: {', '.join(twice)} is listed twice")
     # <project>.duckdb holds a schema per form beside its own main and dataset, and a
     # form named like the database makes every <form>.<table> ambiguous to DuckDB.
     for form in data["forms"]:
