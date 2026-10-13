@@ -2,7 +2,9 @@
 
 Reads ``<form>_questions.json``, ``<form>_variable_dictionary.json`` and
 ``<form>_variable_graph.json``; every answer is plain text. Nothing here reads the
-parquet, so no tool returns a submission value.
+parquet: a column's values (its range, a withheld list's codes) come from the
+dictionary and are shown only for a column that is not flagged ``contains_pii`` or
+``may_contain_pii``.
 
 Standard library only, so the file also ships in the survey-expert skill as
 ``search_survey.py`` and runs where the package is not installed::
