@@ -90,11 +90,10 @@ _GENERATED_CALLS = {"once", "uuid", "now", "today", "random", "concat", "if"}
 # or may hold PII.
 SAFE = {"cleared_by_form", "whitelisted"}
 FLAGGED = {"contains_pii", "may_contain_pii"}
-# Enough KEYs to find examples; the review parquet has every flagged row.
+# Enough KEYs to find examples; the review workbook has every flagged row.
 _MAX_HIT_KEYS = 5
 # A search() list longer than this stays in its dataset: a filter on a field can leave
 # every row of a large dataset as a possible choice, copied into each column.
-# A longer search() list stays in its dataset: the outputs name its columns.
 MAX_INLINE_CHOICES = 50
 
 

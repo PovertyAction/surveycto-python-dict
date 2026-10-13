@@ -20,9 +20,9 @@ invented forms.
 ## Wide JSON shape
 
 - Every value is a JSON string, and each row is a flat object.
-- **Keys are sparse per row.** A field that was not relevant or not selected is absent
+- Keys are sparse per row. A field that was not relevant or not selected is absent
   from the row, not `""`. Casting reads an absent key as empty (null).
-- **A select_multiple comes as per-choice binaries** `<field>_<code>`, with no
+- A select_multiple comes as per-choice binaries, `<field>_<code>`, with no
   space-separated `<field>` column. A binary is present, with value `"1"`, only when
   that choice was picked; the build fills `0` for the other choices of an answered row.
 - `dateTime` fields and system timestamps read `Mon D, YYYY H:MM:SS AM` (for example
@@ -32,9 +32,9 @@ invented forms.
 
 ## Encrypted forms
 
-- **`publishable` reaches the compiled XML** as the bind attribute
+- `publishable` reaches the compiled XML as the bind attribute
   `publishable="true()"`. A field that is not publishable has no attribute.
-- **Without the key, encrypted fields are absent**, not present and empty. The keyless
+- Without the key, encrypted fields are absent from the row. The keyless
   pull keeps `CompletionDate`, `SubmissionDate`, `formdef_version`, `review_quality`,
   `review_status`, `KEY` and the publishable fields, and leaves out `starttime`,
   `endtime`, `deviceid`, `duration` and `instanceID`.

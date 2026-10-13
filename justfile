@@ -53,7 +53,7 @@ duckdb cfg=config:
 mcp cfg=config:
     uv run scto-mcp --config {{ cfg }}
 
-[doc("Ask about the form from the shell, e.g. `just survey var age`, `just survey db`; another form: `just config=data/x.toml survey info`")]
+[doc("Ask about the project from the shell, e.g. `just survey var age`, `just survey db`; a form: `just survey --form <id> info`; another project: `just config=data/x.toml survey info`")]
 survey *args:
     uv run scto-survey --config {{ config }} {{ args }}
 

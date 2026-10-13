@@ -1,6 +1,6 @@
 ---
 name: survey-expert
-description: Read a SurveyCTO form's outputs from surveycto-python-dict - questions.json, the variable dictionary, the variable graph - to explain questions, skip logic, choices, repeat groups and columns, and to tell which columns may hold PII so they are handled carefully. Use when asked what a variable or column means, why it is missing, what gates or feeds it, how a repeat or select_multiple is laid out, or how to handle a column that may hold PII.
+description: Read a SurveyCTO project's outputs from surveycto-python-dict - questions.json, the variable dictionary, the variable graph, flow.json, the project database - to explain questions, skip logic, choices, repeat groups and columns, and to tell which columns may hold PII so they are handled carefully. Use when asked what a variable or column means, why it is missing, what gates or feeds it, how a repeat or select_multiple is laid out, or how to handle a column that may hold PII.
 ---
 
 # Survey expert
@@ -13,7 +13,7 @@ writes: one folder per form, `<out_dir>/<form>/`, and the project's `<out_dir>/f
 |---|---|
 | `<form>_questions.json` | One entry per question, keyed by its XLSForm `name`: joins back to the XLSForm row by row |
 | `sections/section_<group>.json` | `questions.json` sliced per group level |
-| `<form>_variable_dictionary.json` | One entry per parquet column: stats, types, sentinels, `pii` |
+| `<form>_variable_dictionary.json` | One entry per parquet column: counts, types, sentinels, `pii`, and the range of a column whose values are shown |
 | `<form>_variable_graph.json` | Questions linked by calculation, relevance, constraint and repeat |
 | `<form>.parquet` | The submissions, every column. Scripts use it; flagged columns' values stay out of what you print (below) |
 | `<form>_pii_review.xlsx` | Every value of a flagged column, for the people cleaning the data to verify the flags. **Never open it** |
@@ -31,7 +31,7 @@ on them:
    protocol, a codebook. Remind them to share only documents they are allowed to share
    with you.
 2. Ask the user to say in a few sentences what the project is about. Use their words
-   for `[project] description`; don't write one from the questions.
+   for `[project] description`; do not write one from the questions.
 3. From the documents and the candidate keys `get_project` lists, propose entities: a
    name, the key column (or the columns that identify it together, as a list), a
    one-line description from the documents, and a parent where one entity sits inside
@@ -55,15 +55,15 @@ to the outputs, with no package or MCP needed (`<S>` below):
 
 ```sh
 python .claude/skills/survey-expert/search_survey.py --dir <out_dir>/<form> <command>
-# inside the surveycto-python-dict repo, equivalently (--form when the config has several;
-# the MCP form tools take the form's id instead):
+# with the package installed, equivalently (--form when the config has several; the MCP
+# form tools take the form's id instead). Searching every form and `lineage` need --config:
 uv run scto-survey --config config.toml --form <form> <command>
 ```
 
 | Need | MCP tool | Shell (`<S> <command>`) |
 |---|---|---|
 | What a question or column is, and where a value read from a dataset comes from (more than 20 columns or choices are summarised, and every question's columns when you look up several; `columns=True` lists each) | `lookup_variable(form, name)` / `lookup_variables(form, names)` | `var <name> [<name> ...] [--columns]` |
-| Find questions by words or exact name, in every form or one | `search_questions(query)` / `search_questions(query, form)` | `search <words>` (every form without `--form`) |
+| Find questions by words or exact name, in every form or one | `search_questions(query)` / `search_questions(query, form)` | `search <words>` (every form with `--config` and no `--form`) |
 | A select's choices | `get_choice_list(form, name)` | `choices <name>` |
 | Why a question is asked | `get_gate_chain(form, name)` | `gates <name>` |
 | What feeds, gates or constrains it, and the repeat it is in | `get_variable_neighborhood(form, name, depth)` | `neighborhood <name> --depth N` |
@@ -92,7 +92,7 @@ Start from the graph, then read the formulas:
 - Many formulas at once (every calculate or relevance of a group or repeat): the
   `<form>.questions` table in the database, or `questions.json`.
 
-## PII: use every column, see only cleared values
+## PII: use every column, see only unflagged values
 
 Every column carries `pii.status` with the `basis` for it. The status says where
 personal data may be so it is handled carefully; it never means drop the column or
@@ -103,21 +103,24 @@ you see: a flagged column's values never reach the conversation.
 | Status | Meaning | You may see |
 |---|---|---|
 | `cleared_by_form` | The form marks the field `publishable` | Its values |
-| `whitelisted` | Reviewed by the team (`reviewed`), a system column, a number/date, an inline-choice select, or a calculate whose inputs are all cleared (`lineage:...`) | Its values |
-| `contains_pii` | Blacklisted by the team (`reviewed`), collection metadata (device or user, under any name), GPS, or an attachment | Counts and `KEY`s only |
+| `whitelisted` | Reviewed by the team (`reviewed`), a system column (`system`), a number/date, an inline-choice select, a calculate whose inputs are all cleared or that generates its value (`generated`), or any column of a project declared to hold no personal data (`project`) | Its values |
+| `contains_pii` | Blacklisted by the team (`reviewed`), collection metadata (device or user, under any name), GPS, an attachment, or a calculate that reads one of these (`lineage:<field>`) | Counts and `KEY`s only |
 | `may_contain_pii` | Presidio found names, phones, emails or places (`presidio:PERSON`, ...) in its values | Counts and `KEY`s only |
-| `no_hits` | Free text where Presidio found nothing | Counts and `KEY`s until the team reviews it |
+| `no_hits` | Free text where Presidio found nothing | Its values; the team may still review it |
 
 For a flagged column, a script prints counts, null rates, distinct counts and the
 `KEY`s of the rows a check flags, never the values, `head()` or `value_counts()`.
 Whether a column leaves a delivered dataset is the team's decision, not a cleaning
 default. A flag the team disagrees with is fixed in `config.toml`: they review
 `<form>_pii_review.xlsx` and add the columns they clear to `[pii] whitelist` (and
-personal ones to `[pii] blacklist`). A `search()` list that Presidio flags, the team puts on
-`[pii] blacklist` or that has more than 50 choices is referred to, not listed
+personal ones to `[pii] blacklist`). A list is referred to, not listed, when Presidio
+flags a `search()` list, the select (inline or `search()`) is on the blacklist, it has
+more than 50 choices, or it is filtered on a field whose values are not shown
 (`choices_withheld` says why): `get_choice_list` names its dataset, value and label
-columns and filter, and a script reads it from `<form>.choices` (`withheld` says why),
-keeping its values out of what you print. The parquet keeps all its binaries. `presidio.hit_rows` counts the
+columns and filter, and a script reads it from `<form>.choices`, keeping its values out
+of what you print. The parquet keeps all its binaries; when a list's codes are not
+shown, the tools name its binaries `<name>_<n>`. A `search()` list's filter values are
+submission values, so they are only in `<form>.choices`. `presidio.hit_rows` counts the
 rows with a hit and `presidio.hit_keys` gives up to five of their `KEY`s; quote counts
 and KEYs, never values.
 
@@ -125,15 +128,15 @@ and KEYs, never values.
 
 Each `variables.<column>` entry has:
 
-- `question`: the question it belongs to (null for system columns and notes);
-  `survey` repeats that question's text, type, choices and logic.
+- `question`: the question it belongs to; null for a system column and for one whose
+  `column_kind` says what it is (note, group, preload, `not_in_form`). `survey` repeats that question's text, type, choices and logic.
 - `parquet.arrow_type` / `parquet.xml_type`: the stored type and the XForm bind type.
   `parquet.cast_fallback` means the column could not be typed and is kept as text; it
   says why (for example `3 of 80 values do not parse as int64`).
 - `non_null_count`, `missing_rate`, `is_all_missing`; `data_min` / `data_max` for
-  numbers, dates and timestamps only.
-- `sentinels`: counts of non-response codes (`-99` Don't know, `-88` Refused, `-77`
-  Not applicable, `-66` Other, `-55` Not in list: the study's table in `SCTO_SENTINELS`). They are
+  numbers, dates and timestamps whose values are shown.
+- `sentinels`: counts of the study's non-response codes, set in `SCTO_SENTINELS`
+  (`-99` Don't know, `-88` Refused, say). They are
   **reported, never recoded**: the parquet keeps `-99` as `-99`, and the user decides
   how to treat it. The team suggests moving the code to `<var>_dk` and setting it
   missing in `<var>` (`references/cleaning.md`, section 3).
@@ -156,20 +159,23 @@ Each `variables.<column>` entry has:
   as `<name>__99`). A binary is `1` when chosen, `0` when another choice of the same
   question was chosen in that row (and repeat instance), and null when none was: the
   question was skipped. Every choice has a column, even one nobody picked, unless
-  `choices_per_submission` is true (the form filters the list per submission): then
-  only the codes someone picked do, in the wide parquet and the long views alike.
-- **Choices** are inline per question; a select's `choice_list` is its own name.
+  `choices_per_submission` is true (the form filters the list per submission, or a
+  `search()` list has more than 50 choices): then only the codes someone picked do, in
+  the wide parquet and the long views alike.
+- **Choices** are inline per question, or come from a dataset for a `search()` select
+  (`choice_columns` names its value and label columns).
 - **Repeats**: fields inside a repeat get `_<n>` per instance (`_<n>_<m>` when nested).
   A select_multiple inside a repeat is `<name>_<code>_<n>`: the choice code comes
   before the instance.
   Each repeat has a synthetic `<repeat>_count` question whose `calculation` is the
   repeat count. Repeat siblings belong to the same instance; handle them together.
-- **Notes** are exported as always-empty columns with no question.
+- **Notes**: a note with a value in any row is a column with `column_kind` note; one
+  empty in every row is left out of the parquet.
 
 ## Writing cleaning code
 
-Write it for the person who reviews it: a plain script read top to bottom like a
-do-file, explicit column names, plain `assert`, comments that say why, and no helpers or
+Write it for the person who reviews it: a plain script read top to bottom, explicit
+column names, plain `assert`, comments that say why, and no helpers or
 guards for cases that have not happened. Look at the data first (these tools, the
 summary stats) and say what you found about missing values before computing from them.
 

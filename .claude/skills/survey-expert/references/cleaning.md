@@ -378,9 +378,9 @@ To learn what a gate opens or what a calculate reads, start with
 ## 11. PII
 
 1. **A flag means handle carefully, never drop or avoid.** Scripts use every column:
-   join on it, clean it, deduplicate on it, keep it. For a `contains_pii`,
-   `may_contain_pii` or `no_hits` column, print counts, null rates, distinct counts and
-   the `KEY`s a check flags, never its values, `head()`, `value_counts()` or
+   join on it, clean it, deduplicate on it, keep it. For a `contains_pii` or
+   `may_contain_pii` column, print counts, null rates, distinct counts and the `KEY`s a
+   check flags, never its values, `head()`, `value_counts()` or
    `describe()`. The people cleaning the data verify the flags in
    `<form>_pii_review.xlsx`.
 2. **Presidio over-flags** (codes read as names): it proposes, a person decides, and the

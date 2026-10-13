@@ -1,4 +1,5 @@
-"""``scto-pull``, ``scto-build`` and ``scto-run``.
+"""``scto-pull``, ``scto-build``, ``scto-run`` (pull, then build), ``scto-flow``,
+``scto-outputs`` and ``scto-skill``.
 
 Configuration is a TOML file (``--config``, default ``config.toml``)::
 
@@ -10,9 +11,13 @@ Configuration is a TOML file (``--config``, default ``config.toml``)::
     whitelist = ["village_name"]
     blacklist = ["respondent_id"]
 
+``[datasets.<id>]``, ``[submissions]``, ``[project]`` and ``[entities.<name>]`` are
+documented in ``config.example.toml``.
+
 Credentials and the study's sentinel codes come from the environment or ``.env``:
 ``SCTO_SERVER``, ``SCTO_USER``, ``SCTO_PASSWORD``, ``SCTO_KEY_PATH`` for encrypted forms,
-and ``SCTO_SENTINELS`` (``"-99=Don't know;-88=Refused"``) for building.
+``SCTO_SENTINELS`` (``"-99=Don't know;-88=Refused"``), which every command from build
+to outputs reads, and the optional ``SCTO_DATE_SENTINELS`` (``"1900-01-01=Don't know"``).
 
 Layout under ``out_dir``: ``raw/`` holds the form list, the server's dataset list
 (``datasets.json``) and every server dataset pulled (``raw/datasets/<id>.csv``), each
