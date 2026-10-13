@@ -141,11 +141,11 @@ def _absent_text(found: list[dict]) -> str:
     return text + (f" ({shown}{more})" if found else "")
 
 
-def _withheld(q: dict) -> str:
-    text = (
-        f"choices not listed ({', '.join(q['choices_withheld'])}); they are in the "
-        f"dataset of `{q['appearance']}`"
-    )
+def _withheld(q: dict, form: str) -> str:
+    text = f"choices not listed ({', '.join(q['choices_withheld'])}); "
+    if "search(" not in (q["appearance"] or ""):
+        return text + f"they are in {form}.choices"
+    text += f"they are in the dataset of `{q['appearance']}`"
     columns = q["choice_columns"]
     if columns:
         text += (
@@ -793,7 +793,7 @@ class SurveyStore:
             if gate["group"]:
                 lines.append(f"Group relevance ({gate['group']}): {gate['relevance']}")
         if q["choices_withheld"]:
-            lines.append(_withheld(q))
+            lines.append(_withheld(q, self.form_id))
         elif q["choices"] and _filter_fields(q):
             lines.append(
                 f"Choices: {len(q['choices'])}, from the dataset rows the submissions "
@@ -1087,21 +1087,11 @@ class SurveyStore:
             lines.append(f"Named in the text of: {_capped(worded)}")
         return lines
 
-    def _withheld_lines(self, q: dict) -> list[str]:
-        """Return why a list is left out, the form's own choices, where a script reads
-        the rest and how, and the codes the submissions picked.
+    def _dataset_lines(self, source: dict, columns: dict, path: str) -> list[str]:
+        """Return where a withheld ``search()`` list's dataset is and how a script
+        decodes its codes.
         """
-        name = q["variable_name"]
-        lines = [f"{name} ({q['type']}): {_withheld(q)}"]
-        if q["choices"]:
-            lines.append(
-                "  The form's own choices: "
-                + "; ".join(f"{c['value']} = {c['label']}" for c in q["choices"])
-            )
-        source, columns = q["data_source"], q["choice_columns"]
-        if not (source and columns):
-            return lines
-        d, _ = self.read(source["dataset"], _path(q))
+        d, _ = self.read(source["dataset"], path)
         value, label = columns["value"], columns["label"]
         status = {
             c["column"]: c["pii"]["status"]
@@ -1117,7 +1107,7 @@ class SurveyStore:
         # A label can name several columns, the value column among them: name,id.
         labels = [c.strip() for c in label.split(",")]
         selected = ", ".join([value, *(c for c in labels if c != value)])
-        lines += [
+        return [
             f"  The rest: in {self.project}.duckdb dataset.{d['id']}; value column "
             f"{value} ({status[value]}), label "
             + ("columns " if len(labels) > 1 else "column ")
@@ -1125,6 +1115,24 @@ class SurveyStore:
             f'  A script decodes them: SELECT {selected} FROM dataset."{d["id"]}"'
             + (f" WHERE {where}" if where else ""),
         ]
+
+    def _withheld_lines(self, q: dict) -> list[str]:
+        """Return why a list is left out, the form's own choices, where a script reads
+        the rest and how, and the codes the submissions picked.
+        """
+        name = q["variable_name"]
+        lines = [f"{name} ({q['type']}): {_withheld(q, self.form_id)}"]
+        if q["choices"]:
+            lines.append(
+                "  The form's own choices: "
+                + "; ".join(f"{c['value']} = {c['label']}" for c in q["choices"])
+            )
+        source, columns = q["data_source"], q["choice_columns"]
+        if source and not columns:
+            return lines
+        # An inline list withheld by the blacklist is only in <form>.choices.
+        if source:
+            lines += self._dataset_lines(source, columns, _path(q))
         # A list filtered by an expression has no choices known before a submission.
         if not any(r.startswith("filtered by ") for r in q["choices_withheld"]):
             lines.append(
@@ -1734,6 +1742,8 @@ def _filter_line(q: dict) -> str:
     f = q["choice_filter"]
     if f["per_submission"]:
         how = "per submission: each sees the choices it passes"
+    elif q["choices_withheld"]:
+        how = f"applied to its {f['items']} choices"
     else:
         how = f"applied: {len(q['choices'])} of {f['items']} choices pass"
     return f"Choice filter: {f['expression']} ({how})"
@@ -1762,7 +1772,7 @@ def _choices_line(q: dict) -> str:
 
 def _choices_text(q: dict) -> str:
     if q["choices_withheld"]:
-        return f"; choices in its dataset ({', '.join(q['choices_withheld'])})"
+        return f"; choices not listed ({', '.join(q['choices_withheld'])})"
     if not q["choices"]:
         return ""
     labels = list(choice_labels(q["choices"]).items())

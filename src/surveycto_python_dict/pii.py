@@ -10,8 +10,8 @@ Each column gets ``{"status", "basis"[, "presidio"]}``; the first matching rule 
    whatever the name, a field that preloads device or user metadata (``username``,
    ``deviceid``, ...), an enumerator field, a calculate that calls
    ``enumerator-id()``, ``enumerator-name()`` or ``username()``; and a calculate
-   whose formula reads such a field or a blacklisted one, directly or through other
-   calculates (basis ``lineage:<field>``). This rule holds under
+   whose formula reads such a field, a geo or attachment field or a blacklisted one,
+   directly or through other calculates (basis ``lineage:<field>``). This rule holds under
    ``no_personal_data`` too; the whitelist outranks it.
 3. ``whitelisted``: system columns; integer, decimal, date, datetime and time
    questions; selects with inline choices; calculates whose every reference is
@@ -245,9 +245,11 @@ class _Rules:
 
     def carried(self, name: str | None) -> str | None:
         """Return a field a calculate's formula reads, directly or through other
-        calculates, that is blacklisted or collection metadata, else None. A
-        whitelisted field carries nothing. A ``pulldata()`` holds its dataset column,
-        not its key: it carries the column when that is blacklisted.
+        calculates, that is blacklisted, collection metadata or of a type that holds
+        personal data (a geopoint, an image, ...), else None: ``selected-at(${gps},
+        0)`` holds the latitude. A whitelisted field carries nothing. A
+        ``pulldata()`` holds its dataset column, not its key: it carries the column
+        when that is blacklisted.
         """
         q = self.by_name.get(name)
         if q is None or q["type"] != "calculate":
@@ -263,7 +265,9 @@ class _Rules:
                     continue
                 found = (
                     ref
-                    if ref in self.blacklist or self.personal(ref)
+                    if ref in self.blacklist
+                    or self.personal(ref)
+                    or self.by_name.get(ref, {}).get("type") in _CONTAINS_TYPES
                     else self.carried(ref)
                 )
                 if found:
@@ -328,12 +332,20 @@ def screen_search_choices(
     unscanned. A filter on a field keeps the rows
     matching the values the field takes in ``rows`` (the submissions); a filter on
     anything but a plain field withholds the list.
+
+    A blacklisted select with inline choices is withheld too (``reviewed``), its
+    choices kept in ``node.choice_universe``: the blacklist says its list holds
+    personal data, so the outputs refer to it instead of listing it.
     """
     submitted = SubmissionValues(contract, rows)
     tables: dict[str, DatasetTable] = {}
     for node in contract.nodes.values():
         source = node.data_source
         if not source or source["kind"] != "search":
+            if node.choice_items and node.name in config.blacklist:
+                node.choice_universe = node.choice_items
+                node.choices_withheld = ["reviewed"]
+                node.choice_items = []
             continue
         header = dataset_header(datasets[source["dataset"]])
         named = [i for i in node.choice_items if i["value"] in header]

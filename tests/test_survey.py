@@ -73,6 +73,46 @@ def test_blacklisted_date_and_int_have_no_range(tmp_path, analyzer):
     assert "range 1.5..1.5" in store.lookup_variable("area")
 
 
+def test_blacklisted_inline_select_labels_not_listed(tmp_path, analyzer):
+    from openpyxl import load_workbook
+
+    from surveycto_python_dict.codebook import write_codebook
+    from surveycto_python_dict.stats import write_form_stats
+
+    config = tmp_path / "config.toml"
+    config.write_text(
+        'forms = ["farm"]\nout_dir = "out"\n[pii]\nblacklist = ["tools"]\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(config)
+    write_pull(cfg)
+    build(cfg, SENTINELS, analyzer)
+    form_dir = cfg.form_dir("farm")
+    write_codebook(form_dir, "farm", write_form_stats(form_dir, "farm", SENTINELS))
+    store = SurveyStore(form_dir, "farm")
+    out = "\n".join(
+        [store.get_choice_list("tools"), store.lookup_variable("tools", columns=True)]
+    )
+    assert "choices not listed (reviewed); they are in farm.choices" in out
+    texts = [out] + [
+        (form_dir / f"farm_{name}.json").read_text(encoding="utf-8")
+        for name in ("questions", "variable_dictionary")
+    ]
+    workbook = load_workbook(form_dir / "farm_codebook.xlsx")
+    texts.append(
+        str(
+            [
+                c
+                for ws in workbook
+                for row in ws.iter_rows(values_only=True)
+                for c in row
+            ]
+        )
+    )
+    for text in texts:
+        assert "Hoe" not in text and "Plough" not in text
+
+
 def test_lookup_variables_batches(store):
     out = store.lookup_variables(["area", "plots"])
     assert "area (decimal)" in out and "plots (integer)" in out

@@ -331,6 +331,21 @@ def test_a_calculate_that_generates_its_value_is_whitelisted():
     assert rules.static("slot") is None
 
 
+def test_calculate_over_geopoint_carries_contains_pii():
+    from surveycto_python_dict.pii import _Rules
+
+    questions = [
+        {"variable_name": "gps", "type": "geopoint", "calculation": None},
+        {
+            "variable_name": "lat",
+            "type": "calculate",
+            "calculation": "selected-at(${gps}, 0)",
+            "data_source": None,
+        },
+    ]
+    assert _Rules(questions, set(), set(), True).carried("lat") == "gps"
+
+
 def test_flagged_columns_lose_their_range_and_codes_not_in_list(form, analyzer):
     from surveycto_python_dict.pii import attach
 
