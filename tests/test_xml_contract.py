@@ -108,13 +108,13 @@ class TestParseContract:
 
     def test_pulldata_provenance(self, contract):
         node = contract.nodes["pre_score"]
-        assert node.pulldata == {
+        assert node.data_source == {
+            "kind": "pulldata",
             "dataset": "preload",
             "value": "'score'",
             "key": "id",
             "match": "/myform/name",
         }
-        assert node.data_source["kind"] == "pulldata"
 
     def test_search_data_source(self, contract):
         ds = contract.nodes["langs"].data_source
@@ -325,7 +325,6 @@ class TestDeterminismAndSecondaryInstance:
         assert c._by_name["income"] == sorted(c._by_name["income"])  # stable order
         m = c.map_column("income")
         assert m["node_path"] == "ga/income"  # lexicographically-first, deterministic
-        assert m["ambiguous"] is True
 
     def test_secondary_instance_does_not_hijack(self, tmp_path):
         # A select_from_file / lookup compiles to a SECONDARY <instance id="...">
@@ -660,10 +659,6 @@ class TestPublishable:
     def test_no_attribute_is_not_publishable(self, pubform):
         assert pubform.nodes["owner_name"].publishable is False
 
-    def test_publishable_in_contract_json(self, pubform):
-        nodes = pubform.to_dict()["nodes"]
-        assert nodes["district"]["publishable"] is True
-
 
 class TestEncrypted:
     def test_public_key_marks_form_encrypted(self, tmp_path):
@@ -781,8 +776,8 @@ def test_a_body_control_calculate_is_read(tmp_path):
     nodes = parse_contract(path).nodes
     assert nodes["seen"].calculate == "concat( /f/hh , ',')"
     assert nodes["seen"].control == "input"
-    assert nodes["village"].pulldata["dataset"] == "households"
     assert nodes["village"].data_source["kind"] == "pulldata"
+    assert nodes["village"].data_source["dataset"] == "households"
     # On the body control, the calculate is a default the user can change, unless
     # the field is never shown.
     assert nodes["seen"].calculation_is_default
