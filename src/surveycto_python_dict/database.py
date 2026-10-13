@@ -740,6 +740,16 @@ def write_database(
     """
     out_dir = Path(out_dir)
     flow = _load(out_dir / "flow.json")
+    # A key on a dataset the flow lacks is a typo: that dataset would fall back to row.
+    known = [d["id"] for d in flow["datasets"]]
+    unknown = sorted(set(dataset_keys) - set(known))
+    if unknown:
+        raise ValueError(
+            "; ".join(
+                f"[datasets.{d}] key: no dataset {d} in flow.json" for d in unknown
+            )
+            + f" (its datasets: {', '.join(known) or 'none'})"
+        )
     ids = {
         form: {
             r["name_in_form"]: r["dataset"] for r in flow["reads"] if r["form"] == form

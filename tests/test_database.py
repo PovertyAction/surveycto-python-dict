@@ -337,6 +337,13 @@ def test_declared_dataset_key_is_checked_and_named(database):
         _write(cfg, {"farm/prev_round.csv": ["owner"]})
 
 
+def test_dataset_key_naming_no_dataset_raises(database):
+    con, cfg = database
+    con.close()
+    with pytest.raises(ValueError, match=r"\[datasets.farm/prev_rnd.csv\] key"):
+        _write(cfg, {"farm/prev_rnd.csv": ["phone"]})
+
+
 def test_a_match_column_missing_from_the_dataset_is_reported(database):
     con, cfg = database
     con.close()
