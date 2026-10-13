@@ -344,6 +344,8 @@ def test_calculate_over_geopoint_carries_contains_pii():
         },
     ]
     assert _Rules(questions, set(), set(), True).carried("lat") == "gps"
+    # With no_personal_data the geopoint is whitelisted, so it carries nothing.
+    assert _Rules(questions, set(), set(), True, True).carried("lat") is None
 
 
 def test_flagged_columns_lose_their_range_and_codes_not_in_list(form, analyzer):

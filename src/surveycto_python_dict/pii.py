@@ -6,13 +6,15 @@ Each column gets ``{"status", "basis"[, "presidio"]}``; the first matching rule 
    blacklist; ``whitelisted`` / ``reviewed``: on the whitelist.
 1. ``cleared_by_form``: the question is ``publishable``. With ``trust_publishable =
    false`` this rule is skipped and ``publishable`` is only noted in the basis.
-2. ``contains_pii``: device metadata columns; geo and attachment question types;
-   whatever the name, a field that preloads device or user metadata (``username``,
-   ``deviceid``, ...), an enumerator field, a calculate that calls
-   ``enumerator-id()``, ``enumerator-name()`` or ``username()``; and a calculate
-   whose formula reads such a field, a geo or attachment field or a blacklisted one,
-   directly or through other calculates (basis ``lineage:<field>``). This rule holds under
-   ``no_personal_data`` too; the whitelist outranks it.
+2. ``contains_pii``: device metadata columns; whatever the name, a field that
+   preloads device or user metadata (``username``, ``deviceid``, ...), an enumerator
+   field, a calculate that calls ``enumerator-id()``, ``enumerator-name()`` or
+   ``username()``; and a calculate whose formula reads such a field, a geo or
+   attachment field or a blacklisted one, directly or through other calculates (basis
+   ``lineage:<field>``). This rule holds under ``no_personal_data`` too, except for
+   geo and attachment fields; the whitelist outranks it. Geo and attachment fields
+   themselves are ``contains_pii`` by their type (rule 3's ``static``), which
+   ``no_personal_data`` overrides.
 3. ``whitelisted``: system columns; integer, decimal, date, datetime and time
    questions; selects with inline choices; calculates whose every reference is
    cleared or whitelisted and that do not ``pulldata()``.
@@ -186,11 +188,15 @@ class _Rules:
         whitelist: set[str],
         blacklist: set[str],
         trust_publishable: bool,
+        no_personal_data: bool = False,
     ):
         self.by_name = {q["variable_name"]: q for q in questions}
         self.whitelist = whitelist
         self.blacklist = blacklist
         self.trust_publishable = trust_publishable
+        # In a project declared to hold no personal data, geo and attachment fields are
+        # whitelisted, so they carry nothing.
+        self.personal_types = set() if no_personal_data else _CONTAINS_TYPES
         self._memo: dict[str, dict | None] = {}
         self._carried: dict[str, str | None] = {}
 
@@ -267,7 +273,7 @@ class _Rules:
                     ref
                     if ref in self.blacklist
                     or self.personal(ref)
-                    or self.by_name.get(ref, {}).get("type") in _CONTAINS_TYPES
+                    or self.by_name.get(ref, {}).get("type") in self.personal_types
                     else self.carried(ref)
                 )
                 if found:
@@ -459,6 +465,7 @@ def classify(
         whitelist & question_names,
         blacklist,
         config.trust_publishable,
+        config.no_personal_data,
     )
     keys = table.column("KEY").to_pylist()
 
