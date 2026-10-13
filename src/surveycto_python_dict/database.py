@@ -141,7 +141,7 @@ def _table(con, schema: str, name: str, frame: pd.DataFrame) -> None:
 
 
 # Each form's description tables: what one row is, the key, and what each refers to.
-# `{s}` is the form's schema.
+# `{s}` is the form's schema, quoted.
 _DESCRIPTIONS = {
     "dictionary": {
         "grain": "one row per parquet column; view_name is the view it is in and "
@@ -301,10 +301,12 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
         )
         _check_view(con, _q(form, repeat), long.column_names)
         # An instance joins its parent on the parent's keys, named alike in both.
-        this = f"{form}.{repeat}"
-        parent = f"{form}.{group['parent'] or 'submissions'}"
-        on = " AND ".join(f"{this}.{k} = {parent}.{k}" for k in keys[:-1])
-        structure[this] = {
+        this = _q(form, repeat)
+        parent = _q(form, group["parent"] or "submissions")
+        on = " AND ".join(
+            f"{this}.{_ident(k)} = {parent}.{_ident(k)}" for k in keys[:-1]
+        )
+        structure[f"{form}.{repeat}"] = {
             "grain": f"one row per instance of the repeat {repeat} that has any value",
             "key": keys,
             "joins": [f"{on}  (many to one)"],
@@ -484,7 +486,7 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
     for name, described in _DESCRIPTIONS.items():
         structure[f"{form}.{name}"] = {
             **described,
-            "joins": [j.format(s=form) for j in described["joins"]],
+            "joins": [j.format(s=_ident(form)) for j in described["joins"]],
         }
     return {"questions": questions, "repeat_of": repeat_of, "codebook": codebook}
 
@@ -537,7 +539,6 @@ def _write_datasets(
         # The joins each reading form's pulldata()/search() use, the dataset column on
         # the left; a literal match is a filter.
         stats = {c["column"]: c for c in entries}
-        name = f"dataset.{did}"
         joins = []
         for form in d["read_by"]:
             repeat_of = forms[form]["repeat_of"]
@@ -547,9 +548,10 @@ def _write_datasets(
                     continue
                 if source["kind"] == "enumerator":
                     field = q["variable_name"]
-                    table = f"{form}.{repeat_of.get(field) or 'submissions'}"
+                    table = _q(form, repeat_of.get(field) or "submissions")
                     line = (
-                        f"{name}.id = {table}.{field}  (an enumerator field stores "
+                        f"{view}.id = {table}.{_ident(field)}  (an enumerator field "
+                        "stores "
                         '"name (id)": the id is in the parentheses)'
                     )
                     if line not in joins:
@@ -557,23 +559,29 @@ def _write_datasets(
                 for m in source["match"]:
                     value = m["value"] or ""
                     if not (value.startswith("${") and value.endswith("}")):
-                        line = f"filter: {name}.{m['column']} = {value}"
+                        # An XPath string literal, in either quote, is an SQL one.
+                        if value[:1] in ("'", '"') and value[-1:] == value[:1]:
+                            value = _literal(value[1:-1])
+                        line = f"filter: {view}.{_ident(m['column'])} = {value}"
                     elif m["column"] not in stats:
                         # The form names a column the dataset does not have: the
                         # lookup never finds a row.
                         line = (
-                            f"{name}.{m['column']} = {form}.${{{value[2:-1]}}}  "
+                            f"{view}.{_ident(m['column'])} = "
+                            f"{_ident(form)}.${{{value[2:-1]}}}  "
                             f"({m['column']} is not a column of {did}: "
                             f"{form}.{q['variable_name']} finds no row)"
                         )
                     else:
                         field = value[2:-1]
-                        table = f"{form}.{repeat_of.get(field) or 'submissions'}"
+                        table = _q(form, repeat_of.get(field) or "submissions")
                         column = stats[m["column"]]
                         unique = (
                             column["distinct"] == column["non_null"] == column["rows"]
                         )
-                        line = f"{name}.{m['column']} = {table}.{field}  " + (
+                        line = (
+                            f"{view}.{_ident(m['column'])} = {table}.{_ident(field)}  "
+                        ) + (
                             "(a search() filter: the choices are every matching row)"
                             if source["kind"] == "search"
                             else "(many to one: the column is unique in the dataset)"
@@ -583,7 +591,7 @@ def _write_datasets(
                         )
                     if line not in joins:
                         joins.append(line)
-        structure[name] = {"grain": grain, "key": key, "joins": joins}
+        structure[f"dataset.{did}"] = {"grain": grain, "key": key, "joins": joins}
 
 
 def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
@@ -743,9 +751,10 @@ def _write_project(con, flow: dict, forms: dict, structure: dict) -> None:
     structure["joins"] = {
         **_PROJECT["joins"],
         "joins": [
-            f"{j['reader_form']}.{j['reader_table']}.{j['reader_field']} = "
-            f"{j['publisher_form']}.{j['publisher_table']}.{j['publisher_field']}  "
-            f"(through dataset.{j['dataset']}.{j['dataset_column']}"
+            f"{_q(j['reader_form'], j['reader_table'])}.{_ident(j['reader_field'])} = "
+            f"{_q(j['publisher_form'], j['publisher_table'])}."
+            f"{_ident(j['publisher_field'])}  "
+            f"(through {_q('dataset', j['dataset'])}.{_ident(j['dataset_column'])}"
             + ("; the select stores this column" if j["via"] == "search value" else "")
             + (
                 "; a search() filter: the choices are every matching row)"

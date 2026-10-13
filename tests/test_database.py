@@ -295,11 +295,13 @@ def test_structure_comes_from_the_finished_database(database):
     plot = next(o for o in objects if o["name"] == "farm.plot")
     assert plot["kind"] == "view"
     assert plot["key"] == ["KEY", "plot_index"]
-    assert plot["joins"] == ["farm.plot.KEY = farm.submissions.KEY  (many to one)"]
+    assert plot["joins"] == [
+        '"farm"."plot"."KEY" = "farm"."submissions"."KEY"  (many to one)'
+    ]
     assert {"name": "plot_index", "type": "INTEGER"} in plot["columns"]
     prev = next(o for o in objects if o["name"] == "dataset.farm/prev_round.csv")
     assert prev["joins"] == [
-        "dataset.farm/prev_round.csv.phone = farm.submissions.phone  "
+        '"dataset"."farm/prev_round.csv"."phone" = "farm"."submissions"."phone"  '
         "(many to one: the column is unique in the dataset)"
     ]
 
@@ -316,7 +318,10 @@ def test_structure_comes_from_the_finished_database(database):
 
     out = store.get_structure_db("farm")
     assert "-- view farm.plot: one row per instance of the repeat plot" in out
-    assert "--   join: farm.plot.KEY = farm.submissions.KEY  (many to one)" in out
+    assert (
+        '--   join: "farm"."plot"."KEY" = "farm"."submissions"."KEY"  (many to one)'
+        in out
+    )
     assert "plot_size" in store.get_structure_db("farm", "plot")
     assert "-- table farm.dictionary: one row per parquet column; view_name is" in out
     # The datasets the form joins come with it.
@@ -369,7 +374,8 @@ def test_a_match_column_missing_from_the_dataset_is_reported(database):
     )
     prev = next(o for o in objects if o["name"] == "dataset.farm/prev_round.csv")
     assert prev["joins"] == [
-        "dataset.farm/prev_round.csv.phone = farm.${phone}  (phone is not a column "
+        '"dataset"."farm/prev_round.csv"."phone" = "farm".${phone}  (phone is not '
+        "a column "
         "of farm/prev_round.csv: farm.prev finds no row)"
     ]
 
@@ -468,16 +474,19 @@ def test_joins_connect_a_reader_field_to_the_publisher_field():
             2,
         )
     ]
+    match_line = (
+        '"visit"."submissions"."visit_hh" = "listing"."submissions"."hhid"  '
+        '(through "dataset"."hh"."hhid"; '
+    )
     assert structure["joins"]["joins"] == [
-        "visit.submissions.visit_hh = listing.submissions.hhid  (through dataset.hh.hhid; "
-        "not unique: 1 distinct values in 2 rows, so a match can return another row)"
+        match_line + "not unique: 1 distinct values in 2 rows, so a match can "
+        "return another row)"
     ]
     # A search() filter takes every matching row: no warning.
     forms["visit"]["questions"][0]["data_source"]["kind"] = "search"
     _write_project(duckdb.connect(), flow, forms, structure)
     assert structure["joins"]["joins"] == [
-        "visit.submissions.visit_hh = listing.submissions.hhid  (through dataset.hh.hhid; "
-        "a search() filter: the choices are every matching row)"
+        match_line + "a search() filter: the choices are every matching row)"
     ]
     # A search() select stores its value column: the field itself joins on it.
     question = forms["visit"]["questions"][0]
@@ -485,10 +494,129 @@ def test_joins_connect_a_reader_field_to_the_publisher_field():
     question["choice_columns"] = {"value": "hhid", "label": "village"}
     _write_project(duckdb.connect(), flow, forms, structure)
     assert structure["joins"]["joins"] == [
-        "visit.submissions.where = listing.submissions.hhid  (through dataset.hh.hhid; "
-        "the select stores this column; not unique: 1 distinct values in 2 rows, so a "
-        "match can return another row)"
+        '"visit"."submissions"."where" = "listing"."submissions"."hhid"  '
+        '(through "dataset"."hh"."hhid"; the select stores this column; '
+        "not unique: 1 distinct values in 2 rows, so a match can return another row)"
     ]
+
+
+def test_join_lines_run_as_sql(tmp_path):
+    """A dataset id with "/" and ".csv", form ids with "-", names with "." and a
+    reserved word: every join line runs as written.
+    """
+    from surveycto_python_dict.database import _write_datasets, _write_project
+
+    did = "hh-listing/roster.csv"
+    csv = tmp_path / "roster.csv"
+    csv.write_text("hh.id,village\n1,a\n2,b\n", encoding="utf-8")
+    flow = {
+        "forms": [
+            {
+                "form_id": "hh-listing",
+                "stage": 1,
+                "reads_from": [],
+                "publishes": [did],
+            },
+            {
+                "form_id": "visit-2",
+                "stage": 2,
+                "reads_from": ["hh-listing"],
+                "publishes": [],
+            },
+        ],
+        "datasets": [
+            {
+                "id": did,
+                "kind": "form_attachment",
+                "title": None,
+                "key": None,
+                "rows": 2,
+                "columns": ["hh.id", "village"],
+                "published_by": "hh-listing",
+                "publish_map": {"hh.id": "hh.id"},
+                "origins": {"hh.id": {"kind": "entered", "from": []}},
+                "origin_counts": {"entered": 1},
+                "read_by": ["visit-2"],
+            }
+        ],
+        "reads": [
+            {
+                "form": "visit-2",
+                "dataset": did,
+                "name_in_form": "roster",
+                "attached": True,
+                "fields": [
+                    {"field": "order", "via": "pulldata", "columns": ["hh.id"]},
+                    {"field": "pick", "via": "search", "columns": ["village"]},
+                ],
+            }
+        ],
+    }
+    codebook = [
+        {"dataset": "roster", "column": c, "distinct": 2, "non_null": 2, "rows": 2}
+        for c in ("hh.id", "village")
+    ]
+    forms = {
+        "hh-listing": {"questions": [], "repeat_of": {}, "codebook": []},
+        "visit-2": {
+            "questions": [
+                {
+                    "variable_name": "order",
+                    "data_source": {
+                        "kind": "pulldata",
+                        "dataset": "roster",
+                        "match": [{"column": "hh.id", "value": "${hh.ref}"}],
+                    },
+                    "choice_columns": None,
+                },
+                {
+                    "variable_name": "pick",
+                    "data_source": {
+                        "kind": "search",
+                        "dataset": "roster",
+                        "match": [{"column": "village", "value": '"a"'}],
+                    },
+                    "choice_columns": None,
+                },
+            ],
+            "repeat_of": {},
+            "codebook": codebook,
+        },
+    }
+    con = duckdb.connect()
+    con.execute(
+        'CREATE SCHEMA "hh-listing"; CREATE SCHEMA "visit-2"; '
+        'CREATE TABLE "hh-listing".submissions ("hh.id" VARCHAR); '
+        'CREATE TABLE "visit-2".submissions ("hh.ref" VARCHAR, "order" VARCHAR)'
+    )
+    structure: dict = {}
+    _write_datasets(con, flow, {did: csv}, forms, {}, structure)
+    _write_project(con, flow, forms, structure)
+    lines = structure[f"dataset.{did}"]["joins"] + structure["joins"]["joins"]
+    assert len(lines) == 3
+    tables = (
+        '"dataset"."hh-listing/roster.csv", "hh-listing".submissions, '
+        '"visit-2".submissions'
+    )
+    for line in lines:
+        condition = line.removeprefix("filter: ").split("  (")[0]
+        con.sql(f"SELECT count(*) FROM {tables} WHERE {condition}").fetchall()
+
+    # The form's schema map finds its joins by the quoted name.
+    from surveycto_python_dict.survey import render_structure_schema
+
+    def described(name):
+        return {"kind": "table", "columns": [], **structure[name], "name": name}
+
+    objects = [
+        {**described("forms"), "name": "visit-2.submissions", "joins": []},
+        described(f"dataset.{did}"),
+        described("joins"),
+    ]
+    out = render_structure_schema("p", objects, "visit-2")
+    joined = [line for line in lines if '"visit-2".' in line]
+    assert len(joined) == 2
+    assert all(f"--   join: {line}" in out for line in joined)
 
 
 def test_outputs_writes_stats_codebook_and_database(tmp_path, analyzer, monkeypatch):
