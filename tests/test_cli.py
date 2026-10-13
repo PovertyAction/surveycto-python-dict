@@ -104,10 +104,14 @@ _SERVER_DATASETS = {
 }
 
 
-def _mock_server(xml: str, wide_method: str):
+def _mock_server(xml: str, wide_method: str, households: bytes = b"hhid\n1\n"):
     responses.get(f"{BASE}/formList", body=FORM_LIST)
     responses.get(f"{BASE}/api/v2/datasets", json=_SERVER_DATASETS)
-    responses.get(f"{BASE}/api/v2/datasets/data/csv/households", body="hhid\n1\n")
+    responses.get(
+        f"{BASE}/api/v2/datasets/data/csv/households",
+        body=households,
+        content_type="text/csv",
+    )
     responses.get(f"{BASE}/forms/farm/xml", body=xml.encode())
     responses.get(f"{BASE}/forms/farm/manifest", body=_MANIFEST)
     zipped = io.BytesIO()
@@ -158,6 +162,18 @@ def test_pull_listed_server_dataset_comes_once_into_raw(tmp_path, monkeypatch):
     assert (raw / "datasets" / "households.csv").read_text(encoding="utf-8") == (
         "hhid\n1\n"
     )
+
+
+@responses.activate
+def test_pull_dataset_keeps_the_server_bytes(tmp_path, monkeypatch):
+    monkeypatch.delenv("SCTO_KEY_PATH", raising=False)
+    body = 'hhid,name\r\n1,José\r\n2,"a\r\nb"\r\n'.encode()
+    _mock_server(XML, responses.GET, households=body)
+    raw = pull(
+        load_config(_config(tmp_path, 'server_datasets = ["households"]\n')),
+        Client("acme", "u", "p"),
+    )
+    assert (raw / "datasets" / "households.csv").read_bytes() == body
 
 
 @responses.activate

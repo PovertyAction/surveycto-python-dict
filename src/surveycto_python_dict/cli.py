@@ -310,9 +310,7 @@ def pull(cfg: Config, client: Client) -> Path:
         )
 
     for dataset in sorted(wanted):
-        (raw / "datasets" / f"{dataset}.csv").write_text(
-            client.pull_dataset(dataset), encoding="utf-8"
-        )
+        (raw / "datasets" / f"{dataset}.csv").write_bytes(client.pull_dataset(dataset))
     print(f"[pull] {len(wanted)} server datasets -> {raw / 'datasets'}")
     return raw
 

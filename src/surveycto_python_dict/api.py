@@ -109,10 +109,13 @@ class Client:
             datasets += page["data"]
         return datasets
 
-    def pull_dataset(self, dataset_id: str) -> str:
-        """Return a server dataset as CSV text."""
+    def pull_dataset(self, dataset_id: str) -> bytes:
+        """Return a server dataset's CSV as the server's bytes.
+
+        Decoding would read ``text/csv`` without a charset as Latin-1.
+        """
         url = f"{self.base_url}/api/v2/datasets/data/csv/{dataset_id}"
-        return self._send("GET", url).text
+        return self._send("GET", url).content
 
     def pull_form_files(self, form_id: str, filenames: list[str]) -> dict[str, bytes]:
         """Return the form's attached CSVs ``filenames``, keyed by filename.
