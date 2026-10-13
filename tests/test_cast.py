@@ -152,6 +152,14 @@ def test_choice_code_not_in_form_is_text_and_counts_as_answered(contract):
     )
 
 
+def test_cast_fallback_never_quotes_a_code(contract):
+    """A code can be a value from the data: a picked name no longer in the list."""
+    table = cast_wide([dict(_ROWS[1], tools_Qzorvane="1")], contract)
+    assert _fallback(table, "tools_Qzorvane") == (
+        "a choice code not among the form's choices"
+    )
+
+
 def test_unmapped_column_is_text_at_the_end(contract):
     table = cast_wide([dict(_ROWS[0], mystery="x")], contract)
     assert _col(table, "mystery") == ["x"]

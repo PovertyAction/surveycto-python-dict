@@ -329,3 +329,38 @@ def test_a_calculate_that_generates_its_value_is_whitelisted():
     assert rules.static("coder")["status"] == "contains_pii"
     # Reading no field through another function, it is scanned.
     assert rules.static("slot") is None
+
+
+def test_calculate_over_geopoint_carries_contains_pii():
+    from surveycto_python_dict.pii import _Rules
+
+    questions = [
+        {"variable_name": "gps", "type": "geopoint", "calculation": None},
+        {
+            "variable_name": "lat",
+            "type": "calculate",
+            "calculation": "selected-at(${gps}, 0)",
+            "data_source": None,
+        },
+    ]
+    assert _Rules(questions, set(), set(), True).carried("lat") == "gps"
+
+
+def test_flagged_columns_lose_their_range_and_codes_not_in_list(form, analyzer):
+    from surveycto_python_dict.pii import attach
+
+    table, questions, vardict = form
+    picked = {
+        "n_codes_picked": 2,
+        "n_codes_not_in_list": 1,
+        "codes_not_in_list": ["02"],
+    }
+    vardict["summary"]["withheld_choices"] = {"crop": picked}
+    config = PiiConfig(blacklist=("visit", "plots", "crop"))
+    attach(vardict, _classify(form, analyzer, config)[0], questions, [])
+    variables = vardict["variables"]
+    for column in ("visit", "plots"):
+        assert "data_min" not in variables[column]
+        assert "data_max" not in variables[column]
+    assert variables["area"]["data_min"] == 1.5
+    assert picked == {"n_codes_picked": 2, "n_codes_not_in_list": 1}

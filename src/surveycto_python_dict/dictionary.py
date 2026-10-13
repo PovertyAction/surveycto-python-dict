@@ -181,18 +181,30 @@ def kept(table: pa.Table, exclude: str | None) -> pa.Table:
     The predicate is evaluated as a column over every row of ``submissions``, so a
     window can say which rows a resubmission replaced:
     ``row_number() OVER (PARTITION BY id ORDER BY SubmissionDate DESC) > 1``.
+
+    The predicate must make the query one statement. Its error names only the
+    error's type, since DuckDB's message can quote a value it failed on.
     """
     if exclude is None:
         return table
     con = duckdb.connect()
     con.register("submissions", table)
+    sql = (
+        f"SELECT KEY FROM (SELECT KEY, ({exclude}) AS excluded FROM submissions) "
+        "WHERE excluded IS NOT TRUE"
+    )
     try:
-        keys = con.execute(
-            f"SELECT KEY FROM (SELECT KEY, ({exclude}) AS excluded FROM submissions) "
-            "WHERE excluded IS NOT TRUE"
-        ).to_arrow_table()
+        if len(con.extract_statements(sql)) != 1:
+            raise ValueError(
+                f"[submissions] exclude = {exclude!r}: not one condition; it closes "
+                "the query it is put in"
+            )
+        keys = con.execute(sql).to_arrow_table()
     except duckdb.Error as e:
-        raise ValueError(f"[submissions] exclude = {exclude!r}: {e}") from e
+        raise ValueError(
+            f"[submissions] exclude = {exclude!r}: {type(e).__name__}; run the "
+            "condition in a script to see why"
+        ) from None
     return table.filter(pc.is_in(table.column("KEY"), keys.column("KEY")))
 
 
@@ -296,9 +308,9 @@ def build_dictionary(
             if "choice_value" in meta:
                 # A select_multiple binary stands for one choice: 1 chosen, 0 not.
                 entry["choice_value"] = meta["choice_value"]
-                # A list kept in its dataset is not in the outputs, nor its labels.
+                # A withheld list is not in the outputs, nor its labels.
                 label = (
-                    "(label in the dataset)"
+                    "(label not listed)"
                     if question["choices_withheld"]
                     else choice_labels(question["choices"])[meta["choice_value"]]
                 )
@@ -367,10 +379,12 @@ def build_dictionary(
             ),
             "conditions_on_absent_codes": absent_codes(questions, contract),
             # Per withheld list: how many codes the submissions picked, and those its
-            # dataset no longer offers.
+            # dataset no longer offers (pii.attach keeps only their count when their
+            # columns' values are not shown).
             "withheld_choices": {
                 name: {
                     "n_codes_picked": len(codes),
+                    "n_codes_not_in_list": len(codes - universes[name]),
                     "codes_not_in_list": sorted(codes - universes[name]),
                 }
                 for name, codes in picked.items()

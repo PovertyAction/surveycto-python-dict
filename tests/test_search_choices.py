@@ -1,11 +1,13 @@
 """search() choice lists: read from the dataset, screened with Presidio before any output."""
 
+import json
+
 import pytest
 
 from surveycto_python_dict import pii
 from surveycto_python_dict.contract import DatasetTable, search_universe
 from surveycto_python_dict.pii import PiiConfig, screen_search_choices
-from surveycto_python_dict.questions import build_questions, withheld_choices
+from surveycto_python_dict.questions import build_questions, search_choices
 from surveycto_python_dict.xml_contract import parse_contract
 
 _XML = """<?xml version="1.0"?>
@@ -134,7 +136,23 @@ def test_a_label_naming_several_columns_joins_them(form):
 def test_a_filter_on_a_field_keeps_the_rows_the_submissions_reach(form):
     questions, _ = _screen(form, NoHits(), PiiConfig(whitelist=("buyer",)))
     assert questions["buyer"]["choices"] == [
-        {"value": "7", "label": "Ana Maria Gomez Restrepo", "when": {"zone_code": "1"}}
+        {"value": "7", "label": "Ana Maria Gomez Restrepo"}
+    ]
+
+
+def test_search_filter_values_stay_out_of_questions_json(form):
+    """A filter's values are the values a field takes in the submissions."""
+    xml, datasets = form
+    contract = parse_contract(xml)
+    files = {p.stem: p for p in datasets.glob("*.csv")}
+    rows = [{"zone": "1", "KEY": "uuid:a"}, {"zone": "2", "KEY": "uuid:b"}]
+    screen_search_choices(contract, files, PiiConfig(), NoHits(), rows)
+    questions = build_questions(contract)
+    assert '"when"' not in json.dumps(questions)
+    buyer = [r for r in search_choices(contract) if r["question"] == "buyer"]
+    assert [(r["value"], r["when"], r["withheld"]) for r in buyer] == [
+        ("7", '{"zone_code": "1"}', None),
+        ("8", '{"zone_code": "2"}', None),
     ]
 
 
@@ -211,7 +229,7 @@ def test_a_withheld_list_keeps_every_choice_for_the_database(form, analyzer):
     screen_search_choices(
         contract, files, PiiConfig(blacklist=("size",)), analyzer, _ROWS
     )
-    rows = [r for r in withheld_choices(contract) if r["question"] == "size"]
+    rows = [r for r in search_choices(contract) if r["question"] == "size"]
     assert [(r["question"], r["value"], r["withheld"]) for r in rows] == [
         ("size", "1", "reviewed"),
         ("size", "2", "reviewed"),

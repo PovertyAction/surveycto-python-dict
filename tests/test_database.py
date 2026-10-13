@@ -178,7 +178,8 @@ def test_dictionary_says_what_a_column_without_a_question_is(tmp_path, analyzer)
 
 
 def test_withheld_choices_are_in_the_choices_table(project):
-    # A withheld search() list, as the build writes it.
+    # A withheld search() list and a listed one filtered by a field, as the build
+    # writes them: the parquet holds the filter values, questions.json does not.
     rows = [
         {
             "question": "seller",
@@ -186,7 +187,14 @@ def test_withheld_choices_are_in_the_choices_table(project):
             "label": "Seven",
             "when": None,
             "withheld": "reviewed",
-        }
+        },
+        {
+            "question": "crop",
+            "value": "01",
+            "label": "Maize",
+            "when": '{"zone": "1"}',
+            "withheld": None,
+        },
     ]
     pq.write_table(
         pa.Table.from_pylist(rows, schema=SEARCH_CHOICES),
@@ -196,9 +204,12 @@ def test_withheld_choices_are_in_the_choices_table(project):
     assert con.sql(
         "SELECT value, label, withheld FROM farm.choices WHERE question = 'seller'"
     ).fetchall() == [("7", "Seven", "reviewed")]
+    assert con.sql(
+        "SELECT value, filter_values, withheld FROM farm.choices WHERE question = 'crop'"
+    ).fetchall() == [("01", '{"zone": "1"}', None)]
     assert (
         con.sql(
-            "SELECT count(*) FROM farm.choices WHERE question = 'crop' AND withheld IS NULL"
+            "SELECT count(*) FROM farm.choices WHERE question = 'tools' AND withheld IS NULL"
         ).fetchone()[0]
         > 0
     )
