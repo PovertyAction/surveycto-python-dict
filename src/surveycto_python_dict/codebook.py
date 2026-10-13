@@ -17,6 +17,7 @@ from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from surveycto_python_dict.pii import shows_values
 from surveycto_python_dict.stats import COLUMNS as STATS_COLUMNS
 from surveycto_python_dict.stats import write_form_stats
 from surveycto_python_dict.survey import gates, plain_label, rule
@@ -139,9 +140,7 @@ def write_pii_review(table: pa.Table, vardict: dict, path: Path) -> Path:
     """
     variables = vardict["variables"]
     flagged = [
-        c
-        for c in table.schema.names
-        if variables[c]["pii"]["status"] in ("contains_pii", "may_contain_pii")
+        c for c in table.schema.names if not shows_values(variables[c]["pii"]["status"])
     ]
     columns = [
         [

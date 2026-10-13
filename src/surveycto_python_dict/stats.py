@@ -17,7 +17,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 
 from surveycto_python_dict.dictionary import kept
-from surveycto_python_dict.pii import FLAGGED
+from surveycto_python_dict.pii import shows_values
 from surveycto_python_dict.survey import choice_labels, gates, rule
 from surveycto_python_dict.xpath import (
     UnsupportedExpression,
@@ -425,7 +425,7 @@ def summary_stats(
             answered_when_skipped="" if ragged else outside,
             n_valid=len(valid),
         )
-        if pii not in FLAGGED and valid:
+        if shows_values(pii) and valid:
             out.update(_describe(valid, entry, q, is_binary))
         rows.append(out)
     return rows

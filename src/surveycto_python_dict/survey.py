@@ -21,12 +21,15 @@ from pathlib import Path
 _FLAGGED = {"contains_pii", "may_contain_pii"}
 # Longer lists are summarised, with an argument that lists them in full.
 _LISTED = 20
-# The pii statuses whose values an agent may see.
-_SEEN = {"cleared_by_form", "whitelisted"}
 _TOKEN_RE = re.compile(r"\w+")
 # An HTML tag: `<` then a letter or `/`, so `<5 and >10` is text.
 _TAG_RE = re.compile(r"</?[A-Za-z][^<>]*>")
 _REF_RE = re.compile(r"\$\{([^}]+)\}")
+
+
+def _shows_values(status: str) -> bool:
+    """Return whether a column's values may be shown, as ``pii.shows_values``."""
+    return status not in _FLAGGED
 
 
 def plain_label(text: str) -> str:
@@ -1044,7 +1047,7 @@ class SurveyStore:
         line = f"  In the data: {n} code{'s' if n > 1 else ''} picked"
         if not missing:
             line += ", all in the list"
-        elif status[value] in _SEEN:
+        elif _shows_values(status[value]):
             line += f"; {len(missing)} not in the list: {', '.join(missing)}"
         else:
             line += (

@@ -83,7 +83,8 @@ _REF = re.compile(r"\$\{([^}]+)\}")
 _CALL = re.compile(r"([A-Za-z][\w-]*)\s*\(")
 # Functions that make a value without reading the form or the device.
 _GENERATED_CALLS = {"once", "uuid", "now", "today", "random", "concat", "if"}
-# The statuses whose values may be read, and those that hold or may hold PII.
+# The statuses that clear a calculate reading the field (lineage), and those that hold
+# or may hold PII.
 SAFE = {"cleared_by_form", "whitelisted"}
 FLAGGED = {"contains_pii", "may_contain_pii"}
 # Enough KEYs to find examples; the review parquet has every flagged row.
@@ -92,6 +93,14 @@ _MAX_HIT_KEYS = 5
 # every row of a large dataset as a possible choice, copied into each column.
 # A longer search() list stays in its dataset: the outputs name its columns.
 MAX_INLINE_CHOICES = 50
+
+
+def shows_values(status: str) -> bool:
+    """Return whether an output an agent reads may show a column's values (range,
+    quartiles, frequencies, codes) for its pii ``status``: every status but a flagged
+    one. Counts, null rates and ``KEY``s are shown for every column.
+    """
+    return status not in FLAGGED
 
 
 class MissingSpacyModel(RuntimeError):

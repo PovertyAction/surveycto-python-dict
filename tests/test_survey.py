@@ -314,6 +314,11 @@ def test_withheld_choices_say_how_to_decode_them_and_what_was_picked(
         "farm.choices WHERE question = 'crop'",
         "  In the data: 3 codes picked; 1 not in the list: 9",
     ]
+    # A value column Presidio found nothing in shows its codes too.
+    store.dataset_columns[0]["pii"]["status"] = "no_hits"
+    assert store.get_choice_list("crop").splitlines()[-1] == (
+        "  In the data: 3 codes picked; 1 not in the list: 9"
+    )
     # Codes a flagged value column holds are counted, not shown.
     store.dataset_columns[0]["pii"]["status"] = "may_contain_pii"
     assert store.get_choice_list("crop").splitlines()[-1] == (
@@ -581,3 +586,14 @@ def test_neighborhood_collapses_a_group_gate(store):
     out = store.get_variable_neighborhood("plots")
     assert "plots gates group plot (2 questions)" in out
     assert "(group_gated_by)" not in out
+
+
+def test_survey_shows_values_as_pii_does():
+    """survey.py keeps its own copy of the flagged statuses: it ships standalone."""
+    from surveycto_python_dict import pii, survey
+
+    assert survey._FLAGGED == pii.FLAGGED
+    statuses = [*pii.FLAGGED, "no_hits", "cleared_by_form", "whitelisted"]
+    assert [survey._shows_values(s) for s in statuses] == [
+        pii.shows_values(s) for s in statuses
+    ]
