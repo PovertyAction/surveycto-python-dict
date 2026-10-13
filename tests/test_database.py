@@ -508,6 +508,28 @@ def test_a_project_that_reads_no_dataset(tmp_path, analyzer):
     con.close()
 
 
+def test_a_repeat_named_like_a_description_table_raises(tmp_path, analyzer):
+    from farm_form import XML
+
+    config = tmp_path / "config.toml"
+    config.write_text('forms = ["farm"]\nout_dir = "out"\n', encoding="utf-8")
+    cfg = load_config(config)
+    xml = (
+        XML.replace('"/farm/plot"', '"/farm/questions"')
+        .replace("/farm/plot/", "/farm/questions/")
+        .replace("<plot jr:", "<questions jr:")
+        .replace("</plot>", "</questions>")
+    )
+    write_pull(cfg, xml=xml)
+    build(cfg, SENTINELS, analyzer)
+    form_dir = cfg.form_dir("farm")
+    write_csv(
+        summary_stats(form_dir, "farm", SENTINELS), form_dir / "farm_summary_stats.csv"
+    )
+    with pytest.raises(ValueError, match="farm: the repeat 'questions'"):
+        _write(cfg)
+
+
 def test_an_empty_table_types_its_text_columns_as_text():
     import pandas as pd
 

@@ -212,6 +212,14 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
     questions = _load(form_dir / f"{form}_questions.json")
     graph = _load(form_dir / f"{form}_variable_graph.json")
     codebook = _load(form_dir / f"{form}_dataset_codebook.json")
+    # A repeat's view sits in the form's schema beside submissions and the
+    # description tables, so it cannot share their names.
+    for repeat in graph["repeat_groups"]:
+        if repeat == "submissions" or repeat in _DESCRIPTIONS:
+            raise ValueError(
+                f"{form}: the repeat {repeat!r} has the name of the {form}.{repeat} "
+                "table the database writes"
+            )
     variables = dictionary["variables"]
     repeat_of = {node["id"]: node["repeat_group"] for node in graph["nodes"]}
     # The view each column is read from: its repeat's long view, or submissions.
