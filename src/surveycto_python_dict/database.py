@@ -109,6 +109,22 @@ def _long_table(
     return long.sort_by([(k, "ascending") for k in keys])
 
 
+def _check_view(con, view: str, expected: list[str]) -> None:
+    """Raise when ``view``'s columns are not ``expected``.
+
+    DuckDB ignores case in names and renames the later of two that clash (``Age``,
+    ``age`` -> ``Age``, ``Age_1``; a dataset column ``row`` -> ``row_1``), so a query
+    by the clashing name would read the other column.
+    """
+    got = con.sql(f"SELECT * FROM {view} LIMIT 0").columns
+    if got != expected:
+        renamed = [f"{e} to {g}" for e, g in zip(expected, got, strict=True) if e != g]
+        raise ValueError(
+            f"{view}: DuckDB ignores case in column names, so it renamed "
+            f"{', '.join(renamed)} to keep it apart from a column of the same name"
+        )
+
+
 _ORIGIN_KINDS = ("entered", "calculated", "carried", "metadata")
 
 
@@ -249,6 +265,7 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
         + ", ".join(_ident(c) for c in wide)
         + f" FROM read_parquet({_literal(parquet)})"
     )
+    _check_view(con, _q(form, "submissions"), wide)
     structure[f"{form}.submissions"] = {
         "grain": "one row per submission",
         "key": ["KEY"],
@@ -269,11 +286,13 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
             if table_of[c] == repeat
         }
         long_path = long_dir / f"{repeat}.parquet"
-        pq.write_table(_long_table(table, columns, keys), long_path)
+        long = _long_table(table, columns, keys)
+        pq.write_table(long, long_path)
         source = _literal(long_path.resolve().as_posix())
         con.execute(
             f"CREATE VIEW {_q(form, repeat)} AS SELECT * FROM read_parquet({source})"
         )
+        _check_view(con, _q(form, repeat), long.column_names)
         # An instance joins its parent on the parent's keys, named alike in both.
         this = f"{form}.{repeat}"
         parent = f"{form}.{group['parent'] or 'submissions'}"
@@ -475,6 +494,7 @@ def _write_datasets(
             f"CREATE VIEW {view} AS SELECT row_number() OVER () AS row, * "
             f"FROM read_csv({source}, header = true, all_varchar = true)"
         )
+        _check_view(con, view, ["row", *d["columns"]])
         entries = [
             c
             for form in d["read_by"]

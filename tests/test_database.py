@@ -537,6 +537,20 @@ def test_a_repeat_named_like_a_description_table_raises(tmp_path, analyzer):
         _write(cfg)
 
 
+def test_a_dataset_column_named_row_raises(tmp_path, analyzer):
+    config = tmp_path / "config.toml"
+    config.write_text('forms = ["farm"]\nout_dir = "out"\n', encoding="utf-8")
+    cfg = load_config(config)
+    write_pull(cfg, "phone,owner,row\n3000000000,Fictional Owner,7\n")
+    build(cfg, SENTINELS, analyzer)
+    form_dir = cfg.form_dir("farm")
+    write_csv(
+        summary_stats(form_dir, "farm", SENTINELS), form_dir / "farm_summary_stats.csv"
+    )
+    with pytest.raises(ValueError, match="renamed row to row_1"):
+        _write(cfg)
+
+
 def test_an_empty_table_types_its_text_columns_as_text():
     import pandas as pd
 
