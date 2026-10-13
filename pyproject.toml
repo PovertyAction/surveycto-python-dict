@@ -64,7 +64,6 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D"]
-"scripts/**" = ["D"]
 
 [tool.ruff.format]
 docstring-code-format = true
