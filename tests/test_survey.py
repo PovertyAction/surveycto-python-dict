@@ -304,7 +304,7 @@ def test_withheld_choices_say_how_to_decode_them_and_what_was_picked(
         store.questions["crop"],
         choices=[],
         choice_columns={"value": "crop_id", "label": "crop_name"},
-        choices_withheld=["presidio:PERSON"],
+        choices_withheld=["60 choices"],
         data_source={
             "kind": "search",
             "dataset": "crops",
@@ -355,10 +355,50 @@ def test_withheld_choices_say_how_to_decode_them_and_what_was_picked(
         "  In the data: 3 codes picked; 1 not in the list (codes not shown: crop is "
         "contains_pii)"
     )
+    # And a list withheld for what it holds.
+    store.variables["crop"]["pii"] = {"status": "whitelisted", "basis": ["reviewed"]}
+    store.questions["crop"]["choices_withheld"] = ["presidio:PERSON"]
+    assert store.get_choice_list("crop").splitlines()[-1] == (
+        "  In the data: 3 codes picked; 1 not in the list (codes not shown: the list "
+        "is withheld (presidio:PERSON))"
+    )
     store.summary["withheld_choices"] = {}
     assert store.get_choice_list("crop").splitlines()[-1] == (
         "  In the data: no submission picked a code"
     )
+
+
+def test_withheld_multiple_binaries_named_by_flagged_codes_are_not_printed(store):
+    """A withheld select_multiple's binaries are named by its codes."""
+    from surveycto_python_dict.survey import render_structure
+
+    for name in ("tools", "plot_crop"):
+        store.questions[name].update(choices=[], choices_withheld=["presidio:PERSON"])
+    out = store.lookup_variables(["tools", "plot_crop"], columns=True)
+    for column in ("tools_1", "tools_2", "tools_77", "plot_crop_1_1", "plot_crop_2_2"):
+        assert column not in out
+    for shown in ("tools_<1>", "tools_<3>", "plot_crop_<1>_1", "plot_crop_<2>_2"):
+        assert shown in out
+    assert "Column names: 3 are named by the codes of its withheld list" in out
+    assert "tools_<1> ... tools_<3>" in store.lookup_variables(["tools", "area"])
+    close = store.lookup_variable("tools_7")
+    assert "tools_1" not in close and "tools_77" not in close
+    # The structure map shows them as the build names them.
+    objects = [
+        {
+            "name": "farm.submissions",
+            "kind": "view",
+            "grain": "one row per submission",
+            "key": ["KEY"],
+            "joins": [],
+            "columns": [
+                {"name": "KEY", "type": "VARCHAR"},
+                {"name": "tools_77", "type": "TINYINT", "shown_as": "tools_<3>"},
+            ],
+        }
+    ]
+    out = render_structure("out", objects)
+    assert "tools_77" not in out and "tools_<3> TINYINT" in out
 
 
 def test_lookup_shows_where_a_value_comes_from(store):

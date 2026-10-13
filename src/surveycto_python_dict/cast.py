@@ -158,7 +158,7 @@ def _columns(names: list[str], contract: FormContract) -> list[_Column]:
             if str(m["choice_code"]) not in codes:
                 columns[name] = _text(
                     name,
-                    f"choice code {m['choice_code']!r} is not among the form's choices",
+                    "a choice code not among the form's choices",
                     _node_metadata(node),
                     (*key[:3], len(node.all_choices)),
                     binary_group=(node.path, iterations),

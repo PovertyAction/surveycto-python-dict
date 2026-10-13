@@ -48,7 +48,7 @@ import pyarrow.parquet as pq
 from dotenv import load_dotenv
 
 from surveycto_python_dict.stats import SQL_TYPES
-from surveycto_python_dict.survey import render_structure
+from surveycto_python_dict.survey import coded_names, render_structure
 
 
 def _ident(name: str) -> str:
@@ -231,6 +231,12 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
         for c, v in variables.items()
     }
     wide = [c for c in variables if table_of[c] == "submissions"]
+    # Columns named by codes an agent is not shown: the map shows them by position.
+    coded = {
+        c: shown
+        for q in questions
+        for c, shown in coded_names(q, variables, codebook).items()
+    }
 
     con.execute(f"CREATE SCHEMA {_ident(form)}")
     parquet = (form_dir / f"{form}.parquet").resolve().as_posix()
@@ -245,6 +251,7 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
         "grain": "one row per submission",
         "key": ["KEY"],
         "joins": [],
+        "shown_as": {c: coded[c] for c in wide if c in coded},
     }
 
     groups = graph["repeat_groups"]
@@ -274,6 +281,12 @@ def _write_form(con, form: str, form_dir: Path, ids: dict, structure: dict) -> d
             "grain": f"one row per instance of the repeat {repeat} that has any value",
             "key": keys,
             "joins": [f"{on}  (many to one)"],
+            # A long view's column drops the instance suffix, and so does its name.
+            "shown_as": {
+                view_column[c]: coded[c].removesuffix(c[len(view_column[c]) :])
+                for c in columns
+                if c in coded
+            },
         }
 
     n_columns = Counter(v["question"] for v in variables.values())
@@ -765,13 +778,16 @@ def write_database(
         "SELECT table_schema, table_name, table_type FROM information_schema.tables"
     ).fetchall():
         name = table_name if schema == "main" else f"{schema}.{table_name}"
+        shown = structure[name].get("shown_as", {})
         objects.append(
             {
                 "name": name,
                 "kind": "view" if kind == "VIEW" else "table",
-                **structure[name],
+                **{k: v for k, v in structure[name].items() if k != "shown_as"},
                 "columns": [
-                    {"name": c, "type": t} for c, t in columns_of[schema, table_name]
+                    {"name": c, "type": t}
+                    | ({"shown_as": shown[c]} if c in shown else {})
+                    for c, t in columns_of[schema, table_name]
                 ],
             }
         )

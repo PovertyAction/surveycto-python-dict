@@ -154,6 +154,71 @@ def _withheld(q: dict) -> str:
     return text
 
 
+def code_reasons(q: dict, variables: dict, dataset_columns: list[dict]) -> list[str]:
+    """Return why select ``q``'s codes stay out of what an agent reads, empty when
+    they are shown: its list is withheld for what it holds (reviewed, a Presidio
+    hit), or a column that holds them, the select's own or its dataset's value
+    column, has values that are not shown.
+    """
+    name = q["variable_name"]
+    reasons = [
+        f"the list is withheld ({r})"
+        for r in q["choices_withheld"] or []
+        if r == "reviewed" or r.startswith("presidio:")
+    ]
+    flagged = sorted(
+        {
+            v["pii"]["status"]
+            for v in variables.values()
+            if v["question"] == name and not _shows_values(v["pii"]["status"])
+        }
+    )
+    if flagged:
+        reasons.append(f"{name} is {', '.join(flagged)}")
+    if q["data_source"] and q["choice_columns"]:
+        value = q["choice_columns"]["value"]
+        reasons += [
+            f"{value} is {c['pii']['status']}"
+            for c in dataset_columns
+            if c["dataset"] == q["data_source"]["dataset"]
+            and c["column"] == value
+            and not _shows_values(c["pii"]["status"])
+        ]
+    return reasons
+
+
+def coded_names(
+    q: dict, variables: dict, dataset_columns: list[dict]
+) -> dict[str, str]:
+    """Return the name each column of select ``q`` is shown by when its name would
+    show a code that is not shown, else nothing.
+
+    A withheld select_multiple's binaries are named by its codes, so the columns of
+    its n-th code are shown as ``<q>_<n>`` plus their instance suffix
+    (``members_<2>_1``). The data keeps every column under its own name.
+    """
+    name = q["variable_name"]
+    if (
+        q["type"] != "select_multiple"
+        or not q["choices_withheld"]
+        or not code_reasons(q, variables, dataset_columns)
+    ):
+        return {}
+    shown: dict[str, str] = {}
+    codes: dict[str, int] = {}
+    for column, v in variables.items():
+        if v["question"] != name:
+            continue
+        suffix = (
+            ""
+            if v.get("ragged")
+            else "".join(f"_{i}" for i in v.get("repeat_iteration", []))
+        )
+        n = codes.setdefault(column.removesuffix(suffix), len(codes) + 1)
+        shown[column] = f"{name}_<{n}>{suffix}"
+    return shown
+
+
 def _source_line(source: dict) -> str:
     match = " and ".join(
         f"{source['dataset']}.{m['column']} = {m['value']}" for m in source["match"]
@@ -182,7 +247,8 @@ def render_structure(
     """Render ``<project>_db.json`` as commented SQL: grain, key, joins and columns.
 
     An object with more than ``listed`` columns lists that many unless
-    ``all_columns``.
+    ``all_columns``. A column named by a code that is not shown is shown by its
+    ``shown_as`` (``coded_names``).
     """
     lines = [
         f"-- {project}.duckdb: every table and view, what one row is, its key and joins.",
@@ -192,18 +258,21 @@ def render_structure(
         lines += ["", f"-- {o['kind']} {o['name']}: {o['grain']}"]
         lines.append(f"--   key: {', '.join(o['key'])}")
         lines += [f"--   join: {j}" for j in o["joins"]]
-        columns = o["columns"]
+        columns = [f"{c.get('shown_as', c['name'])} {c['type']}" for c in o["columns"]]
         if len(columns) > listed and not all_columns:
             lines.append(
                 f"--   columns ({len(columns)}): "
-                + "".join(f"{c['name']} {c['type']}, " for c in columns[:listed])
+                + "".join(f"{c}, " for c in columns[:listed])
                 + f"... get_structure_db('{_schema(o['name'])}', "
                 f"'{o['name'].split('.', 1)[-1]}') lists all"
             )
         else:
+            lines.append(f"--   columns ({len(columns)}): " + ", ".join(columns))
+        if any("shown_as" in c for c in o["columns"]):
             lines.append(
-                f"--   columns ({len(columns)}): "
-                + ", ".join(f"{c['name']} {c['type']}" for c in columns)
+                "--   <q>_<n>: a column named by the n-th code of the withheld list of "
+                "select <q>, whose codes are not shown; dictionary.column_name has its "
+                "name"
             )
     return "\n".join(lines)
 
@@ -638,10 +707,12 @@ class SurveyStore:
 
     # -- lookups -------------------------------------------------------------------
 
-    def _column_line(self, name: str) -> str:
+    def _column_line(self, name: str, shown: str | None = None) -> str:
+        """Return a column's line, the column named ``shown`` when given."""
         v = self.variables[name]
         parts = [
-            f"  {name}  {v['parquet']['arrow_type']}  missing {v['missing_rate']:.1%}"
+            f"  {shown or name}  {v['parquet']['arrow_type']}  "
+            f"missing {v['missing_rate']:.1%}"
         ]
         if "choice_value" in v:
             parts.append(
@@ -666,12 +737,15 @@ class SurveyStore:
         parts.append(f"pii: {pii['status']} ({', '.join(pii['basis'])})")
         return "  ".join(parts)
 
-    def _columns_summary(self, name: str, columns: list[str]) -> str:
+    def _columns_summary(
+        self, name: str, columns: list[str], shown: dict[str, str]
+    ) -> str:
         entries = [self.variables[c] for c in columns]
         instances = {tuple(v.get("repeat_iteration", [])) for v in entries}
         choices = {v["choice_value"] for v in entries if "choice_value" in v}
         rates = [v["missing_rate"] for v in entries]
-        parts = [f"Columns: {len(columns)}, {columns[0]} ... {columns[-1]}"]
+        first, last = (shown.get(c, c) for c in (columns[0], columns[-1]))
+        parts = [f"Columns: {len(columns)}, {first} ... {last}"]
         # Slots, not instances: score_3 is the third instance of every submission.
         if instances != {()}:
             parts.append(f"{len(instances)} repeat slots")
@@ -752,13 +826,20 @@ class SurveyStore:
         if q["publishable"]:
             lines.append("Publishable: yes")
         columns = self.columns.get(q["variable_name"], [])
+        shown = coded_names(q, self.variables, self.dataset_columns)
         if len(columns) > (_LISTED if listed is None else listed) and not all_columns:
-            lines.append(self._columns_summary(q["variable_name"], columns))
+            lines.append(self._columns_summary(q["variable_name"], columns, shown))
         else:
             lines.append(
                 "Columns:" if columns else "Columns: none in the data" + self._reach(q)
             )
-            lines += [self._column_line(c) for c in columns]
+            lines += [self._column_line(c, shown.get(c)) for c in columns]
+        if shown:
+            lines.append(
+                f"Column names: {len(shown)} are named by the codes of its withheld "
+                f"list, shown as {q['variable_name']}_<n> for the n-th code; the data "
+                "keeps their names."
+            )
         if any(self.variables[c]["pii"]["status"] in _FLAGGED for c in columns):
             lines.append(
                 "PII: use flagged columns in scripts like any other, but print only "
@@ -785,8 +866,19 @@ class SurveyStore:
             return (
                 f"{name} (column without a question: {what})\n{self._column_line(name)}"
             )
+        coded = {
+            c
+            for q in self.questions.values()
+            for c in coded_names(q, self.variables, self.dataset_columns)
+        }
         close = difflib.get_close_matches(
-            name, list(dict.fromkeys([*self.questions, *self.variables])), n=5
+            name,
+            [
+                n
+                for n in dict.fromkeys([*self.questions, *self.variables])
+                if n not in coded
+            ],
+            n=5,
         )
         hint = f" Close matches: {', '.join(close)}." if close else ""
         return f"No variable or question named {name!r}.{hint}"
@@ -1045,18 +1137,7 @@ class SurveyStore:
             return lines
         n, missing = picked["n_codes_picked"], picked["n_codes_not_in_list"]
         line = f"  In the data: {n} code{'s' if n > 1 else ''} picked"
-        # The codes are values of the value column and of the select's columns.
-        flagged = sorted(
-            {
-                s
-                for c in self.columns.get(name, [])
-                if not _shows_values(s := self.variables[c]["pii"]["status"])
-            }
-        )
-        hidden = (
-            [f"{value} is {status[value]}"] if not _shows_values(status[value]) else []
-        )
-        hidden += [f"{name} is {', '.join(flagged)}"] if flagged else []
+        hidden = code_reasons(q, self.variables, self.dataset_columns)
         if not missing:
             line += ", all in the list"
         elif "codes_not_in_list" in picked and not hidden:
