@@ -252,6 +252,54 @@ def test_a_dataset_mostly_unexplained_is_external_unless_named(tmp_path):
     assert households["legacy_columns"] == [f"old_{i}" for i in range(4)]
 
 
+# visit preloads a household: hhid entered, then two fields read under their columns'
+# names.
+_VISIT_PRELOAD = """<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml">
+  <h:head><model>
+    <instance><visit id="visit" version="1"><hhid/><village/><head/></visit></instance>
+    <bind nodeset="/visit/hhid" type="string"/>
+    <bind nodeset="/visit/village" type="string" calculate="pulldata('households', 'village', 'hhid',  /visit/hhid )"/>
+    <bind nodeset="/visit/head" type="string" calculate="pulldata('households', 'head', 'hhid',  /visit/hhid )"/>
+  </model></h:head>
+  <h:body>
+    <input ref="/visit/hhid"><label>Household</label></input>
+  </h:body>
+</h:html>
+"""
+
+
+def test_a_form_copying_a_preload_does_not_publish_it(tmp_path):
+    csvs = {"households": "hhid,village,head\nH1,North,A\n"}
+    flow = _flow(tmp_path, {"visit": _VISIT_PRELOAD}, csvs=csvs)
+    households = next(d for d in flow["datasets"] if d["id"] == "households")
+    assert households["published_by"] is None
+    assert households["closest"] == {"form": "visit", "columns": 1}
+
+
+def test_a_form_republishing_its_own_dataset_publishes_it(tmp_path):
+    # visit reads last round's count and publishes the next one under the column.
+    visit = (
+        _VISIT_PRELOAD.replace("<village/><head/>", "<prev/><visits/>")
+        .replace(
+            "pulldata('households', 'village', 'hhid',  /visit/hhid )",
+            "pulldata('households', 'visits', 'hhid',  /visit/hhid )",
+        )
+        .replace("/visit/village", "/visit/prev")
+        .replace(
+            "pulldata('households', 'head', 'hhid',  /visit/hhid )",
+            " /visit/prev  + 1",
+        )
+        .replace("/visit/head", "/visit/visits")
+    )
+    csvs = {"households": "hhid,visits\nH1,1\n"}
+    flow = _flow(tmp_path, {"visit": visit}, csvs=csvs)
+    households = next(d for d in flow["datasets"] if d["id"] == "households")
+    assert households["published_by"] == "visit"
+    assert households["publish_map"] == {"hhid": "hhid", "visits": "visits"}
+    assert flow["forms"][0]["stage"] == 1
+
+
 def test_published_by_must_name_a_covering_form_and_a_read_dataset(tmp_path):
     xmls = {"listing": _LISTING, "visit": _VISIT}
     with pytest.raises(ValueError, match="no column is a field of visit"):
