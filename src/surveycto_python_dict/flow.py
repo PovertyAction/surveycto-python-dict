@@ -34,7 +34,12 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from surveycto_python_dict.contract import DatasetSource, label_columns
+from surveycto_python_dict.contract import (
+    DatasetSource,
+    checked_header,
+    label_columns,
+    naming_decode_errors,
+)
 from surveycto_python_dict.xml_contract import ENUMERATOR_COLUMNS, FormContract
 
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
@@ -45,9 +50,12 @@ NEAR = 0.9
 
 def _header(path: Path) -> tuple[list[str], int]:
     """Return a CSV's columns and its number of data rows."""
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with (
+        naming_decode_errors(path),
+        open(path, encoding="utf-8-sig", newline="") as f,
+    ):
         reader = csv.reader(f)
-        columns = next(reader)
+        columns = checked_header(path, next(reader, None))
         return columns, sum(1 for _ in reader)
 
 

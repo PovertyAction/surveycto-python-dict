@@ -29,7 +29,6 @@ any output (``screen_search_choices``), and on the datasets the form reads
 rows and up to five of their KEYs, never matched text.
 """
 
-import csv
 import random
 import re
 import warnings
@@ -527,9 +526,8 @@ def dataset_codebook(
     whitelist, blacklist = set(config.whitelist), set(config.blacklist)
     tables = {}
     for dataset, csv_path in sorted(datasets.items()):
-        with open(csv_path, encoding="utf-8-sig", newline="") as f:
-            reader = csv.DictReader(f)
-            tables[dataset] = (csv_path, reader.fieldnames, list(reader))
+        table = DatasetTable(csv_path)
+        tables[dataset] = (csv_path, table.header, table.rows)
     # Every column not yet scanned for another form, scanned together.
     scans = _Scans(config)
     for dataset, (csv_path, header, records) in tables.items():

@@ -200,3 +200,25 @@ def test_questions_carry_the_dataset_join(sources_contract):
         "match": [{"column": "hhid", "value": "${hhid}"}],
     }
     assert by_name["hhid"]["data_source"] is None
+
+
+@pytest.mark.parametrize(
+    ("content", "error"),
+    [
+        (b"", "no header row"),
+        (b"id,a,a\n1,x,y\n", r"named twice in the header: \['a'\]"),
+        (b"id,ma\xf1ana\n1,x\n", "not UTF-8"),
+    ],
+)
+@pytest.mark.parametrize("read", ["header", "table", "flow"])
+def test_a_dataset_csv_that_cannot_be_read_raises_naming_the_file(
+    tmp_path, content, error, read
+):
+    from surveycto_python_dict.contract import DatasetTable, dataset_header
+    from surveycto_python_dict.flow import _header
+
+    path = tmp_path / "roster.csv"
+    path.write_bytes(content)
+    reader = {"header": dataset_header, "table": DatasetTable, "flow": _header}[read]
+    with pytest.raises(ValueError, match=rf"roster\.csv: .*{error}"):
+        reader(path)
