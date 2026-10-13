@@ -221,7 +221,17 @@ def env_sentinels() -> dict[int | dt.date, str]:
         code, sep, meaning = pair.partition("=")
         if not sep or not code.strip() or not meaning.strip():
             raise ValueError(f"SCTO_SENTINELS: {pair.strip()!r} is not code=meaning")
-        table[int(code.strip())] = meaning.strip()
+        try:
+            number = int(code.strip())
+        except ValueError as e:
+            raise ValueError(
+                f"SCTO_SENTINELS: {pair.strip()!r}: the code is not an integer"
+            ) from e
+        if number in table:
+            raise ValueError(
+                f"SCTO_SENTINELS: {pair.strip()!r}: code {number} is given twice"
+            )
+        table[number] = meaning.strip()
     dates = os.environ.get("SCTO_DATE_SENTINELS", "").strip().strip(";")
     for pair in dates.split(";") if dates else []:
         code, sep, meaning = pair.partition("=")
@@ -229,7 +239,18 @@ def env_sentinels() -> dict[int | dt.date, str]:
             raise ValueError(
                 f"SCTO_DATE_SENTINELS: {pair.strip()!r} is not date=meaning"
             )
-        table[dt.date.fromisoformat(code.strip())] = meaning.strip()
+        try:
+            date = dt.date.fromisoformat(code.strip())
+        except ValueError as e:
+            raise ValueError(
+                f"SCTO_DATE_SENTINELS: {pair.strip()!r}: the date is not "
+                f"YYYY-MM-DD ({e})"
+            ) from e
+        if date in table:
+            raise ValueError(
+                f"SCTO_DATE_SENTINELS: {pair.strip()!r}: date {date} is given twice"
+            )
+        table[date] = meaning.strip()
     return table
 
 
