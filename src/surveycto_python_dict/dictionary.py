@@ -367,10 +367,12 @@ def build_dictionary(
             ),
             "conditions_on_absent_codes": absent_codes(questions, contract),
             # Per withheld list: how many codes the submissions picked, and those its
-            # dataset no longer offers.
+            # dataset no longer offers (pii.attach keeps only their count when their
+            # columns' values are not shown).
             "withheld_choices": {
                 name: {
                     "n_codes_picked": len(codes),
+                    "n_codes_not_in_list": len(codes - universes[name]),
                     "codes_not_in_list": sorted(codes - universes[name]),
                 }
                 for name, codes in picked.items()

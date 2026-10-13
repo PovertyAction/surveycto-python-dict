@@ -54,6 +54,25 @@ def test_lookup_never_prints_flagged_values(store):
         assert value not in out
 
 
+def test_blacklisted_date_and_int_have_no_range(tmp_path, analyzer):
+    config = tmp_path / "config.toml"
+    config.write_text(
+        'forms = ["farm"]\nout_dir = "out"\n[pii]\nblacklist = ["visit", "plots"]\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(config)
+    write_pull(cfg)
+    build(cfg, SENTINELS, analyzer)
+    store = SurveyStore(cfg.form_dir("farm"), "farm")
+    dictionary = (cfg.form_dir("farm") / "farm_variable_dictionary.json").read_text(
+        encoding="utf-8"
+    )
+    assert "2025-03-06" not in dictionary and '"data_max": 2' not in dictionary
+    out = store.lookup_variables(["visit", "plots"])
+    assert "range" not in out and "2025-03-06" not in out
+    assert "range 1.5..1.5" in store.lookup_variable("area")
+
+
 def test_lookup_variables_batches(store):
     out = store.lookup_variables(["area", "plots"])
     assert "area (decimal)" in out and "plots (integer)" in out
@@ -302,7 +321,11 @@ def test_withheld_choices_say_how_to_decode_them_and_what_was_picked(
         },
     ]
     store.summary["withheld_choices"] = {
-        "crop": {"n_codes_picked": 3, "codes_not_in_list": ["9"]}
+        "crop": {
+            "n_codes_picked": 3,
+            "n_codes_not_in_list": 1,
+            "codes_not_in_list": ["9"],
+        }
     }
     lines = store.get_choice_list("crop").splitlines()
     assert lines[1:] == [
@@ -324,6 +347,13 @@ def test_withheld_choices_say_how_to_decode_them_and_what_was_picked(
     assert store.get_choice_list("crop").splitlines()[-1] == (
         "  In the data: 3 codes picked; 1 not in the list (codes not shown: crop_id is "
         "may_contain_pii)"
+    )
+    # So does a flagged column of the select itself.
+    store.dataset_columns[0]["pii"]["status"] = "whitelisted"
+    store.variables["crop"]["pii"] = {"status": "contains_pii", "basis": ["reviewed"]}
+    assert store.get_choice_list("crop").splitlines()[-1] == (
+        "  In the data: 3 codes picked; 1 not in the list (codes not shown: crop is "
+        "contains_pii)"
     )
     store.summary["withheld_choices"] = {}
     assert store.get_choice_list("crop").splitlines()[-1] == (

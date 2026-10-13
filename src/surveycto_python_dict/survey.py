@@ -641,7 +641,7 @@ class SurveyStore:
             parts.append(
                 ", ".join(f"{c['value']} = {c['label']}" for c in v["value_labels"])
             )
-        if "data_min" in v:
+        if "data_min" in v and _shows_values(v["pii"]["status"]):
             parts.append(f"range {v['data_min']}..{v['data_max']}")
         if "max_length" in v:
             parts.append(
@@ -1042,17 +1042,28 @@ class SurveyStore:
         if picked is None:
             lines.append("  In the data: no submission picked a code")
             return lines
-        missing = picked["codes_not_in_list"]
-        n = picked["n_codes_picked"]
+        n, missing = picked["n_codes_picked"], picked["n_codes_not_in_list"]
         line = f"  In the data: {n} code{'s' if n > 1 else ''} picked"
+        # The codes are values of the value column and of the select's columns.
+        flagged = sorted(
+            {
+                s
+                for c in self.columns.get(name, [])
+                if not _shows_values(s := self.variables[c]["pii"]["status"])
+            }
+        )
+        hidden = (
+            [f"{value} is {status[value]}"] if not _shows_values(status[value]) else []
+        )
+        hidden += [f"{name} is {', '.join(flagged)}"] if flagged else []
         if not missing:
             line += ", all in the list"
-        elif _shows_values(status[value]):
-            line += f"; {len(missing)} not in the list: {', '.join(missing)}"
+        elif "codes_not_in_list" in picked and not hidden:
+            codes = ", ".join(picked["codes_not_in_list"])
+            line += f"; {missing} not in the list: {codes}"
         else:
             line += (
-                f"; {len(missing)} not in the list (codes not shown: {value} is "
-                f"{status[value]})"
+                f"; {missing} not in the list (codes not shown: {'; '.join(hidden)})"
             )
         return [*lines, line]
 

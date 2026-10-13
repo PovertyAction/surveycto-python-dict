@@ -338,7 +338,8 @@ def build_form(
     table = cast_wide(rows, contract)
     vardict = build_dictionary(table, questions, contract, sentinels, cfg.exclude)
     blocks = classify(table, vardict, questions, cfg.pii, analyzer)
-    attach(vardict, blocks)
+    codebook = dataset_codebook(datasets, questions, cfg.pii, analyzer, scanned)
+    attach(vardict, blocks, questions, codebook)
 
     paths = {
         "questions": out / f"{form}_questions.json",
@@ -364,7 +365,6 @@ def build_form(
             indent=None,
         )
         write_pii_review(table, vardict, paths["pii_review"])
-        codebook = dataset_codebook(datasets, questions, cfg.pii, analyzer, scanned)
         write_json(codebook, paths["dataset_codebook"])
         pq.write_table(
             pa.Table.from_pylist(withheld_choices(contract), schema=SEARCH_CHOICES),

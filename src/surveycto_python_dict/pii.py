@@ -584,8 +584,42 @@ def warn_unknown_names(config: PiiConfig, known: set[str]) -> None:
         warnings.warn(f"`{name}` cannot be found", UserWarning, stacklevel=2)
 
 
-def attach(vardict: dict, blocks: dict[str, dict]) -> None:
-    """Add each column's block to the dictionary and a status count to its summary."""
+def attach(
+    vardict: dict, blocks: dict[str, dict], questions: list[dict], codebook: list[dict]
+) -> None:
+    """Add each column's block to the dictionary and a status count to its summary.
+
+    A column whose values are not shown (``shows_values``) loses its range
+    (``data_min``, ``data_max``). The codes a withheld list lacks are listed only
+    when every column of its select and its dataset's value column show values, else
+    only counted: they are the values of both.
+    """
+    variables = vardict["variables"]
     for column, block in blocks.items():
-        vardict["variables"][column]["pii"] = block
+        variables[column]["pii"] = block
+        if not shows_values(block["status"]):
+            for key in ("data_min", "data_max"):
+                variables[column].pop(key, None)
     vardict["summary"]["pii"] = dict(Counter(b["status"] for b in blocks.values()))
+    for name, picked in vardict["summary"]["withheld_choices"].items():
+        statuses = _code_statuses(name, variables, questions, codebook)
+        if not all(shows_values(s) for s in statuses):
+            del picked["codes_not_in_list"]
+
+
+def _code_statuses(
+    name: str, variables: dict, questions: list[dict], codebook: list[dict]
+) -> list[str]:
+    """Return the statuses of the columns that hold select ``name``'s codes: its own
+    columns and, for a ``search()`` list, the dataset's value column.
+    """
+    statuses = [v["pii"]["status"] for v in variables.values() if v["question"] == name]
+    q = next(q for q in questions if q["variable_name"] == name)
+    if q["data_source"] and q["choice_columns"]:
+        dataset, value = q["data_source"]["dataset"], q["choice_columns"]["value"]
+        statuses += [
+            c["pii"]["status"]
+            for c in codebook
+            if c["dataset"] == dataset and c["column"] == value
+        ]
+    return statuses
