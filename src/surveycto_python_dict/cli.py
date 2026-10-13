@@ -157,10 +157,19 @@ def load_config(path: Path) -> Config:
             f"[entities.{name}]", set(section), {"key", "description", "parent"}
         )
         section["key"] = _columns(section["key"])
-    if not data["forms"]:
-        raise ValueError("forms is empty: name at least one form")
-    # <project>.duckdb holds a schema per form: a form named like the database makes
-    # every <form>.<table> ambiguous to DuckDB.
+    if not isinstance(data["forms"], list) or not data["forms"]:
+        raise ValueError("forms: a list of form ids, at least one")
+    twice = sorted(f for f, n in Counter(data["forms"]).items() if n > 1)
+    if twice:
+        raise ValueError(f"forms: {', '.join(twice)} is listed twice")
+    # <project>.duckdb holds a schema per form beside its own main and dataset, and a
+    # form named like the database makes every <form>.<table> ambiguous to DuckDB.
+    for form in data["forms"]:
+        if form in ("main", "dataset"):
+            raise ValueError(
+                f"forms: {form} is also a schema of <project>.duckdb, which holds the "
+                "project tables in main and the datasets in dataset"
+            )
     project_name = (Path(path).parent / data["out_dir"]).resolve().name
     if project_name in data["forms"]:
         raise ValueError(
@@ -310,9 +319,7 @@ def pull(cfg: Config, client: Client) -> Path:
         )
 
     for dataset in sorted(wanted):
-        (raw / "datasets" / f"{dataset}.csv").write_text(
-            client.pull_dataset(dataset), encoding="utf-8"
-        )
+        (raw / "datasets" / f"{dataset}.csv").write_bytes(client.pull_dataset(dataset))
     print(f"[pull] {len(wanted)} server datasets -> {raw / 'datasets'}")
     return raw
 
@@ -333,6 +340,12 @@ def build_form(
     contract = _contract(cfg, form)
     datasets = form_datasets(cfg, form)
     rows = json.loads((raw / "wide.json").read_text(encoding="utf-8"))
+    # The outputs are built from the submissions' columns, so a form needs some.
+    if not rows:
+        raise ValueError(
+            f"{form}: no submissions on the server; leave it out of forms until it "
+            "has some"
+        )
     screen_search_choices(contract, datasets, cfg.pii, analyzer, rows)
     questions = build_questions(contract)
     table = cast_wide(rows, contract)

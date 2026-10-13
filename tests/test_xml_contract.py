@@ -823,3 +823,31 @@ def test_hint_and_constraint_message_are_read(tmp_path):
     assert nodes["year"].hint == "The year the paper came out"
     assert nodes["year"].constraint_message == "Use 1900 when not reported"
     assert (nodes["age"].hint, nodes["age"].constraint_message) == (None, "Too old")
+
+
+_XML_MEDIA_LABEL = """<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml"
+        xmlns:jr="http://openrosa.org/javarosa">
+  <h:head><model>
+    <itext><translation lang="English" default="true()">
+      <text id="/f/fruit/1:label"><value>Apple</value></text>
+      <text id="/f/fruit/2:label"><value form="image">jr://images/pear.png</value></text>
+    </translation></itext>
+    <instance><f id="f" version="1"><fruit/></f></instance>
+    <bind nodeset="/f/fruit" type="select1"/>
+  </model></h:head>
+  <h:body>
+    <select1 ref="/f/fruit"><label>Fruit</label>
+      <item><label ref="jr:itext('/f/fruit/1:label')"/><value>1</value></item>
+      <item><label ref="jr:itext('/f/fruit/2:label')"/><value>2</value></item>
+    </select1>
+  </h:body>
+</h:html>
+"""
+
+
+def test_media_only_choice_label_is_empty_text(tmp_path):
+    path = tmp_path / "f.xml"
+    path.write_text(_XML_MEDIA_LABEL, encoding="utf-8")
+    items = parse_contract(path).nodes["fruit"].choice_items
+    assert [(c["value"], c["label"]) for c in items] == [("1", "Apple"), ("2", "")]

@@ -148,7 +148,7 @@ def test_pull_wide_json_naive_since_raises(client):
 @responses.activate
 def test_pull_dataset(client):
     responses.get(f"{BASE}/api/v2/datasets/data/csv/roster", body="id,name\n1,a\n")
-    assert client.pull_dataset("roster") == "id,name\n1,a\n"
+    assert client.pull_dataset("roster") == b"id,name\n1,a\n"
 
 
 @responses.activate

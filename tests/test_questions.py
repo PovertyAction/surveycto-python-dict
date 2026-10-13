@@ -342,6 +342,33 @@ def test_caseid_preload_is_typed_caseid(tmp_path):
     ] == [("caseid", "caseid")]
 
 
+def test_field_whose_name_starts_with_KEY_is_a_question(tmp_path):
+    path = tmp_path / "f.xml"
+    path.write_text(
+        """<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml">
+  <h:head><model>
+    <instance><f id="f" version="1">
+      <KEY_INF/><instanceName_note/><meta><instanceID/><instanceName/></meta>
+    </f></instance>
+    <bind nodeset="/f/KEY_INF" type="string"/>
+    <bind nodeset="/f/instanceName_note" type="string"/>
+    <bind nodeset="/f/meta/instanceID" type="string" calculate="concat('uuid:', uuid())"/>
+    <bind nodeset="/f/meta/instanceName" type="string" calculate="/f/KEY_INF"/>
+  </model></h:head>
+  <h:body>
+    <input ref="/f/KEY_INF"><label>Key informant</label></input>
+    <input ref="/f/instanceName_note"><label>Name note</label></input>
+  </h:body>
+</h:html>""",
+        encoding="utf-8",
+    )
+    assert [q["variable_name"] for q in build_questions(parse_contract(path))] == [
+        "KEY_INF",
+        "instanceName_note",
+    ]
+
+
 def test_compiled_repeat_count_calculate_is_the_count_entry(tmp_path):
     path = tmp_path / "counted.xml"
     path.write_text(

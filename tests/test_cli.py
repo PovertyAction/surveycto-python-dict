@@ -50,6 +50,20 @@ def test_load_config_without_forms_raises(tmp_path):
         load_config(path)
 
 
+@pytest.mark.parametrize(
+    ("forms", "message"),
+    [
+        ('"farm"', "forms: a list of form ids"),
+        ('["farm", "farm"]', "forms: farm is listed twice"),
+    ],
+)
+def test_load_config_bad_forms_raises(tmp_path, forms, message):
+    path = tmp_path / "config.toml"
+    path.write_text(f'forms = {forms}\nout_dir = "out"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match=message):
+        load_config(path)
+
+
 def test_load_config_pii(tmp_path):
     cfg = load_config(
         _config(
@@ -104,10 +118,14 @@ _SERVER_DATASETS = {
 }
 
 
-def _mock_server(xml: str, wide_method: str):
+def _mock_server(xml: str, wide_method: str, households: bytes = b"hhid\n1\n"):
     responses.get(f"{BASE}/formList", body=FORM_LIST)
     responses.get(f"{BASE}/api/v2/datasets", json=_SERVER_DATASETS)
-    responses.get(f"{BASE}/api/v2/datasets/data/csv/households", body="hhid\n1\n")
+    responses.get(
+        f"{BASE}/api/v2/datasets/data/csv/households",
+        body=households,
+        content_type="text/csv",
+    )
     responses.get(f"{BASE}/forms/farm/xml", body=xml.encode())
     responses.get(f"{BASE}/forms/farm/manifest", body=_MANIFEST)
     zipped = io.BytesIO()
@@ -161,6 +179,18 @@ def test_pull_listed_server_dataset_comes_once_into_raw(tmp_path, monkeypatch):
 
 
 @responses.activate
+def test_pull_dataset_keeps_the_server_bytes(tmp_path, monkeypatch):
+    monkeypatch.delenv("SCTO_KEY_PATH", raising=False)
+    body = 'hhid,name\r\n1,José\r\n2,"a\r\nb"\r\n'.encode()
+    _mock_server(XML, responses.GET, households=body)
+    raw = pull(
+        load_config(_config(tmp_path, 'server_datasets = ["households"]\n')),
+        Client("acme", "u", "p"),
+    )
+    assert (raw / "datasets" / "households.csv").read_bytes() == body
+
+
+@responses.activate
 def test_pull_listed_dataset_missing_from_the_server_raises(tmp_path):
     _mock_server(XML, responses.GET)
     cfg = load_config(_config(tmp_path, 'server_datasets = ["nope"]\n'))
@@ -184,6 +214,13 @@ def built(tmp_path, analyzer):
     cfg = load_config(_config(tmp_path))
     write_pull(cfg)
     return build(cfg, SENTINELS, analyzer)["farm"], cfg.out_dir / "farm"
+
+
+def test_build_form_without_submissions_raises(tmp_path, analyzer):
+    cfg = load_config(_config(tmp_path))
+    write_pull(cfg, rows=[])
+    with pytest.raises(ValueError, match="farm: no submissions on the server"):
+        build(cfg, SENTINELS, analyzer)
 
 
 def test_build_writes_every_output(built):
@@ -296,6 +333,14 @@ def test_install_skill_writes_the_skill_and_the_current_script(tmp_path):
     assert (target / "search_survey.py").read_bytes() == Path(
         survey.__file__
     ).read_bytes()
+
+
+@pytest.mark.parametrize("form", ["main", "dataset"])
+def test_a_form_named_main_is_refused(tmp_path, form):
+    config = tmp_path / "config.toml"
+    config.write_text(f'forms = ["{form}"]\nout_dir = "out"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match=f"{form} is also a schema"):
+        load_config(config)
 
 
 def test_a_project_folder_named_like_a_form_raises(tmp_path):

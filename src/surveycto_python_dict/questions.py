@@ -22,7 +22,8 @@ from surveycto_python_dict.xml_contract import (
 # Metadata the export writes as a system column when the field has its reserved name
 # (starttime, deviceid, ...); under any other name the field is a question.
 _METADATA_TYPES = {"start", "end", "deviceid", "username", "simserial", "phonenumber"}
-_EXCLUDED_PREFIXES = ("instanceID", "instanceName", "KEY", "SET-OF-")
+# The form's own meta fields, matched whole: a field named KEY_INF is a question.
+_EXCLUDED_NAMES = {"instanceID", "instanceName"}
 
 _INPUT_TYPES = {
     "string": "text",
@@ -157,7 +158,7 @@ def _excluded(name: str, qtype: str) -> bool:
         return True
     if qtype in _METADATA_TYPES:
         return is_system_column(name)
-    return name.startswith(_EXCLUDED_PREFIXES)
+    return name in _EXCLUDED_NAMES
 
 
 def build_questions(contract: FormContract) -> list[dict]:
