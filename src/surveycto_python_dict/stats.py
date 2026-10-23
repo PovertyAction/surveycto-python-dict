@@ -343,20 +343,29 @@ def summary_stats(
 ) -> list[dict]:
     """Return one stats row per parquet column, in column order."""
     form_dir = Path(form_dir)
-    questions = {
-        q["variable_name"]: q
-        for q in json.loads(
-            (form_dir / f"{form_id}_questions.json").read_text(encoding="utf-8")
-        )
-    }
+    questions = json.loads(
+        (form_dir / f"{form_id}_questions.json").read_text(encoding="utf-8")
+    )
     dictionary = json.loads(
         (form_dir / f"{form_id}_variable_dictionary.json").read_text(encoding="utf-8")
     )
+    return stats_rows(
+        pq.read_table(form_dir / f"{form_id}.parquet"), questions, dictionary, sentinels
+    )
+
+
+def stats_rows(
+    table, questions: list[dict], dictionary: dict, sentinels: dict[int, str]
+) -> list[dict]:
+    """Return one stats row per column of ``table``, in the dictionary's order.
+
+    ``questions`` and ``dictionary`` are what ``build_questions`` and
+    ``build_dictionary`` return, with the PII blocks attached.
+    """
+    questions = {q["variable_name"]: q for q in questions}
     variables = dictionary["variables"]
     # The rows the build counted: [submissions] exclude leaves some out.
-    table = kept(
-        pq.read_table(form_dir / f"{form_id}.parquet"), dictionary["dataset"]["exclude"]
-    )
+    table = kept(table, dictionary["dataset"]["exclude"])
     data = _Data(table, questions, variables)
     n_rows = table.num_rows
     # Numeric codes as numbers and as text; date codes as ISO text, as dates are read.

@@ -19,7 +19,8 @@ Each column gets ``{"status", "basis"[, "presidio"]}``; the first matching rule 
    questions; selects with inline choices; calculates whose every reference is
    cleared or whitelisted and that do not ``pulldata()``.
 4. ``may_contain_pii`` / ``no_hits``: everything else, scanned with Presidio on its
-   distinct non-null values (sampled with ``seed`` above ``max_distinct``). With
+   distinct non-null values (sampled with ``seed`` above ``max_distinct``). Without
+   an analyzer it is ``may_contain_pii`` / ``unscanned``. With
    ``no_personal_data`` the project declares it holds none: every column past the
    device and system columns is ``whitelisted`` / ``project``, and Presidio never runs.
 
@@ -452,7 +453,11 @@ def _block(
 def classify(
     table: pa.Table, vardict: dict, questions: list[dict], config: PiiConfig, analyzer
 ) -> dict[str, dict]:
-    """Return the PII block for every column of ``table``."""
+    """Return the PII block for every column of ``table``.
+
+    ``analyzer`` None runs the rules alone: a column they leave open is
+    ``may_contain_pii`` with basis ``unscanned``, so its values stay hidden.
+    """
     variables = vardict["variables"]
     question_names = {q["variable_name"] for q in questions}
     whitelist, blacklist = set(config.whitelist), set(config.blacklist)
@@ -499,9 +504,15 @@ def classify(
             if q is not None and q["publishable"]:
                 block = {**block, "basis": [*block["basis"], "publishable"]}
         blocks[column] = block
-    scans.run(analyzer)
-    for column in scans.columns:
-        block = scans.block(column)
+    if analyzer is not None:
+        scans.run(analyzer)
+    for column, (_, _, _, basis) in scans.columns.items():
+        # Without an analyzer, what the rules leave open stays flagged, unscanned.
+        block = (
+            scans.block(column)
+            if analyzer is not None
+            else {"status": "may_contain_pii", "basis": [*basis, "unscanned"]}
+        )
         if (q := rules.by_name.get(variables[column]["question"])) and q["publishable"]:
             block = {**block, "basis": [*block["basis"], "publishable"]}
         blocks[column] = block

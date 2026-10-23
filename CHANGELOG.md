@@ -4,6 +4,13 @@
 
 ### Added
 
+- The library runs from objects, for apps that hold the data in memory:
+  `parse_contract` takes the XML as bytes, `stats_rows(table, questions,
+  dictionary, sentinels)` is `summary_stats` without the files, and
+  `save_codebook(dest, dictionary, stats)` writes the codebook to a path or a
+  binary file object. `classify` with `analyzer=None` runs the rules alone; a
+  column they leave open is `may_contain_pii` with basis `unscanned`, so its
+  values stay hidden.
 - A form with no submissions yet builds every output (#89): its questions, skip logic,
   dictionary and flow are ready before fieldwork, and its tables and views hold the
   columns every submission carries and no rows.

@@ -682,10 +682,13 @@ def _default_itext(model) -> dict[str, str]:
 
 
 def parse_contract(xml_path) -> FormContract:
-    """Parse a compiled XForm XML into a FormContract."""
+    """Parse a compiled XForm XML, as a path or as bytes, into a FormContract."""
     import xml.etree.ElementTree as ET
 
-    root = ET.parse(str(xml_path)).getroot()
+    if isinstance(xml_path, bytes):
+        root = ET.fromstring(xml_path)
+    else:
+        root = ET.parse(str(xml_path)).getroot()
 
     # 1) Primary instance: the model's <instance> without an `id`, whose first
     #    element is the form root. SurveyCTO compiles datasets and choice lists

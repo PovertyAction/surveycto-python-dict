@@ -178,6 +178,17 @@ def write_codebook(form_dir: Path, form_id: str, stats: list[dict]) -> Path:
     dictionary = json.loads(
         (form_dir / f"{form_id}_variable_dictionary.json").read_text(encoding="utf-8")
     )
+    path = form_dir / f"{form_id}_codebook.xlsx"
+    save_codebook(path, dictionary, stats)
+    return path
+
+
+def save_codebook(dest, dictionary: dict, stats: list[dict]) -> None:
+    """Save the codebook workbook to ``dest``, a path or a binary file object.
+
+    ``dictionary`` is ``build_dictionary``'s output with the PII blocks attached;
+    ``stats`` is ``stats_rows``'s.
+    """
     workbook = Workbook(write_only=True)
     _sheet(
         workbook, "Variables", VARIABLE_COLUMNS, _variable_rows(dictionary["variables"])
@@ -188,9 +199,7 @@ def write_codebook(form_dir: Path, form_id: str, stats: list[dict]) -> Path:
         STATS_COLUMNS,
         [[row[c] for c in STATS_COLUMNS] for row in stats],
     )
-    path = form_dir / f"{form_id}_codebook.xlsx"
-    workbook.save(path)
-    return path
+    workbook.save(dest)
 
 
 def main(argv: list[str] | None = None) -> None:
