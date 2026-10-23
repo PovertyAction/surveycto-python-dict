@@ -20,6 +20,6 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
       - name: Sync uv
-        run: uv sync --locked --dev
+        run: uv sync --locked --dev --all-extras
       - name: Run the offline test suite
         run: uv run pytest -q

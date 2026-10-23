@@ -11,7 +11,7 @@ default:
 
 [doc("Install the environment, including the spaCy models, and the pre-commit hooks")]
 setup:
-    uv sync
+    uv sync --all-extras
     uv run pre-commit install
 
 [doc("Run the pre-commit hooks (ruff, codespell, markdownlint, ...) on every file")]

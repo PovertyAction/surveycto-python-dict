@@ -22,7 +22,7 @@ people cleaning it decide what to do.
 ```sh
 git clone https://github.com/PovertyAction/surveycto-python-dict
 cd surveycto-python-dict
-just setup                           # uv sync with the spaCy models; pre-commit hooks
+just setup                           # uv sync with every extra, spaCy models included; pre-commit hooks
 cp .env.example .env                 # server, user, password, key path, sentinel codes
 cp config.example.toml config.toml   # the project's forms and out_dir
 just run                             # pull, then every output
@@ -52,9 +52,14 @@ Each command takes `--config config.toml`.
 ### Use from another project
 
 ```sh
-uv add git+https://github.com/PovertyAction/surveycto-python-dict
+uv add "surveycto-python-dict[pii,mcp] @ git+https://github.com/PovertyAction/surveycto-python-dict"
 uv run scto-skill          # the survey-expert skill -> .claude/skills/survey-expert
 ```
+
+The extras are what the CLI and the MCP server need: `pii` is Presidio and its spaCy
+models (about 1 GB), `mcp` the MCP server. A pipeline that only types submissions and
+builds dictionaries, stats and codebooks in memory installs the package without them;
+there `classify(..., analyzer=None)` runs the rules alone.
 
 Copy `config.example.toml`, `.env.example` and `.mcp.json.example` from this repository
 into the project and fill them in. The `justfile` recipes from `pull` to `mcp` can be

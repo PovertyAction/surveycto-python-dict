@@ -11,6 +11,9 @@
   binary file object. `classify` with `analyzer=None` runs the rules alone; a
   column they leave open is `may_contain_pii` with basis `unscanned`, so its
   values stay hidden.
+- Presidio with its spaCy models and the MCP server are the `pii` and `mcp` extras, so a
+  pipeline can install the core (pyarrow, DuckDB, pandas, openpyxl, requests) without
+  about 1 GB of models. `just setup` and CI install every extra.
 - A form with no submissions yet builds every output (#89): its questions, skip logic,
   dictionary and flow are ready before fieldwork, and its tables and views hold the
   columns every submission carries and no rows.
