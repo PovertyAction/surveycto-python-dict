@@ -94,6 +94,7 @@ _MAX_HIT_KEYS = 5
 # A search() list longer than this stays in its dataset: a filter on a field can leave
 # every row of a large dataset as a possible choice, copied into each column.
 MAX_INLINE_CHOICES = 50
+_DETECTORS = {"spacy"}
 
 
 def shows_values(status: str) -> bool:
@@ -131,9 +132,18 @@ class PiiConfig:
     # True: the project holds no personal data (study metadata, say); every column
     # past the blacklist, publishable and device rules is whitelisted, unscanned.
     no_personal_data: bool = False
+    # What scans the open columns; set per run by scripts/pii_compare.py while #108
+    # compares detectors.
+    detector: str = "spacy"
 
     def __post_init__(self):
-        """Raise when a name is on both the whitelist and the blacklist."""
+        """Raise on an unknown detector or a name on both the whitelist and the
+        blacklist.
+        """
+        if self.detector not in _DETECTORS:
+            raise ValueError(
+                f"detector {self.detector!r}: one of {', '.join(sorted(_DETECTORS))}"
+            )
         both = set(self.whitelist) & set(self.blacklist)
         if both:
             raise ValueError(
