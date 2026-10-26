@@ -61,7 +61,7 @@ def form(tmp_path):
 def _classify(form, analyzer, config=PiiConfig()):
     table, questions, vardict = form
     spy = Spy(analyzer)
-    return classify(table, vardict, questions, config, spy), spy
+    return classify(table, vardict, questions, config, spy, {}), spy
 
 
 @pytest.fixture
@@ -436,3 +436,77 @@ def test_structure_detector_needs_no_spacy_model():
 def test_unknown_detector_raises():
     with pytest.raises(ValueError, match="detector 'large'"):
         PiiConfig(detector="large")
+
+
+@pytest.mark.parametrize(
+    ("calculation", "holds"),
+    [
+        ("pulldata('people', 'phone', 'id', ${id})", True),
+        ("coalesce(pulldata('people', 'phone', 'id', ${id}), ${phone})", True),
+        ("not(empty(pulldata('people', 'phone', 'phone', ${phone})))", False),
+        ("string-length(pulldata('people', 'phone', 'id', ${id}))", False),
+        ("pulldata('people', 'phone', 'id', ${id}) = ''", False),
+        # One call is tested, the other is the value.
+        (
+            "if(empty(pulldata('people', 'phone', 'id', ${id})), "
+            "pulldata('people', 'phone_2', 'id', ${id}), '')",
+            True,
+        ),
+    ],
+)
+def test_holds_pulldata(calculation, holds):
+    from surveycto_python_dict.pii import _holds_pulldata
+
+    assert _holds_pulldata(calculation) is holds
+
+
+def _lineage_blocks(dataset_status):
+    from surveycto_python_dict.pii import _inherit, _Rules
+
+    source = {"kind": "pulldata", "dataset": "people", "column": "phone"}
+    questions = [
+        {
+            "variable_name": "pl_phone",
+            "type": "calculate",
+            "calculation": "pulldata('people', 'phone', 'id', ${id})",
+            "data_source": source,
+        },
+        {
+            "variable_name": "has_phone",
+            "type": "calculate",
+            "calculation": "not(empty(pulldata('people', 'phone', 'id', ${id})))",
+            "data_source": source,
+        },
+        {
+            "variable_name": "phone_copy",
+            "type": "calculate",
+            "calculation": "${pl_phone}",
+            "data_source": None,
+        },
+    ]
+    names = [q["variable_name"] for q in questions]
+    blocks = {n: {"status": "no_hits", "basis": ["type:calculate"]} for n in names}
+    variables = {n: {"question": n} for n in names}
+    _inherit(
+        blocks,
+        variables,
+        _Rules(questions, set(), set(), True),
+        {"people.phone": {"status": dataset_status}},
+    )
+    return blocks
+
+
+def test_pulldata_and_its_readers_take_the_dataset_columns_flag():
+    blocks = _lineage_blocks("may_contain_pii")
+    assert blocks["pl_phone"] == {
+        "status": "may_contain_pii",
+        "basis": ["type:calculate", "lineage:people.phone"],
+    }
+    assert blocks["phone_copy"]["basis"] == ["type:calculate", "lineage:pl_phone"]
+    # A test of the value holds no value.
+    assert blocks["has_phone"]["status"] == "no_hits"
+
+
+def test_a_clean_dataset_column_flags_nothing():
+    blocks = _lineage_blocks("no_hits")
+    assert {b["status"] for b in blocks.values()} == {"no_hits"}

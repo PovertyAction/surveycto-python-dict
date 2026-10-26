@@ -103,6 +103,10 @@ _PHONE_DIGITS = re.compile(r"\d{6,12}")
 _MIN_PHONES = 10
 # Operators' leading digits: this many 3-digit prefixes cover most of a phone column.
 _PHONE_PREFIXES = 30
+_PULLDATA = re.compile(r"pulldata\s*\(")
+# Functions and operators that turn a value into a test of it.
+_TESTS = re.compile(r"(?<![\w-])(empty|not|string-length|boolean)\s*\(\s*$")
+_COMPARISON = re.compile(r"\s*(!=|=|<|>)")
 
 
 def shows_values(status: str) -> bool:
@@ -534,9 +538,18 @@ def _block(
 
 
 def classify(
-    table: pa.Table, vardict: dict, questions: list[dict], config: PiiConfig, analyzer
+    table: pa.Table,
+    vardict: dict,
+    questions: list[dict],
+    config: PiiConfig,
+    analyzer,
+    dataset_pii: dict[str, dict],
 ) -> dict[str, dict]:
-    """Return the PII block for every column of ``table``."""
+    """Return the PII block for every column of ``table``.
+
+    ``dataset_pii`` holds each ``dataset.column`` block of the datasets the form reads
+    (``dataset_codebook``); a ``pulldata()`` calculate takes a flag from its column.
+    """
     variables = vardict["variables"]
     question_names = {q["variable_name"] for q in questions}
     whitelist, blacklist = set(config.whitelist), set(config.blacklist)
@@ -589,7 +602,80 @@ def classify(
         if (q := rules.by_name.get(variables[column]["question"])) and q["publishable"]:
             block = {**block, "basis": [*block["basis"], "publishable"]}
         blocks[column] = block
+    if config.detector != "spacy":
+        _inherit(blocks, variables, rules, dataset_pii)
     return {column: blocks[column] for column in table.schema.names}
+
+
+def _holds_pulldata(calculation: str) -> bool:
+    """Return whether a ``pulldata()`` result can be the calculation's value: the call
+    itself, or a branch of ``coalesce()`` or ``if()``. A result passed to ``empty()``,
+    ``not()``, ``string-length()`` or a comparison only yields a test.
+    """
+    for call in _PULLDATA.finditer(calculation):
+        depth, end = 0, call.end() - 1
+        for end in range(call.end() - 1, len(calculation)):
+            depth += {"(": 1, ")": -1}.get(calculation[end], 0)
+            if depth == 0:
+                break
+        tested = _TESTS.search(calculation[: call.start()])
+        compared = _COMPARISON.match(calculation[end + 1 :])
+        if not tested and not compared:
+            return True
+    return False
+
+
+def _inherit(
+    blocks: dict[str, dict], variables: dict, rules: _Rules, dataset_pii: dict
+) -> None:
+    """Flag each ``no_hits`` calculate that holds a flagged value: the dataset column
+    its ``pulldata()`` reads, or a field its formula reads, directly or through other
+    calculates (basis ``lineage:<name>``).
+
+    A ``pulldata()`` returns the column's value, and a form that reads and publishes
+    the same dataset stores it back, so the field, the column and every
+    ``pulldata()`` of it are one value with one status. Lineage only adds flags.
+    """
+    columns: dict[str, list[str]] = {}
+    for column in blocks:
+        columns.setdefault(variables[column]["question"], []).append(column)
+
+    def flagged(name: str) -> bool:
+        return any(blocks[c]["status"] in FLAGGED for c in columns.get(name, []))
+
+    changed = True
+    while changed:
+        changed = False
+        for name, cols in columns.items():
+            q = rules.by_name.get(name)
+            if q is None or q["type"] != "calculate":
+                continue
+            source = q["data_source"]
+            if source and source["kind"] == "pulldata":
+                if not _holds_pulldata(q["calculation"]):
+                    continue
+                held = f"{source['dataset']}.{source['column']}"
+                # A column the dataset lacks makes pulldata() return "": it holds
+                # nothing from the dataset.
+                if held not in dataset_pii:
+                    continue
+                status = dataset_pii[held]["status"]
+            else:
+                held = next(
+                    (r for r in _REF.findall(q["calculation"] or "") if flagged(r)),
+                    None,
+                )
+                status = "may_contain_pii"
+            if held is None or status not in FLAGGED:
+                continue
+            for c in cols:
+                if blocks[c]["status"] == "no_hits":
+                    blocks[c] = {
+                        **blocks[c],
+                        "status": status,
+                        "basis": [*blocks[c]["basis"], f"lineage:{held}"],
+                    }
+                    changed = True
 
 
 def dataset_codebook(

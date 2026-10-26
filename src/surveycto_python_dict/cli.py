@@ -368,8 +368,15 @@ def classify_form(
     questions = build_questions(contract)
     table = cast_wide(rows, contract)
     vardict = build_dictionary(table, questions, contract, sentinels, cfg.exclude)
-    blocks = classify(table, vardict, questions, cfg.pii, analyzer)
     codebook = dataset_codebook(datasets, questions, cfg.pii, analyzer, scanned)
+    blocks = classify(
+        table,
+        vardict,
+        questions,
+        cfg.pii,
+        analyzer,
+        {f"{c['dataset']}.{c['column']}": c["pii"] for c in codebook},
+    )
     return contract, questions, table, vardict, blocks, codebook
 
 
