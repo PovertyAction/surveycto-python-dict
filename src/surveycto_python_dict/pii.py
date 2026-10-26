@@ -45,7 +45,7 @@ from surveycto_python_dict.contract import (
     dataset_header,
     search_universe,
 )
-from surveycto_python_dict.survey import code_reasons
+from surveycto_python_dict.survey import code_reasons, plain_label
 from surveycto_python_dict.xml_contract import FormContract
 
 if TYPE_CHECKING:
@@ -94,7 +94,21 @@ _MAX_HIT_KEYS = 5
 # A search() list longer than this stays in its dataset: a filter on a field can leave
 # every row of a large dataset as a possible choice, copied into each column.
 MAX_INLINE_CHOICES = 50
-_DETECTORS = {"spacy", "structure"}
+_DETECTORS = {"spacy", "structure", "zero_shot"}
+# zero_shot: the model, the labels it is asked for (its own words -> entity) and the
+# score a hit needs.
+_ZERO_SHOT_MODEL = "urchade/gliner_multi_pii-v1"
+_ZERO_SHOT_LABELS = {
+    "person": "PERSON",
+    "address": "ADDRESS",
+    "phone number": "PHONE_NUMBER",
+    "email": "EMAIL_ADDRESS",
+    "identity card number": "ID_NUMBER",
+    "bank account number": "BANK_ACCOUNT",
+}
+_ZERO_SHOT_THRESHOLD = 0.5
+# A column's context and values per text: well inside the model's 384 tokens.
+_CHUNK_CHARS = 600
 # spaCy's code for text in any language: the structure detector reads no language.
 _ANY_LANGUAGE = "xx"
 # A phone column, by shape: digit strings of 6 to 12 digits.
@@ -182,23 +196,38 @@ def build_analyzer(config: PiiConfig) -> "AnalyzerEngine":
     from presidio_analyzer.nlp_engine import NlpEngineProvider, NoOpNlpEngine
     from presidio_analyzer.predefined_recognizers import EmailRecognizer
 
-    if config.detector == "structure":
+    if config.detector in ("structure", "zero_shot"):
         nlp = NoOpNlpEngine(
             models=[{"lang_code": _ANY_LANGUAGE, "model_name": "no_op"}]
         )
         nlp.load()
-        registry = RecognizerRegistry(
-            [EmailRecognizer(supported_language=_ANY_LANGUAGE)]
-            + [
-                PatternRecognizer(
-                    supported_entity=name,
+        recognizers = [EmailRecognizer(supported_language=_ANY_LANGUAGE)] + [
+            PatternRecognizer(
+                supported_entity=name,
+                supported_language=_ANY_LANGUAGE,
+                patterns=[Pattern(name=name, regex=regex, score=1.0)],
+            )
+            for name, regex in config.id_patterns.items()
+        ]
+        if config.detector == "zero_shot":
+            from presidio_analyzer.chunkers import CharacterBasedTextChunker
+            from presidio_analyzer.predefined_recognizers import GLiNERRecognizer
+
+            recognizers.append(
+                GLiNERRecognizer(
                     supported_language=_ANY_LANGUAGE,
-                    patterns=[Pattern(name=name, regex=regex, score=1.0)],
+                    entity_mapping=_ZERO_SHOT_LABELS,
+                    model_name=_ZERO_SHOT_MODEL,
+                    threshold=_ZERO_SHOT_THRESHOLD,
+                    map_location="cpu",
+                    # Texts come chunked by column (_column_entities), each with
+                    # its context: Presidio passes them whole.
+                    text_chunker=CharacterBasedTextChunker(
+                        chunk_size=2 * _CHUNK_CHARS, chunk_overlap=0
+                    ),
                 )
-                for name, regex in config.id_patterns.items()
-            ],
-            supported_languages=[_ANY_LANGUAGE],
-        )
+            )
+        registry = RecognizerRegistry(recognizers, supported_languages=[_ANY_LANGUAGE])
         return AnalyzerEngine(
             nlp_engine=nlp, registry=registry, supported_languages=[_ANY_LANGUAGE]
         )
@@ -456,8 +485,20 @@ class _Scans:
         self.config = config
         self.columns: dict = {}
         self.found: dict[str, set[str]] = {}
+        # zero_shot: each column's hits, by value.
+        self.column_found: dict = {}
 
-    def add(self, name, column: pa.ChunkedArray, keys: list, basis: list[str]) -> None:
+    def add(
+        self,
+        name,
+        column: pa.ChunkedArray,
+        keys: list,
+        basis: list[str],
+        context: str,
+    ) -> None:
+        """Register a column; ``context`` (its question label, or its name) leads
+        every text the zero-shot model reads from it.
+        """
         values = [None if v is None else str(v) for v in column.to_pylist()]
         distinct = sorted({v for v in values if v is not None})
         if len(distinct) > self.config.max_distinct:
@@ -466,20 +507,79 @@ class _Scans:
                     distinct, self.config.max_distinct
                 )
             )
-        self.columns[name] = (values, distinct, keys, basis)
+        self.columns[name] = (values, distinct, keys, basis, context)
 
     def run(self, analyzer) -> None:
+        if self.config.detector == "zero_shot":
+            for name, (_, distinct, _, _, context) in self.columns.items():
+                self.column_found[name] = _column_entities(
+                    context, distinct, self.config, analyzer
+                )
+            return
         texts = sorted(
-            {t for _, distinct, _, _ in self.columns.values() for t in distinct}
+            {t for _, distinct, _, _, _ in self.columns.values() for t in distinct}
             - set(self.found)
         )
         if texts:
             self.found.update(zip(texts, _entities(texts, self.config, analyzer)))
 
     def block(self, name) -> dict:
-        values, distinct, keys, basis = self.columns[name]
-        phones = _phone_shape(values) if self.config.detector == "structure" else set()
-        return _block(values, distinct, keys, basis, self.found, phones)
+        values, distinct, keys, basis, _ = self.columns[name]
+        if self.config.detector == "spacy":
+            return _block(values, distinct, keys, basis, self.found)
+        found = self.column_found.get(name, self.found)
+        return _block(values, distinct, keys, basis, found, _phone_shape(values))
+
+
+def _context(q: dict | None, column: str) -> str:
+    """Return what tells the model what a column holds: its question's label; for a
+    calculate, which has none, the dataset column its ``pulldata()`` reads or its own
+    name.
+    """
+    if q is None:
+        return column
+    source = q["data_source"]
+    if q["type"] == "calculate":
+        return source["column"] if source and source.get("column") else column
+    return plain_label(q["question_text"] or "") or column
+
+
+def _column_entities(
+    context: str, distinct: list[str], config: PiiConfig, analyzer
+) -> dict[str, set[str]]:
+    """Return the entity types the zero-shot model finds in each of a column's values.
+
+    The model reads the column, not single cells: each text is the column's context
+    followed by as many of its values as fit in ``_CHUNK_CHARS``, so it judges each
+    value next to the question and to other values of the same column. A hit counts
+    for the value it falls in; one in the context counts for none.
+    """
+    wanted = [*_ZERO_SHOT_LABELS.values(), "EMAIL_ADDRESS", *config.id_patterns]
+    found: dict[str, set[str]] = {v: set() for v in distinct}
+    chunk: list[str] = []
+    chunks = []
+    for value in distinct:
+        if (
+            chunk
+            and len(context) + sum(len(v) + 3 for v in [*chunk, value]) > _CHUNK_CHARS
+        ):
+            chunks.append(chunk)
+            chunk = []
+        chunk.append(value)
+    if chunk:
+        chunks.append(chunk)
+    for chunk in chunks:
+        text, spans = f"{context}: ", []
+        for value in chunk:
+            spans.append((len(text), len(text) + len(value), value))
+            text += value + " | "
+        for r in analyzer.analyze(
+            text=text, language=_ANY_LANGUAGE, entities=wanted, score_threshold=0
+        ):
+            for start, end, value in spans:
+                if r.start < end and r.end > start:
+                    found[value].add(r.entity_type)
+    return found
 
 
 def _phone_shape(values: list) -> set[str]:
@@ -590,7 +690,11 @@ def classify(
             block = rules.static(question) if question is not None else None
             if block is None:
                 scans.add(
-                    column, table.column(column), keys, rules.scan_basis(question)
+                    column,
+                    table.column(column),
+                    keys,
+                    rules.scan_basis(question),
+                    _context(q, column),
                 )
                 continue
             if q is not None and q["publishable"]:
@@ -716,6 +820,7 @@ def dataset_codebook(
                 pa.chunked_array([pa.array(values, pa.string())]),
                 list(range(1, len(records) + 1)),
                 ["dataset"],
+                column,
             )
     scans.run(analyzer)
     for key in scans.columns:

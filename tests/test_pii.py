@@ -2,6 +2,7 @@
 
 import json
 import random
+import re
 
 import pyarrow as pa
 import pytest
@@ -212,6 +213,7 @@ def test_hit_keys_capped_at_five_with_the_full_count(analyzer):
         pa.chunked_array([phones]),
         [f"uuid:{i}" for i in range(8)],
         ["type:text"],
+        "phone",
     )
     scans.run(analyzer)
     block = scans.block("phone")
@@ -423,7 +425,9 @@ def test_structure_detector_needs_no_spacy_model():
         "id": ["ID-123456"] + [None] * 39,
         "note": ["Ana Maria Gomez Restrepo"] + [None] * 39,
     }.items():
-        scans.add(name, pa.chunked_array([values], pa.string()), list(range(40)), [])
+        scans.add(
+            name, pa.chunked_array([values], pa.string()), list(range(40)), [], name
+        )
     scans.run(analyzer)
     assert scans.block("phone")["basis"] == ["shape:phone"]
     assert scans.block("phone")["presidio"]["hit_rows"] == 40
@@ -510,3 +514,54 @@ def test_pulldata_and_its_readers_take_the_dataset_columns_flag():
 def test_a_clean_dataset_column_flags_nothing():
     blocks = _lineage_blocks("no_hits")
     assert {b["status"] for b in blocks.values()} == {"no_hits"}
+
+
+class FindsName:
+    """An analyzer that reports every "Jorge Perez" in a text as a person."""
+
+    def __init__(self):
+        self.texts: list[str] = []
+
+    def analyze(self, text, language, entities, score_threshold):
+        from presidio_analyzer import RecognizerResult
+
+        self.texts.append(text)
+        return [
+            RecognizerResult("PERSON", m.start(), m.end(), 0.9)
+            for m in re.finditer("Jorge Perez", text)
+        ]
+
+
+def test_zero_shot_reads_a_column_with_its_context():
+    from surveycto_python_dict.pii import _CHUNK_CHARS, _column_entities
+
+    analyzer = FindsName()
+    values = ["Jorge Perez"] + [f"value {i}" for i in range(200)]
+    found = _column_entities("Name of respondent", values, PiiConfig(), analyzer)
+    assert found["Jorge Perez"] == {"PERSON"}
+    assert {v for v, hits in found.items() if hits} == {"Jorge Perez"}
+    # Several values per text, each text led by the context and within the limit.
+    assert 1 < len(analyzer.texts) < len(values)
+    assert all(t.startswith("Name of respondent: ") for t in analyzer.texts)
+    assert all(len(t) <= _CHUNK_CHARS for t in analyzer.texts)
+
+
+def test_a_hit_in_the_context_counts_for_no_value():
+    from surveycto_python_dict.pii import _column_entities
+
+    found = _column_entities("Jorge Perez", ["1", "2"], PiiConfig(), FindsName())
+    assert found == {"1": set(), "2": set()}
+
+
+def test_context_is_the_label_or_the_column_a_calculate_reads():
+    from surveycto_python_dict.pii import _context
+
+    question = {"type": "text", "question_text": "<b>Name</b> of respondent"}
+    assert _context({**question, "data_source": None}, "name") == "Name of respondent"
+    preload = {
+        "type": "calculate",
+        "question_text": "pulldata('people', 'full_name', 'id', ${id})",
+        "data_source": {"kind": "pulldata", "column": "full_name"},
+    }
+    assert _context(preload, "pl_name") == "full_name"
+    assert _context(None, "name_2") == "name_2"
