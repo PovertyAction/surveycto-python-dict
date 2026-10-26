@@ -94,7 +94,15 @@ _MAX_HIT_KEYS = 5
 # A search() list longer than this stays in its dataset: a filter on a field can leave
 # every row of a large dataset as a possible choice, copied into each column.
 MAX_INLINE_CHOICES = 50
-_DETECTORS = {"spacy"}
+_DETECTORS = {"spacy", "structure"}
+# spaCy's code for text in any language: the structure detector reads no language.
+_ANY_LANGUAGE = "xx"
+# A phone column, by shape: digit strings of 6 to 12 digits.
+_PHONE_DIGITS = re.compile(r"\d{6,12}")
+# Fewer distinct numbers than this give the shape tests too little to go on.
+_MIN_PHONES = 10
+# Operators' leading digits: this many 3-digit prefixes cover most of a phone column.
+_PHONE_PREFIXES = 30
 
 
 def shows_values(status: str) -> bool:
@@ -152,13 +160,44 @@ class PiiConfig:
 
 
 def build_analyzer(config: PiiConfig) -> "AnalyzerEngine":
-    """Return a Presidio analyzer for the configured languages and ID patterns."""
+    """Return a Presidio analyzer for the configured detector and ID patterns.
+
+    ``spacy``: the configured languages' spaCy models and Presidio's recognizers.
+    ``structure``: no NLP model; only emails and the ID patterns, while ``_block``
+    finds phone columns by their shape.
+    """
     # Imported here: spaCy and Presidio take a second to load, and only the build
     # scans with them.
     import spacy
-    from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
-    from presidio_analyzer.nlp_engine import NlpEngineProvider
+    from presidio_analyzer import (
+        AnalyzerEngine,
+        Pattern,
+        PatternRecognizer,
+        RecognizerRegistry,
+    )
+    from presidio_analyzer.nlp_engine import NlpEngineProvider, NoOpNlpEngine
+    from presidio_analyzer.predefined_recognizers import EmailRecognizer
 
+    if config.detector == "structure":
+        nlp = NoOpNlpEngine(
+            models=[{"lang_code": _ANY_LANGUAGE, "model_name": "no_op"}]
+        )
+        nlp.load()
+        registry = RecognizerRegistry(
+            [EmailRecognizer(supported_language=_ANY_LANGUAGE)]
+            + [
+                PatternRecognizer(
+                    supported_entity=name,
+                    supported_language=_ANY_LANGUAGE,
+                    patterns=[Pattern(name=name, regex=regex, score=1.0)],
+                )
+                for name, regex in config.id_patterns.items()
+            ],
+            supported_languages=[_ANY_LANGUAGE],
+        )
+        return AnalyzerEngine(
+            nlp_engine=nlp, registry=registry, supported_languages=[_ANY_LANGUAGE]
+        )
     for lang, model in config.languages.items():
         if not spacy.util.is_package(model):
             raise MissingSpacyModel(
@@ -312,7 +351,7 @@ def _entities(texts: list[str], config: PiiConfig, analyzer) -> list[set[str]]:
     """
     wanted = [*config.entities, *config.id_patterns]
     found: list[set[str]] = [set() for _ in texts]
-    for lang in config.languages:
+    for lang in analyzer.supported_languages:
         parsed = analyzer.nlp_engine.process_batch(texts, lang, batch_size=256)
         for hits, (text, artifacts) in zip(found, parsed, strict=True):
             hits.update(
@@ -435,21 +474,56 @@ class _Scans:
 
     def block(self, name) -> dict:
         values, distinct, keys, basis = self.columns[name]
-        return _block(values, distinct, keys, basis, self.found)
+        phones = _phone_shape(values) if self.config.detector == "structure" else set()
+        return _block(values, distinct, keys, basis, self.found, phones)
+
+
+def _phone_shape(values: list) -> set[str]:
+    """Return a column's phone numbers when its values have their shape, else none.
+
+    Most distinct values are strings of 6 to 12 digits, mostly of one length; they
+    are close to one per row; a few leading 3-digit prefixes (the operators') cover
+    most of them; and they are spread out, not runs of nearby numbers like the IDs a
+    survey assigns.
+    """
+    present = [v for v in values if v is not None]
+    numbers = sorted({v for v in present if _PHONE_DIGITS.fullmatch(v)})
+    if len(numbers) < _MIN_PHONES or len(numbers) < 0.9 * len(set(present)):
+        return set()
+    length, same = Counter(map(len, numbers)).most_common(1)[0]
+    rows = sum(1 for v in present if _PHONE_DIGITS.fullmatch(v))
+    prefixes = Counter(v[:3] for v in numbers).most_common(_PHONE_PREFIXES)
+    ints = sorted(int(v) for v in numbers if len(v) == length)
+    nearby = sum(b - a <= 10 for a, b in zip(ints, ints[1:]))
+    if (
+        same < 0.8 * len(numbers)
+        or len(numbers) < 0.5 * rows
+        or sum(n for _, n in prefixes) < 0.8 * len(numbers)
+        or nearby > 0.2 * (len(ints) - 1)
+    ):
+        return set()
+    return set(numbers)
 
 
 def _block(
-    values: list, distinct: list[str], keys: list, basis: list[str], entities: dict
+    values: list,
+    distinct: list[str],
+    keys: list,
+    basis: list[str],
+    entities: dict,
+    phones: set[str] = frozenset(),
 ) -> dict:
     found: dict[str, set[str]] = {}
     for value in distinct:
         for t in entities[value]:
             found.setdefault(t, set()).add(value)
-    hits = set().union(*found.values()) if found else set()
+    hits = set().union(*found.values(), phones)
     hit_keys = sorted({k for k, v in zip(keys, values, strict=True) if v in hits})
     return {
-        "status": "may_contain_pii" if found else "no_hits",
-        "basis": basis + [f"presidio:{t}" for t in sorted(found)],
+        "status": "may_contain_pii" if found or phones else "no_hits",
+        "basis": basis
+        + [f"presidio:{t}" for t in sorted(found)]
+        + (["shape:phone"] if phones else []),
         "presidio": {
             "entities": {t: len(found[t]) for t in sorted(found)},
             "distinct_scanned": len(distinct),

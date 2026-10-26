@@ -1,6 +1,7 @@
 """Stage 6: per-variable PII classification and the review table."""
 
 import json
+import random
 
 import pyarrow as pa
 import pytest
@@ -37,6 +38,10 @@ class Spy:
     @property
     def nlp_engine(self):
         return self.inner.nlp_engine
+
+    @property
+    def supported_languages(self):
+        return self.inner.supported_languages
 
     def analyze(self, text, language, **kwargs):
         self.texts.append(text)
@@ -366,3 +371,68 @@ def test_flagged_columns_lose_their_range_and_codes_not_in_list(form, analyzer):
         assert "data_max" not in variables[column]
     assert variables["area"]["data_min"] == 1.5
     assert picked == {"n_codes_picked": 2, "n_codes_not_in_list": 1}
+
+
+def _phones(n, seed=0):
+    """Fictional ten-digit mobile numbers under a handful of operator prefixes."""
+    rng = random.Random(seed)
+    return [
+        f"{rng.choice(['300', '310', '315', '320'])}{rng.randrange(10**7):07d}"
+        for _ in range(n)
+    ]
+
+
+def test_phone_shape_finds_spread_numbers_under_few_prefixes():
+    from surveycto_python_dict.pii import _phone_shape
+
+    phones = _phones(40)
+    assert _phone_shape([*phones, None, "-99"]) == set(phones)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        [f"{1010000 + i}" for i in range(40)],  # IDs the survey assigns, in a run
+        [f"{random.Random(i).randrange(10**9, 10**10)}" for i in range(40)],  # codes
+        _phones(5),  # too few to tell
+        [f"{i:04d}" for i in range(40)],  # short codes
+        _phones(20) + [f"Name {i}" for i in range(20)],  # mostly not digits
+        _phones(10) * 4,  # the same few numbers on every row
+    ],
+)
+def test_phone_shape_leaves_other_digit_columns(values):
+    from surveycto_python_dict.pii import _phone_shape
+
+    assert _phone_shape(values) == set()
+
+
+def test_structure_detector_needs_no_spacy_model():
+    from surveycto_python_dict.pii import _Scans
+
+    config = PiiConfig(
+        detector="structure",
+        languages={"xx": "xx_no_such_model"},
+        id_patterns={"NATIONAL_ID": r"\bID-\d{6}\b"},
+    )
+    analyzer = build_analyzer(config)
+    phones = _phones(40)
+    scans = _Scans(config)
+    for name, values in {
+        "phone": phones,
+        "email": ["someone@example.org"] + [None] * 39,
+        "id": ["ID-123456"] + [None] * 39,
+        "note": ["Ana Maria Gomez Restrepo"] + [None] * 39,
+    }.items():
+        scans.add(name, pa.chunked_array([values], pa.string()), list(range(40)), [])
+    scans.run(analyzer)
+    assert scans.block("phone")["basis"] == ["shape:phone"]
+    assert scans.block("phone")["presidio"]["hit_rows"] == 40
+    assert scans.block("email")["basis"] == ["presidio:EMAIL_ADDRESS"]
+    assert scans.block("id")["basis"] == ["presidio:NATIONAL_ID"]
+    # Names wait for the zero-shot model.
+    assert scans.block("note")["status"] == "no_hits"
+
+
+def test_unknown_detector_raises():
+    with pytest.raises(ValueError, match="detector 'large'"):
+        PiiConfig(detector="large")
