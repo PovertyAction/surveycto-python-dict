@@ -688,3 +688,34 @@ def test_numbers_in_sequence_are_assigned_ids_not_id_documents():
     scattered = [str(random.Random(i).randrange(10**7, 10**8)) for i in range(40)]
     found = {v: {"ID_NUMBER"} for v in scattered}
     assert _rare_hits(found, scattered, sorted(scattered)) == found
+
+
+def test_a_code_built_from_the_date_and_random_numbers_is_generated():
+    from surveycto_python_dict.pii import _Rules
+
+    def calc(name, calculation, refs=(), source=None):
+        return {
+            "variable_name": name,
+            "type": "calculate",
+            "publishable": False,
+            "appearance": None,
+            "calculation": calculation,
+            "references": list(refs),
+            "data_source": source,
+        }
+
+    questions = [
+        calc("year", "once(format-date-time(today(), '%y'))"),
+        calc("digits", "substr(concat('00', int(once(random()) * 999)), -3, 5)"),
+        calc("code", "concat('XX', ${year}, ${digits})", ["year", "digits"]),
+        calc(
+            "taken",
+            "if(not(empty(pulldata('staff', 'code', 'code', ${code}))), 1, 0)",
+            ["code"],
+            {"kind": "pulldata", "dataset": "staff", "column": "code"},
+        ),
+        calc("new_code", "join-if('', ${code}, ${taken} = 0)", ["code", "taken"]),
+    ]
+    rules = _Rules(questions, set(), set(), True)
+    for name in ("year", "digits", "code", "taken", "new_code"):
+        assert rules.static(name)["status"] == "whitelisted", name

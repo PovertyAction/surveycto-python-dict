@@ -84,7 +84,16 @@ _SELECT_TYPES = {"select_one", "select_multiple"}
 _REF = re.compile(r"\$\{([^}]+)\}")
 _CALL = re.compile(r"([A-Za-z][\w-]*)\s*\(")
 # Functions that make a value without reading the form or the device.
-_GENERATED_CALLS = {"once", "uuid", "now", "today", "random", "concat", "if"}
+_GENERATED_CALLS = {"once", "uuid", "now", "today", "random", "concat", "if"} | {
+    # Pure functions: they reshape the value they are given.
+    "substr",
+    "int",
+    "round",
+    "string",
+    "format-date-time",
+    "date",
+    "selected-at",
+}
 # The statuses that clear a calculate reading the field (lineage), and those that hold
 # or may hold PII.
 SAFE = {"cleared_by_form", "whitelisted"}
@@ -357,7 +366,10 @@ class _Rules:
             return {"status": "whitelisted", "basis": [f"type:{qtype}"]}
         if qtype in _SELECT_TYPES and "search(" not in (q["appearance"] or ""):
             return {"status": "whitelisted", "basis": ["choices:inline"]}
-        if qtype == "calculate" and not self._pulldata(q):
+        # A pulldata() only tested for a match (empty(), not(), =) yields true or
+        # false, not the dataset's value.
+        holds = self._pulldata(q) and _holds_pulldata(q["calculation"])
+        if qtype == "calculate" and not holds:
             refs = q["references"]
             # Reading no field and calling only functions that generate a value, it
             # holds nothing anyone entered: once(uuid(5)), today().
