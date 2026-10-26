@@ -117,19 +117,20 @@ def compare(
     truth = {r[header.index("column")]: r[header.index("truth")] for r in rows}
     assert set(truth.values()) <= {"yes", "no"}, "every column needs truth yes or no"
 
-    results, totals = {}, []
+    results, codebooks, totals = {}, {}, []
     for detector in detectors:
         pii = replace(cfg.pii, whitelist=(), blacklist=(), detector=detector)
         start = time.perf_counter()
         analyzer = build_analyzer(pii)
         built = time.perf_counter()
-        _, _, table, _, blocks, _ = classify_form(
+        _, _, table, _, blocks, codebook = classify_form(
             replace(cfg, pii=pii), form, sentinels, analyzer, {}
         )
         done = time.perf_counter()
         unlabelled = sorted(set(table.schema.names) - set(truth))
         assert not unlabelled, f"columns without a truth label: {unlabelled}"
         results[detector] = blocks
+        codebooks[detector] = codebook
         flagged = {c for c, b in blocks.items() if b["status"] in FLAGGED}
         misses = [c for c in blocks if truth[c] == "yes" and c not in flagged]
         alarms = [c for c in blocks if truth[c] == "no" and c in flagged]
@@ -183,6 +184,21 @@ def compare(
                 block.get("presidio", {}).get("hit_rows", ""),
             ]
         columns.append(row)
+    datasets = workbook.create_sheet("Datasets")
+    datasets.append(
+        ["dataset", "column", "read_by"]
+        + [f"{d}_{k}" for d in detectors for k in ("status", "basis", "hit_rows")]
+    )
+    for i, row in enumerate(codebooks[detectors[0]]):
+        line = [row["dataset"], row["column"], ", ".join(row["read_by"])]
+        for detector in detectors:
+            pii = codebooks[detector][i]["pii"]
+            line += [
+                pii["status"],
+                ", ".join(pii["basis"]),
+                pii.get("presidio", {}).get("hit_rows", ""),
+            ]
+        datasets.append(line)
     workbook.save(out)
     print(f"-> {out}")
 

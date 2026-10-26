@@ -33,6 +33,7 @@ Issues = "https://github.com/PovertyAction/surveycto-python-dict/issues"
 dev = ["codespell>=2.4.1", "pre-commit>=4.2.0", "pytest", "responses", "ruff"]
 gliner = [
     "gliner>=0.2.26,<1.0.0",
+    "gliner2[local]>=2.1.0",
     "protobuf>=7.36.2",
     "sentencepiece>=0.2.2",
 ]

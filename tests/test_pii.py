@@ -565,3 +565,126 @@ def test_context_is_the_label_or_the_column_a_calculate_reads():
     }
     assert _context(preload, "pl_name") == "full_name"
     assert _context(None, "name_2") == "name_2"
+
+
+def test_short_value_columns_are_sampled_and_free_text_read_whole():
+    from surveycto_python_dict.pii import _SHORT_SAMPLE, _Scans
+
+    config = PiiConfig(detector="zero_shot")
+    scans = _Scans(config)
+    short = [f"Name {i}" for i in range(500)]
+    notes = [f"we met at the market on day {i}" for i in range(500)]
+    for name, values in {"short": short, "notes": notes}.items():
+        scans.add(name, pa.chunked_array([values], pa.string()), [], [], name)
+    assert len(scans.columns["short"][1]) == _SHORT_SAMPLE
+    assert len(scans.columns["notes"][1]) == 500
+
+
+class FakeGliner2:
+    """A GLiNER2 extractor that finds "Jorge Perez" as a person in each text."""
+
+    def batch_extract_entities(self, texts, labels, **kwargs):
+        return [
+            {
+                "entities": {
+                    "person": [
+                        {
+                            "text": m.group(),
+                            "start": m.start(),
+                            "end": m.end(),
+                            "confidence": 0.99,
+                        }
+                        for m in re.finditer("Jorge Perez", t)
+                    ]
+                    + [
+                        # Below the person threshold: not a hit.
+                        {
+                            "text": m.group(),
+                            "start": m.start(),
+                            "end": m.end(),
+                            "confidence": 0.6,
+                        }
+                        for m in re.finditer("none", t)
+                    ]
+                }
+            }
+            for t in texts
+        ]
+
+
+def test_gliner2_reads_columns_in_batches_beside_the_patterns():
+    from surveycto_python_dict.pii import _column_entities
+
+    config = PiiConfig(detector="gliner2")
+    analyzer = build_analyzer(PiiConfig(detector="structure"))
+    analyzer.zero_shot = FakeGliner2()
+    found = _column_entities(
+        "Contact", ["Jorge Perez", "someone@example.org", "none"], config, analyzer
+    )
+    assert found == {
+        "Jorge Perez": {"PERSON"},
+        "someone@example.org": {"EMAIL_ADDRESS"},
+        "none": set(),
+    }
+
+
+def test_zero_shot_detectors_read_date_questions():
+    from surveycto_python_dict.pii import _Rules
+
+    born = {
+        "variable_name": "born",
+        "type": "date",
+        "publishable": False,
+        "appearance": None,
+        "calculation": None,
+    }
+    assert _Rules([born], set(), set(), True).static("born")["status"] == "whitelisted"
+    assert _Rules([born], set(), set(), True, read_dates=True).static("born") is None
+
+
+def test_a_preload_takes_its_dataset_columns_status_without_a_scan():
+    from surveycto_python_dict.pii import _held_column
+
+    q = {
+        "type": "calculate",
+        "calculation": "pulldata('people', 'phone', 'id', ${id})",
+        "data_source": {"kind": "pulldata", "dataset": "people", "column": "phone"},
+    }
+    assert _held_column(q, {"people.phone": {"status": "no_hits"}}) == "people.phone"
+    # A column the dataset lacks, or a test of the value, holds nothing from it.
+    assert _held_column(q, {}) is None
+    tested = {**q, "calculation": f"empty({q['calculation']})"}
+    assert _held_column(tested, {"people.phone": {"status": "no_hits"}}) is None
+
+
+def test_a_numbered_entity_needs_its_digits():
+    from surveycto_python_dict.pii import _shaped
+
+    assert _shaped("PHONE_NUMBER", "310 456 7890")
+    assert not _shaped("PHONE_NUMBER", "Yes")
+    assert not _shaped("BANK_ACCOUNT", "Savings")
+    assert _shaped("PERSON", "Jorge Perez")
+
+
+def test_a_hit_on_a_category_does_not_count():
+    from surveycto_python_dict.pii import _rare_hits
+
+    values = ["Savings"] * 60 + ["Checking"] * 40 + ["Jorge Perez"]
+    found = {"Savings": {"BANK_ACCOUNT"}, "Checking": set(), "Jorge Perez": {"PERSON"}}
+    kept = _rare_hits(found, values, sorted(set(values)))
+    assert kept == {"Savings": set(), "Checking": set(), "Jorge Perez": {"PERSON"}}
+    # Free text keeps every hit: the same answer on many rows can still name someone.
+    notes = ["I spoke with Jorge Perez at home"] * 60
+    hits = {notes[0]: {"PERSON"}}
+    assert _rare_hits(hits, notes, [notes[0]]) == hits
+
+
+def test_numbers_in_sequence_are_assigned_ids_not_id_documents():
+    from surveycto_python_dict.pii import _rare_hits
+
+    assigned = [str(1001 + i) for i in range(40)]
+    found = {v: {"ID_NUMBER"} for v in assigned}
+    assert _rare_hits(found, assigned, assigned) == {v: set() for v in assigned}
+    scattered = [str(random.Random(i).randrange(10**7, 10**8)) for i in range(40)]
+    found = {v: {"ID_NUMBER"} for v in scattered}
+    assert _rare_hits(found, scattered, sorted(scattered)) == found
