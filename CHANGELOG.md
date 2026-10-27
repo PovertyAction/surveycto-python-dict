@@ -33,6 +33,8 @@
   On a labelled project this missed 12 personal columns instead of 13, raised 54 false
   alarms instead of 156, and ran in 6 s instead of 97 s (#108). Birth dates and ID
   numbers are left to the blacklist and `publishable`.
+- `[pii] countries` sets the regions whose local phone formats Presidio validates
+  (#108).
 - `scripts/pii_compare.py` writes a truth template for a form and scores the
   classification against it (#108).
 - `xml_contract` drops `Node.pulldata` (read `data_source`), `map_column`'s

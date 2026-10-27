@@ -9,8 +9,9 @@ team fills in the rest. ``compare`` classifies the form's raw pull once per run 
 empty lists, so the rules and the scan are measured without the team's review, and
 writes each column's status next to its label: a miss is a ``yes`` column left
 unflagged, a false alarm a ``no`` column flagged. A run is ``default`` (the config's
-models) or spaCy models and left-out entities, e.g. ``es=es_core_news_sm,en=en_core_web_sm``
-or ``xx=xx_ent_wiki_sm,-LOCATION``. Neither file holds a value from the data.
+settings) or options: spaCy models, left-out entities, phone countries and ``lists``
+to keep the config's lists, e.g. ``es=es_core_news_sm,en=en_core_web_sm`` or
+``xx=xx_ent_wiki_sm,-LOCATION,@CO``. Neither file holds a value from the data.
 """
 
 import json
@@ -130,15 +131,20 @@ def compare(
 
     results, codebooks, totals = {}, {}, []
     for run in runs:
+        # Options: lang=model, -ENTITY, @COUNTRY (phone regions), lists (keep the
+        # config's whitelist and blacklist).
         options = [] if run == "default" else run.split(",")
         languages = dict(o.split("=") for o in options if "=" in o)
         dropped = {o[1:] for o in options if o.startswith("-")}
+        keep = "lists" in options
         pii = replace(
             cfg.pii,
-            whitelist=(),
-            blacklist=(),
+            whitelist=cfg.pii.whitelist if keep else (),
+            blacklist=cfg.pii.blacklist if keep else (),
             languages=languages or cfg.pii.languages,
             entities=tuple(e for e in cfg.pii.entities if e not in dropped),
+            countries=tuple(o[1:] for o in options if o.startswith("@"))
+            or cfg.pii.countries,
         )
         start = time.perf_counter()
         analyzer = build_analyzer(pii)

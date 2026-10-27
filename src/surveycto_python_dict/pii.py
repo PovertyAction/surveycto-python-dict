@@ -177,6 +177,10 @@ class PiiConfig:
     # True: the project holds no personal data (study metadata, say); every column
     # past the blacklist, publishable and device rules is whitelisted, unscanned.
     no_personal_data: bool = False
+    # ISO country codes whose local phone formats Presidio validates, e.g. ["CO"];
+    # empty keeps Presidio's default regions. A number written with + and country
+    # code is read in any case.
+    countries: tuple[str, ...] = ()
 
     def __post_init__(self):
         """Raise when a name is on both the whitelist and the blacklist."""
@@ -218,6 +222,16 @@ def build_analyzer(config: PiiConfig) -> "AnalyzerEngine":
                     supported_entity=name,
                     supported_language=lang,
                     patterns=[Pattern(name=name, regex=regex, score=1.0)],
+                )
+            )
+    if config.countries:
+        from presidio_analyzer.predefined_recognizers import PhoneRecognizer
+
+        for lang in config.languages:
+            analyzer.registry.remove_recognizer("PhoneRecognizer", language=lang)
+            analyzer.registry.add_recognizer(
+                PhoneRecognizer(
+                    supported_language=lang, supported_regions=config.countries
                 )
             )
     return analyzer

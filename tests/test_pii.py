@@ -632,3 +632,13 @@ def test_digit_rule(values, numbers):
     from surveycto_python_dict.pii import _digit_numbers
 
     assert _digit_numbers(values) == numbers
+
+
+def test_countries_set_the_phone_regions():
+    analyzer = build_analyzer(PiiConfig(countries=("CO", "KE")))
+    phones = [
+        r
+        for r in analyzer.registry.get_recognizers(language="xx", all_fields=True)
+        if r.name == "PhoneRecognizer"
+    ]
+    assert [r.supported_regions for r in phones] == [("CO", "KE")]
