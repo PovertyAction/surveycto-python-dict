@@ -142,6 +142,7 @@ def compare(
             detector=name,
             languages=languages or cfg.pii.languages,
             entities=tuple(e for e in cfg.pii.entities if e not in dropped),
+            phone_rule="digits" if "digits" in options else "shape",
         )
         start = time.perf_counter()
         analyzer = build_analyzer(pii)

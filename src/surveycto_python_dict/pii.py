@@ -199,6 +199,9 @@ _PHONE_DIGITS = re.compile(r"\d{6,12}")
 _MIN_PHONES = 10
 # Operators' leading digits: this many 3-digit prefixes cover most of a phone column.
 _PHONE_PREFIXES = 30
+_NUMBER = re.compile(r"\+?\d{8,12}")
+# A date written in digits ("2015-06-30", "30/06/2015") is not a number.
+_DATE = re.compile(r"\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}")
 _PULLDATA = re.compile(r"pulldata\s*\(")
 # Functions and operators that turn a value into a test of it.
 _TESTS = re.compile(r"(?<![\w-])(empty|not|string-length|boolean)\s*\(\s*$")
@@ -243,6 +246,9 @@ class PiiConfig:
     # What scans the open columns; set per run by scripts/pii_compare.py while #108
     # compares detectors.
     detector: str = "spacy"
+    # Phone columns: "shape" (prefixes, not in sequence) or "digits" (most values 8
+    # to 12 digits); set by scripts/pii_compare.py while #108 compares them.
+    phone_rule: str = "shape"
 
     def __post_init__(self):
         """Raise on an unknown detector or a name on both the whitelist and the
@@ -636,7 +642,14 @@ class _Scans:
             found = _rare_hits(self.column_found[name], values, distinct)
         else:
             found = self.found
-        return _block(values, distinct, keys, basis, found, _phone_shape(values))
+        phones = (
+            _digit_numbers(values)
+            if self.config.phone_rule == "digits"
+            else _phone_shape(values)
+        )
+        return _block(
+            values, distinct, keys, basis, found, phones, self.config.phone_rule
+        )
 
 
 def _rare_hits(found: dict[str, set[str]], values: list, distinct: list[str]):
@@ -777,6 +790,21 @@ def _phone_shape(values: list) -> set[str]:
     return set(numbers)
 
 
+def _digit_numbers(values: list) -> set[str]:
+    """Return a column's numbers when most of its values have 8 to 12 digits, a
+    leading + and country code allowed: a phone or an ID number, else none.
+    """
+    present = [v for v in values if v is not None]
+    numbers = {
+        v
+        for v in present
+        if not _DATE.match(v) and _NUMBER.fullmatch(re.sub(r"[\s.()-]", "", v))
+    }
+    if not present or sum(v in numbers for v in present) < 0.5 * len(present):
+        return set()
+    return numbers
+
+
 def _assigned(numbers: list[str]) -> bool:
     """Return whether digit strings run in sequence, like the IDs a survey assigns:
     most of them sit within 10 of the next one up.
@@ -794,6 +822,7 @@ def _block(
     basis: list[str],
     entities: dict,
     phones: set[str] = frozenset(),
+    phone_rule: str = "shape",
 ) -> dict:
     found: dict[str, set[str]] = {}
     for value in distinct:
@@ -805,7 +834,9 @@ def _block(
         "status": "may_contain_pii" if found or phones else "no_hits",
         "basis": basis
         + [f"presidio:{t}" for t in sorted(found)]
-        + (["shape:phone"] if phones else []),
+        + (
+            [{"shape": "shape:phone", "digits": "digits"}[phone_rule]] if phones else []
+        ),
         "presidio": {
             "entities": {t: len(found[t]) for t in sorted(found)},
             "distinct_scanned": len(distinct),
@@ -839,7 +870,6 @@ def classify(
         blacklist,
         config.trust_publishable,
         config.no_personal_data,
-        config.detector in _COLUMNAR,
     )
     keys = table.column("KEY").to_pylist()
 
@@ -884,6 +914,22 @@ def classify(
                     _context(q, column),
                 )
                 continue
+            if (
+                config.phone_rule == "digits"
+                and q is not None
+                and q["type"] == "integer"
+                and block["status"] == "whitelisted"
+                and _digit_numbers(
+                    [
+                        None if v is None else str(v)
+                        for v in table.column(column).to_pylist()
+                    ]
+                )
+            ):
+                block = {
+                    "status": "may_contain_pii",
+                    "basis": ["type:integer", "digits"],
+                }
             if q is not None and q["publishable"]:
                 block = {**block, "basis": [*block["basis"], "publishable"]}
         blocks[column] = block
