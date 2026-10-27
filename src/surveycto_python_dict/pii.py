@@ -46,7 +46,7 @@ from surveycto_python_dict.contract import (
     search_universe,
 )
 from surveycto_python_dict.survey import code_reasons, plain_label
-from surveycto_python_dict.xml_contract import FormContract
+from surveycto_python_dict.xml_contract import FormContract, is_system_column
 
 if TYPE_CHECKING:
     from presidio_analyzer import AnalyzerEngine
@@ -1013,6 +1013,7 @@ def dataset_codebook(
                 name in blacklist
                 or name in whitelist
                 or config.no_personal_data
+                or is_system_column(column)
                 or (csv_path, column) in scanned
             ):
                 continue
@@ -1037,6 +1038,11 @@ def dataset_codebook(
                 block = {"status": "contains_pii", "basis": ["reviewed"]}
             elif name in whitelist:
                 block = {"status": "whitelisted", "basis": ["reviewed"]}
+            elif column in _DEVICE_COLUMNS:
+                block = {"status": "contains_pii", "basis": [f"device:{column}"]}
+            elif is_system_column(column):
+                # A form publishing to the dataset brings its system columns.
+                block = {"status": "whitelisted", "basis": ["system"]}
             elif config.no_personal_data:
                 block = {"status": "whitelisted", "basis": ["project"]}
             else:

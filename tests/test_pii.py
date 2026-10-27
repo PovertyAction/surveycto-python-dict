@@ -730,3 +730,25 @@ def test_a_code_built_from_the_date_and_random_numbers_is_generated():
     rules = _Rules(questions, set(), set(), True)
     for name in ("year", "digits", "code", "taken", "new_code"):
         assert rules.static(name)["status"] == "whitelisted", name
+
+
+def test_a_datasets_system_columns_are_decided_by_rule(tmp_path):
+    from surveycto_python_dict.pii import dataset_codebook
+
+    csv_path = tmp_path / "people.csv"
+    csv_path.write_text(
+        "KEY,SubmissionDate,deviceid,full_name\nuuid:1,2025-01-01,dev1,Jorge Perez\n",
+        encoding="utf-8",
+    )
+    rows = dataset_codebook(
+        {"people": csv_path},
+        [],
+        PiiConfig(detector="structure"),
+        build_analyzer(PiiConfig(detector="structure")),
+        {},
+    )
+    status = {r["column"]: (r["pii"]["status"], r["pii"]["basis"]) for r in rows}
+    assert status["KEY"] == ("whitelisted", ["system"])
+    assert status["SubmissionDate"] == ("whitelisted", ["system"])
+    assert status["deviceid"] == ("contains_pii", ["device:deviceid"])
+    assert status["full_name"][1] == ["dataset"]
