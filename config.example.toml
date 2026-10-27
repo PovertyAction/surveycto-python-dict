@@ -6,6 +6,8 @@ forms = ["my_form"]
 out_dir = "data/out/my_project"   # relative to this file; one folder per project
 
 [pii]
+# Decisions usually go in <form>_pii_review.xlsx (decision: personal or clear); the
+# lists hold the same decisions as text and prefill the workbook.
 # Column or question names you reviewed and cleared; dataset columns as dataset.column.
 whitelist = []
 # Column or question names you reviewed as personal data; outranks publishable.

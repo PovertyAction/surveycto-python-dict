@@ -33,7 +33,7 @@ import os
 import tomllib
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 
 import pyarrow as pa
@@ -42,7 +42,7 @@ from dotenv import load_dotenv
 
 from surveycto_python_dict.api import Client, MissingEnvVar, env_key_path
 from surveycto_python_dict.cast import cast_wide
-from surveycto_python_dict.codebook import write_pii_review
+from surveycto_python_dict.codebook import read_pii_decisions, write_pii_review
 from surveycto_python_dict.contract import (
     DatasetSource,
     attach_enumerators,
@@ -380,14 +380,48 @@ def classify_form(
     return contract, questions, table, vardict, blocks, codebook
 
 
+def with_decisions(cfg: Config) -> tuple[Config, dict[str, str]]:
+    """Return ``cfg`` with the decisions in each form's ``<form>_pii_review.xlsx``
+    added to its ``[pii]`` lists, and the reasons by name.
+
+    Read before a build rewrites the workbooks. A name marked ``personal`` in one
+    place and ``clear`` in another, two workbooks or a workbook and the lists, raises.
+    """
+    decided = {name: ("personal", "[pii] blacklist") for name in cfg.pii.blacklist}
+    decided |= {name: ("clear", "[pii] whitelist") for name in cfg.pii.whitelist}
+    reasons = {}
+    for form in cfg.forms:
+        path = cfg.form_dir(form) / f"{form}_pii_review.xlsx"
+        if not path.exists():
+            continue
+        for name, (decision, reason) in read_pii_decisions(path).items():
+            if reason:
+                reasons[name] = reason
+            if not decision:
+                continue
+            earlier, source = decided.setdefault(name, (decision, path.name))
+            if earlier != decision:
+                raise ValueError(
+                    f"`{name}` is {earlier} in {source} and {decision} in {path.name}"
+                )
+    pii = replace(
+        cfg.pii,
+        blacklist=tuple(n for n, (d, _) in decided.items() if d == "personal"),
+        whitelist=tuple(n for n, (d, _) in decided.items() if d == "clear"),
+    )
+    return replace(cfg, pii=pii), reasons
+
+
 def build_form(
     cfg: Config,
     form: str,
     sentinels: dict[int, str],
     analyzer,
     scanned: dict[tuple[Path, str], dict],
+    reasons: dict[str, str],
 ) -> tuple[dict[str, Path], set[str]]:
-    """Build one form's outputs from its raw pull.
+    """Build one form's outputs from its raw pull; ``reasons`` are the review
+    workbooks' reasons by name, written back with their decisions.
 
     Return the written paths by name and the names the ``[pii]`` lists can use: each
     question, column and ``dataset.column``.
@@ -421,7 +455,9 @@ def build_form(
             paths["graph"],
             indent=None,
         )
-        write_pii_review(table, vardict, paths["pii_review"])
+        write_pii_review(
+            table, vardict, codebook, cfg.pii, reasons, paths["pii_review"]
+        )
         write_json(codebook, paths["dataset_codebook"])
         pq.write_table(
             pa.Table.from_pylist(search_choices(contract), schema=SEARCH_CHOICES),
@@ -483,13 +519,19 @@ def write_flow(cfg: Config) -> Path:
 def build(
     cfg: Config, sentinels: dict[int, str], analyzer=None
 ) -> dict[str, dict[str, Path]]:
-    """Build every form's outputs and ``flow.json``; return each form's paths."""
+    """Build every form's outputs and ``flow.json``; return each form's paths.
+
+    The decisions in the review workbooks join the ``[pii]`` lists first.
+    """
+    cfg, reasons = with_decisions(cfg)
     if analyzer is None and not cfg.pii.no_personal_data:
         analyzer = build_analyzer(cfg.pii)
     scanned: dict[tuple[Path, str], dict] = {}
     paths, known = {}, set()
     for form in cfg.forms:
-        paths[form], names = build_form(cfg, form, sentinels, analyzer, scanned)
+        paths[form], names = build_form(
+            cfg, form, sentinels, analyzer, scanned, reasons
+        )
         known |= names
     warn_unknown_names(cfg.pii, known)
     write_flow(cfg)

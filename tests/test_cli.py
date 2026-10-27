@@ -412,10 +412,10 @@ def test_build_outputs_agree(built):
         if v["pii"]["status"] in ("contains_pii", "may_contain_pii")
     ]
     review = load_workbook(outputs["pii_review"])
-    assert review.sheetnames == ["Columns", "Values"]
+    assert review.sheetnames == ["Columns", "Datasets", "Values"]
     columns = list(review["Columns"].iter_rows(values_only=True))
     assert columns[0] == tuple(REVIEW_COLUMNS)
-    assert [row[0] for row in columns[1:]] == flagged
+    assert sorted(row[0] for row in columns[1:]) == sorted(vardict["variables"])
     values = list(review["Values"].iter_rows(values_only=True))
     assert values[0] == ("KEY", "column", "value")
     expected = [
@@ -433,18 +433,25 @@ def test_review_values_past_a_sheet_raise(monkeypatch, tmp_path):
     import pyarrow as pa
 
     from surveycto_python_dict import codebook
+    from surveycto_python_dict.pii import PiiConfig
 
     monkeypatch.setattr(codebook, "_EXCEL_ROWS", 3)
     table = pa.table({"KEY": ["a", "b", "c"], "name": ["x", "y", "z"]})
-    pii = {"status": "contains_pii", "basis": []}
     vardict = {
         "variables": {
-            "KEY": {"pii": {"status": "whitelisted", "basis": []}},
-            "name": {"pii": pii, "survey": None, "non_null_count": 3},
+            c: {
+                "pii": {"status": status, "basis": []},
+                "question": None,
+                "survey": None,
+                "non_null_count": 3,
+            }
+            for c, status in [("KEY", "whitelisted"), ("name", "contains_pii")]
         }
     }
     with pytest.raises(ValueError, match="3 flagged values"):
-        codebook.write_pii_review(table, vardict, tmp_path / "r.xlsx")
+        codebook.write_pii_review(
+            table, vardict, [], PiiConfig(), {}, tmp_path / "r.xlsx"
+        )
 
 
 def test_build_dictionary_holds_no_flagged_value(built):

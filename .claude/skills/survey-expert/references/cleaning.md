@@ -385,8 +385,9 @@ To learn what a gate opens or what a calculate reads, start with
    `describe()`. The people cleaning the data verify the flags in
    `<form>_pii_review.xlsx`.
 2. **Presidio over-flags** (codes read as names): it proposes, a person decides, and the
-   decision goes in `[pii] whitelist`, or `[pii] blacklist` for columns that are
-   personal even when the form marks them publishable.
+   decision goes in the workbook's `decision` column (`clear`, or `personal` for
+   columns that are personal even when the form marks them publishable) or the
+   `[pii]` lists.
 3. **Sharing is decided at delivery, by the team:** free text is reviewed before it
    leaves the project and derived scores stay.
 4. **Scan what you deliver,** derived columns included, and make the delivery step
