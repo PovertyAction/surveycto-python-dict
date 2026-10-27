@@ -1,5 +1,9 @@
 """Per-variable PII signal: evidence for the people cleaning the data, never enforcement.
 
+The team's rules decide first and the scan is a safety net for what they leave open.
+Birth dates and ID numbers look like any other date or code, so only the blacklist or
+``publishable`` marks them.
+
 Each column gets ``{"status", "basis"[, "presidio"]}``; the first matching rule wins:
 
 0. ``contains_pii`` / ``reviewed``: the column or its question is on the user's
@@ -17,9 +21,19 @@ Each column gets ``{"status", "basis"[, "presidio"]}``; the first matching rule 
    ``no_personal_data`` overrides.
 3. ``whitelisted``: system columns; integer, decimal, date, datetime and time
    questions; selects with inline choices; calculates whose every reference is
-   cleared or whitelisted and that do not ``pulldata()``.
-4. ``may_contain_pii`` / ``no_hits``: everything else, scanned with Presidio on its
-   distinct non-null values (sampled with ``seed`` above ``max_distinct``). With
+   cleared or whitelisted and that hold no ``pulldata()`` value, and calculates built
+   only from the date, random numbers and constants (``generated``). An integer
+   question whose values are mostly 8 to 12 digits is ``may_contain_pii`` instead
+   (basis ``digits``): a phone or an ID number stored as a number.
+4. ``may_contain_pii`` / ``no_hits``: everything else (text, ``search()`` selects,
+   calculates fed by text or a dataset), each column read whole: Presidio with spaCy
+   (by default the multilingual ``xx_ent_wiki_sm``) reads its distinct values after
+   its question's label, a sample of them for short values and all of them for free
+   text. A hit on a value many rows share, or a name or place in a column of repeated
+   values, is a category and does not count. Most values of 8 to 12 digits, a leading
+   ``+`` and country code allowed, flag it too (basis ``digits``). A ``pulldata()``
+   calculate holding its dataset column's value takes the column's status, and a
+   calculate reading a flagged field takes its flag (basis ``lineage:<name>``). With
    ``no_personal_data`` the project declares it holds none: every column past the
    device and system columns is ``whitelisted`` / ``project``, and Presidio never runs.
 
@@ -103,102 +117,23 @@ _MAX_HIT_KEYS = 5
 # A search() list longer than this stays in its dataset: a filter on a field can leave
 # every row of a large dataset as a possible choice, copied into each column.
 MAX_INLINE_CHOICES = 50
-_DETECTORS = {
-    "spacy",
-    "spacy_column",
-    "structure",
-    "zero_shot",
-    "gliner2",
-    "gliner2_onnx",
-}
-# The detectors that run a zero-shot model on each column.
-_ZERO_SHOT = {"zero_shot", "gliner2", "gliner2_onnx"}
-# The detectors that read each column with its context: the zero-shot models, and
-# the configured spaCy models read the same way.
-_COLUMNAR = _ZERO_SHOT | {"spacy_column"}
-# zero_shot: the model, the labels it is asked for (its own words -> entity) and the
-# score a hit needs.
-_ZERO_SHOT_MODEL = "urchade/gliner_multi_pii-v1"
-_ZERO_SHOT_LABELS = {
-    "person": "PERSON",
-    "address": "ADDRESS",
-    "phone number": "PHONE_NUMBER",
-    "email": "EMAIL_ADDRESS",
-    "identity card number": "ID_NUMBER",
-    "bank account number": "BANK_ACCOUNT",
-}
-_ZERO_SHOT_THRESHOLD = 0.5
-# gliner2: a GLiNER2 model fine-tuned for PII, asked for its own labels.
-_GLINER2_MODEL = "fastino/gliner2-privacy-filter-PII-multi"
-_GLINER2_LABELS = {
-    "person": "PERSON",
-    "date_of_birth": "DATE_OF_BIRTH",
-    "national_id_number": "ID_NUMBER",
-    "government_id": "ID_NUMBER",
-    "passport_number": "ID_NUMBER",
-    "address": "ADDRESS",
-    "street_address": "ADDRESS",
-    "phone_number": "PHONE_NUMBER",
-    "email": "EMAIL_ADDRESS",
-    "bank_account": "BANK_ACCOUNT",
-    "account_number": "BANK_ACCOUNT",
-}
-# gliner2_onnx: the multilingual GLiNER2 base model exported to ONNX, run without
-# torch, asked in plain words.
-_GLINER2_ONNX_MODEL = "lmo3/gliner2-multi-v1-onnx"
-_GLINER2_ONNX_LABELS = {
-    "person name": "PERSON",
-    "date of birth": "DATE_OF_BIRTH",
-    "national identity document number": "ID_NUMBER",
-    "street address": "ADDRESS",
-    "phone number": "PHONE_NUMBER",
-    "email address": "EMAIL_ADDRESS",
-    "bank account number": "BANK_ACCOUNT",
-}
-# Labels the model gives freely (its card: raise person's threshold) need more.
-_GLINER2_MIN = {"PERSON": 0.8, "ADDRESS": 0.8, "DATE_OF_BIRTH": 0.9}
-# A column's context and values per text: well inside the model's 384 tokens.
+# A column's label and values per text Presidio reads.
 _CHUNK_CHARS = 600
-# Distinct values the model reads from a column of short values.
+# Distinct values read from a column of short values: enough to tell names from codes.
 _SHORT_SAMPLE = 100
 # Free text: answers with a median of this many words or more.
 _FREE_TEXT_WORDS = 5
 # A value on at least this many rows, and this share of them, is a category.
 _FREQUENT_ROWS = 10
 _FREQUENT_SHARE = 0.02
-# Entities written in words, which only a column close to one value per row holds.
-_NAMED = {"PERSON", "LOCATION", "ADDRESS"}
-# First names repeat (a fifth of rows or more distinct); cities and roles repeat far more.
+# Names and places are close to one per person: a column with distinct values under
+# this share of its rows lists categories (first names still pass).
+_NAMED = {"PERSON", "LOCATION"}
 _UNIQUE_SHARE = 0.2
-# Entities written in digits: a hit needs this many in its value.
-_NUMBERED = {"PHONE_NUMBER", "ID_NUMBER", "BANK_ACCOUNT"}
+# A phone hit needs this many digits in its value, 3 of them in a row, so a list of
+# select codes ("1 3 5 11 12") is not one.
 _MIN_DIGITS = 5
-
-
-def _shaped(entity: str, value: str) -> bool:
-    """Return whether ``value`` can hold ``entity``: a number needs its digits, with
-    3 or more in a row, so a list of select codes ("1 3 5 11 12") is not one.
-    """
-    return entity not in _NUMBERED or (
-        sum(c.isdigit() for c in value) >= _MIN_DIGITS
-        and re.search(r"\d{3}", value) is not None
-    )
-
-
-def _free_text(distinct: list[str]) -> bool:
-    """Return whether a column's distinct values are free text, not short values."""
-    words = sorted(len(v.split()) for v in distinct)
-    return bool(words) and words[len(words) // 2] >= _FREE_TEXT_WORDS
-
-
-# spaCy's code for text in any language: the structure detector reads no language.
-_ANY_LANGUAGE = "xx"
-# A phone column, by shape: digit strings of 6 to 12 digits.
-_PHONE_DIGITS = re.compile(r"\d{6,12}")
-# Fewer distinct numbers than this give the shape tests too little to go on.
-_MIN_PHONES = 10
-# Operators' leading digits: this many 3-digit prefixes cover most of a phone column.
-_PHONE_PREFIXES = 30
+# A phone or ID number: 8 to 12 digits, a leading + and country code allowed.
 _NUMBER = re.compile(r"\+?\d{8,12}")
 # A date written in digits ("2015-06-30", "30/06/2015") is not a number.
 _DATE = re.compile(r"\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}")
@@ -224,9 +159,8 @@ class MissingSpacyModel(RuntimeError):
 class PiiConfig:
     """``[pii]`` settings."""
 
-    languages: dict[str, str] = field(
-        default_factory=lambda: {"es": "es_core_news_lg", "en": "en_core_web_lg"}
-    )
+    # spaCy model per language; the multilingual one reads names and places in any.
+    languages: dict[str, str] = field(default_factory=lambda: {"xx": "xx_ent_wiki_sm"})
     entities: tuple[str, ...] = ("PERSON", "PHONE_NUMBER", "EMAIL_ADDRESS", "LOCATION")
     # Extra entity name -> regex, e.g. {"NATIONAL_ID": r"\b\d{8,10}\b"}.
     id_patterns: dict[str, str] = field(default_factory=dict)
@@ -243,21 +177,9 @@ class PiiConfig:
     # True: the project holds no personal data (study metadata, say); every column
     # past the blacklist, publishable and device rules is whitelisted, unscanned.
     no_personal_data: bool = False
-    # What scans the open columns; set per run by scripts/pii_compare.py while #108
-    # compares detectors.
-    detector: str = "spacy"
-    # Phone columns: "shape" (prefixes, not in sequence) or "digits" (most values 8
-    # to 12 digits); set by scripts/pii_compare.py while #108 compares them.
-    phone_rule: str = "shape"
 
     def __post_init__(self):
-        """Raise on an unknown detector or a name on both the whitelist and the
-        blacklist.
-        """
-        if self.detector not in _DETECTORS:
-            raise ValueError(
-                f"detector {self.detector!r}: one of {', '.join(sorted(_DETECTORS))}"
-            )
+        """Raise when a name is on both the whitelist and the blacklist."""
         both = set(self.whitelist) & set(self.blacklist)
         if both:
             raise ValueError(
@@ -266,74 +188,13 @@ class PiiConfig:
 
 
 def build_analyzer(config: PiiConfig) -> "AnalyzerEngine":
-    """Return a Presidio analyzer for the configured detector and ID patterns.
-
-    ``spacy``: the configured languages' spaCy models and Presidio's recognizers.
-    ``structure``: no NLP model; only emails and the ID patterns, while ``_block``
-    finds phone columns by their shape.
-    """
+    """Return a Presidio analyzer for the configured languages and ID patterns."""
     # Imported here: spaCy and Presidio take a second to load, and only the build
     # scans with them.
     import spacy
-    from presidio_analyzer import (
-        AnalyzerEngine,
-        Pattern,
-        PatternRecognizer,
-        RecognizerRegistry,
-    )
-    from presidio_analyzer.nlp_engine import NlpEngineProvider, NoOpNlpEngine
-    from presidio_analyzer.predefined_recognizers import EmailRecognizer
+    from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
+    from presidio_analyzer.nlp_engine import NlpEngineProvider
 
-    if config.detector in ("structure", *_ZERO_SHOT):
-        nlp = NoOpNlpEngine(
-            models=[{"lang_code": _ANY_LANGUAGE, "model_name": "no_op"}]
-        )
-        nlp.load()
-        recognizers = [EmailRecognizer(supported_language=_ANY_LANGUAGE)] + [
-            PatternRecognizer(
-                supported_entity=name,
-                supported_language=_ANY_LANGUAGE,
-                patterns=[Pattern(name=name, regex=regex, score=1.0)],
-            )
-            for name, regex in config.id_patterns.items()
-        ]
-        if config.detector == "zero_shot":
-            from presidio_analyzer.chunkers import CharacterBasedTextChunker
-            from presidio_analyzer.predefined_recognizers import GLiNERRecognizer
-
-            recognizers.append(
-                GLiNERRecognizer(
-                    supported_language=_ANY_LANGUAGE,
-                    entity_mapping=_ZERO_SHOT_LABELS,
-                    model_name=_ZERO_SHOT_MODEL,
-                    threshold=_ZERO_SHOT_THRESHOLD,
-                    map_location="cpu",
-                    # Texts come chunked by column (_column_entities), each with
-                    # its context: Presidio passes them whole.
-                    text_chunker=CharacterBasedTextChunker(
-                        chunk_size=2 * _CHUNK_CHARS, chunk_overlap=0
-                    ),
-                )
-            )
-        registry = RecognizerRegistry(recognizers, supported_languages=[_ANY_LANGUAGE])
-        analyzer = AnalyzerEngine(
-            nlp_engine=nlp, registry=registry, supported_languages=[_ANY_LANGUAGE]
-        )
-        if config.detector == "gliner2_onnx":
-            from gliner2_onnx import GLiNER2ONNXRuntime
-
-            # fp32: ONNX Runtime has no CPU kernels for fp16 matrix products.
-            analyzer.zero_shot = GLiNER2ONNXRuntime.from_pretrained(
-                _GLINER2_ONNX_MODEL, precision="fp32"
-            )
-        if config.detector == "gliner2":
-            from gliner2 import AutoExtractor
-
-            # Read in batches by _column_entities, beside Presidio's patterns.
-            analyzer.zero_shot = AutoExtractor.from_pretrained(
-                _GLINER2_MODEL, map_location="cpu"
-            )
-        return analyzer
     for lang, model in config.languages.items():
         if not spacy.util.is_package(model):
             raise MissingSpacyModel(
@@ -372,7 +233,6 @@ class _Rules:
         blacklist: set[str],
         trust_publishable: bool,
         no_personal_data: bool = False,
-        read_dates: bool = False,
     ):
         self.by_name = {q["variable_name"]: q for q in questions}
         self.whitelist = whitelist
@@ -381,9 +241,6 @@ class _Rules:
         # In a project declared to hold no personal data, geo and attachment fields are
         # whitelisted, so they carry nothing.
         self.personal_types = set() if no_personal_data else _CONTAINS_TYPES
-        # A zero-shot model reads date questions: its label says whether one is a
-        # birth date.
-        self.typed_safe = _TYPED_SAFE - {"date"} if read_dates else _TYPED_SAFE
         self._memo: dict[str, dict | None] = {}
         self._carried: dict[str, str | None] = {}
 
@@ -406,7 +263,7 @@ class _Rules:
             return {"status": "contains_pii", "basis": [basis]}
         if qtype in _CONTAINS_TYPES:
             return {"status": "contains_pii", "basis": [f"type:{qtype}"]}
-        if qtype in self.typed_safe:
+        if qtype in _TYPED_SAFE:
             return {"status": "whitelisted", "basis": [f"type:{qtype}"]}
         if qtype in _SELECT_TYPES and "search(" not in (q["appearance"] or ""):
             return {"status": "whitelisted", "basis": ["choices:inline"]}
@@ -584,19 +441,17 @@ def screen_search_choices(
 
 
 class _Scans:
-    """Columns to scan, collected first so Presidio reads every distinct text once.
+    """Columns to scan, collected first and read one column at a time.
 
-    Columns share many values ("0", "No", a date), so a form's columns are scanned
-    together: ``add`` registers a column, ``run`` analyzes the union of their
-    sampled distinct values, and ``block`` gives each column its result.
+    ``add`` registers a column with its context (its question's label, or its name),
+    ``run`` reads each column's sampled distinct values after that context, and
+    ``block`` gives each column its result.
     """
 
     def __init__(self, config: PiiConfig):
         self.config = config
         self.columns: dict = {}
-        self.found: dict[str, set[str]] = {}
-        # zero_shot: each column's hits, by value.
-        self.column_found: dict = {}
+        self.found: dict = {}
 
     def add(
         self,
@@ -606,78 +461,53 @@ class _Scans:
         basis: list[str],
         context: str,
     ) -> None:
-        """Register a column; ``context`` (its question label, or its name) leads
-        every text the zero-shot model reads from it.
-        """
         values = [None if v is None else str(v) for v in column.to_pylist()]
         distinct = sorted({v for v in values if v is not None})
+        # A column of short values (names, places, codes) is decided from a sample;
+        # free text is read whole, since one answer may name someone.
         cap = self.config.max_distinct
-        # The model decides a column of short values (names, places, codes) from a
-        # sample of them; free text is read whole, since one answer may name someone.
-        if self.config.detector in _COLUMNAR and not _free_text(distinct):
+        if not _free_text(distinct):
             cap = min(cap, _SHORT_SAMPLE)
         if len(distinct) > cap:
             distinct = sorted(random.Random(self.config.seed).sample(distinct, cap))
         self.columns[name] = (values, distinct, keys, basis, context)
 
     def run(self, analyzer) -> None:
-        if self.config.detector in _COLUMNAR:
-            for name, (_, distinct, _, _, context) in self.columns.items():
-                self.column_found[name] = _column_entities(
-                    context, distinct, self.config, analyzer
-                )
-            return
-        texts = sorted(
-            {t for _, distinct, _, _, _ in self.columns.values() for t in distinct}
-            - set(self.found)
-        )
-        if texts:
-            self.found.update(zip(texts, _entities(texts, self.config, analyzer)))
+        for name, (_, distinct, _, _, context) in self.columns.items():
+            self.found[name] = _column_entities(
+                context, distinct, self.config, analyzer
+            )
 
     def block(self, name) -> dict:
         values, distinct, keys, basis, _ = self.columns[name]
-        if self.config.detector == "spacy":
-            return _block(values, distinct, keys, basis, self.found)
-        if name in self.column_found:
-            found = _rare_hits(self.column_found[name], values, distinct)
-        else:
-            found = self.found
-        phones = (
-            _digit_numbers(values)
-            if self.config.phone_rule == "digits"
-            else _phone_shape(values)
-        )
-        return _block(
-            values, distinct, keys, basis, found, phones, self.config.phone_rule
-        )
+        found = _rare_hits(self.found[name], values, distinct)
+        return _block(values, distinct, keys, basis, found, _digit_numbers(values))
+
+
+def _free_text(distinct: list[str]) -> bool:
+    """Return whether a column's distinct values are free text, not short values."""
+    words = sorted(len(v.split()) for v in distinct)
+    return bool(words) and words[len(words) // 2] >= _FREE_TEXT_WORDS
 
 
 def _rare_hits(found: dict[str, set[str]], values: list, distinct: list[str]):
-    """Keep a zero-shot hit only on a value few rows share, unless the column is free
-    text: a value on many rows ("Savings", a role) is a category the column's context
-    made look personal, not someone's data.
+    """Keep a hit only on a value few rows share, unless the column is free text: a
+    value on many rows ("Savings", a role) is a category the column's label made look
+    personal. A name or place in a column of repeated values is a category too.
     """
     if _free_text(distinct):
         return found
     rows = Counter(v for v in values if v is not None)
     frequent = max(_FREQUENT_ROWS, _FREQUENT_SHARE * sum(rows.values()))
-    # Numbers that run in sequence are IDs the survey assigned, not identity papers.
-    numbers = [v for v in rows if v.isdigit()]
-    assigned = len(numbers) >= _MIN_PHONES and _assigned(numbers)
-    dropped = {"ID_NUMBER"} if assigned else set()
-    # Names and addresses are close to one per person; a column that repeats its
-    # values (cities, professions, roles) lists categories.
-    if len(rows) < _UNIQUE_SHARE * sum(rows.values()):
-        dropped |= _NAMED
+    dropped = _NAMED if len(rows) < _UNIQUE_SHARE * sum(rows.values()) else set()
     return {
         v: set() if rows[v] >= frequent else hits - dropped for v, hits in found.items()
     }
 
 
 def _context(q: dict | None, column: str) -> str:
-    """Return what tells the model what a column holds: its question's label; for a
-    calculate, which has none, the dataset column its ``pulldata()`` reads or its own
-    name.
+    """Return what tells what a column holds: its question's label; for a calculate,
+    which has none, the dataset column its ``pulldata()`` reads or its own name.
     """
     if q is None:
         return column
@@ -690,47 +520,30 @@ def _context(q: dict | None, column: str) -> str:
 def _column_entities(
     context: str, distinct: list[str], config: PiiConfig, analyzer
 ) -> dict[str, set[str]]:
-    """Return the entity types the zero-shot model finds in each of a column's values.
+    """Return the entity types Presidio finds in each of a column's values.
 
-    The model reads the column, not single cells: each text is the column's context
-    followed by as many of its values as fit in ``_CHUNK_CHARS``, so it judges each
-    value next to the question and to other values of the same column. A hit counts
+    Presidio reads the column, not single cells: each text is the column's context
+    followed by as many of its values as fit in ``_CHUNK_CHARS``, so each value is
+    read next to the question and to other values of the same column. A hit counts
     for the value it falls in; one in the context counts for none.
     """
-    if config.detector in ("gliner2", "gliner2_onnx"):
-        wanted = ["EMAIL_ADDRESS", *config.id_patterns]
-    elif config.detector == "spacy_column":
-        wanted = [*config.entities, *config.id_patterns]
-    else:
-        wanted = [*_ZERO_SHOT_LABELS.values(), "EMAIL_ADDRESS", *config.id_patterns]
+    wanted = [*config.entities, *config.id_patterns]
     found: dict[str, set[str]] = {v: set() for v in distinct}
-    chunk: list[str] = []
-    chunks = []
+    chunks: list[list[str]] = []
     for value in distinct:
         if (
-            chunk
-            and len(context) + sum(len(v) + 3 for v in [*chunk, value]) > _CHUNK_CHARS
+            chunks
+            and len(context) + sum(len(v) + 3 for v in [*chunks[-1], value])
+            <= _CHUNK_CHARS
         ):
-            chunks.append(chunk)
-            chunk = []
-        chunk.append(value)
-    if chunk:
-        chunks.append(chunk)
-    texts, spans = [], []
+            chunks[-1].append(value)
+        else:
+            chunks.append([value])
     for chunk in chunks:
-        text, chunk_spans = f"{context}: ", []
+        text, spans = f"{context}: ", []
         for value in chunk:
-            chunk_spans.append((len(text), len(text) + len(value), value))
+            spans.append((len(text), len(text) + len(value), value))
             text += value + " | "
-        texts.append(text)
-        spans.append(chunk_spans)
-
-    def hit(chunk_spans, start, end, entity):
-        for s, e, value in chunk_spans:
-            if start < e and end > s and _shaped(entity, value):
-                found[value].add(entity)
-
-    for text, chunk_spans in zip(texts, spans, strict=True):
         for language in analyzer.supported_languages:
             for r in analyzer.analyze(
                 text=text,
@@ -738,81 +551,40 @@ def _column_entities(
                 entities=wanted,
                 score_threshold=config.score_threshold,
             ):
-                hit(chunk_spans, r.start, r.end, r.entity_type)
-    if config.detector == "gliner2" and texts:
-        results = analyzer.zero_shot.batch_extract_entities(
-            texts,
-            list(_GLINER2_LABELS),
-            batch_size=8,
-            threshold=_ZERO_SHOT_THRESHOLD,
-            include_spans=True,
-            include_confidence=True,
-        )
-        for result, chunk_spans in zip(results, spans, strict=True):
-            for label, entities in result["entities"].items():
-                entity = _GLINER2_LABELS[label]
-                for e in entities:
-                    if e["confidence"] >= _GLINER2_MIN.get(entity, 0):
-                        hit(chunk_spans, e["start"], e["end"], entity)
-    if config.detector == "gliner2_onnx":
-        for text, chunk_spans in zip(texts, spans, strict=True):
-            for e in analyzer.zero_shot.extract_entities(
-                text, list(_GLINER2_ONNX_LABELS), threshold=_ZERO_SHOT_THRESHOLD
-            ):
-                entity = _GLINER2_ONNX_LABELS[e.label]
-                if e.score >= _GLINER2_MIN.get(entity, 0):
-                    hit(chunk_spans, e.start, e.end, entity)
+                for start, end, value in spans:
+                    if (
+                        r.start < end
+                        and r.end > start
+                        and _shaped(r.entity_type, value)
+                    ):
+                        found[value].add(r.entity_type)
     return found
 
 
-def _phone_shape(values: list) -> set[str]:
-    """Return a column's phone numbers when its values have their shape, else none.
-
-    Most distinct values are strings of 6 to 12 digits, mostly of one length; they
-    are close to one per row; a few leading 3-digit prefixes (the operators') cover
-    most of them; and they are spread out, not runs of nearby numbers like the IDs a
-    survey assigns.
-    """
-    present = [v for v in values if v is not None]
-    numbers = sorted({v for v in present if _PHONE_DIGITS.fullmatch(v)})
-    if len(numbers) < _MIN_PHONES or len(numbers) < 0.9 * len(set(present)):
-        return set()
-    length, same = Counter(map(len, numbers)).most_common(1)[0]
-    rows = sum(1 for v in present if _PHONE_DIGITS.fullmatch(v))
-    prefixes = Counter(v[:3] for v in numbers).most_common(_PHONE_PREFIXES)
-    if (
-        same < 0.8 * len(numbers)
-        or len(numbers) < 0.5 * rows
-        or sum(n for _, n in prefixes) < 0.8 * len(numbers)
-        or _assigned(numbers)
-    ):
-        return set()
-    return set(numbers)
+def _shaped(entity: str, value: str) -> bool:
+    """Return whether ``value`` can hold ``entity``: a phone number needs its digits."""
+    return entity != "PHONE_NUMBER" or (
+        sum(c.isdigit() for c in value) >= _MIN_DIGITS
+        and re.search(r"\d{3}", value) is not None
+    )
 
 
 def _digit_numbers(values: list) -> set[str]:
     """Return a column's numbers when most of its values have 8 to 12 digits, a
-    leading + and country code allowed: a phone or an ID number, else none.
+    leading + and country code allowed: a phone or an ID number, else none. A round
+    amount (15000000, in a currency of large denominations) or a decimal is not one.
     """
     present = [v for v in values if v is not None]
     numbers = {
         v
         for v in present
-        if not _DATE.match(v) and _NUMBER.fullmatch(re.sub(r"[\s.()-]", "", v))
+        if not _DATE.match(v)
+        and not v.endswith("000")
+        and _NUMBER.fullmatch(re.sub(r"[\s()-]", "", v))
     }
     if not present or sum(v in numbers for v in present) < 0.5 * len(present):
         return set()
     return numbers
-
-
-def _assigned(numbers: list[str]) -> bool:
-    """Return whether digit strings run in sequence, like the IDs a survey assigns:
-    most of them sit within 10 of the next one up.
-    """
-    length = Counter(map(len, numbers)).most_common(1)[0][0]
-    ints = sorted(int(v) for v in numbers if len(v) == length)
-    nearby = sum(b - a <= 10 for a, b in zip(ints, ints[1:]))
-    return nearby > 0.2 * (len(ints) - 1)
 
 
 def _block(
@@ -821,22 +593,19 @@ def _block(
     keys: list,
     basis: list[str],
     entities: dict,
-    phones: set[str] = frozenset(),
-    phone_rule: str = "shape",
+    numbers: set[str],
 ) -> dict:
     found: dict[str, set[str]] = {}
     for value in distinct:
         for t in entities[value]:
             found.setdefault(t, set()).add(value)
-    hits = set().union(*found.values(), phones)
+    hits = set().union(*found.values(), numbers)
     hit_keys = sorted({k for k, v in zip(keys, values, strict=True) if v in hits})
     return {
-        "status": "may_contain_pii" if found or phones else "no_hits",
+        "status": "may_contain_pii" if found or numbers else "no_hits",
         "basis": basis
         + [f"presidio:{t}" for t in sorted(found)]
-        + (
-            [{"shape": "shape:phone", "digits": "digits"}[phone_rule]] if phones else []
-        ),
+        + (["digits"] if numbers else []),
         "presidio": {
             "entities": {t: len(found[t]) for t in sorted(found)},
             "distinct_scanned": len(distinct),
@@ -857,7 +626,7 @@ def classify(
     """Return the PII block for every column of ``table``.
 
     ``dataset_pii`` holds each ``dataset.column`` block of the datasets the form reads
-    (``dataset_codebook``); a ``pulldata()`` calculate takes a flag from its column.
+    (``dataset_codebook``); a ``pulldata()`` calculate takes its column's status.
     """
     variables = vardict["variables"]
     question_names = {q["variable_name"] for q in questions}
@@ -897,7 +666,7 @@ def classify(
             block = {"status": "whitelisted", "basis": ["project"]}
         else:
             block = rules.static(question) if question is not None else None
-            held = _held_column(q, dataset_pii) if config.detector != "spacy" else None
+            held = _held_column(q, dataset_pii)
             if block is None and held:
                 # Its values are the dataset column's, already scanned.
                 status = dataset_pii[held]["status"]
@@ -914,17 +683,11 @@ def classify(
                     _context(q, column),
                 )
                 continue
-            if (
-                config.phone_rule == "digits"
-                and q is not None
-                and q["type"] == "integer"
-                and block["status"] == "whitelisted"
-                and _digit_numbers(
-                    [
-                        None if v is None else str(v)
-                        for v in table.column(column).to_pylist()
-                    ]
-                )
+            elif q["type"] == "integer" and _digit_numbers(
+                [
+                    None if v is None else str(v)
+                    for v in table.column(column).to_pylist()
+                ]
             ):
                 block = {
                     "status": "may_contain_pii",
@@ -939,8 +702,7 @@ def classify(
         if (q := rules.by_name.get(variables[column]["question"])) and q["publishable"]:
             block = {**block, "basis": [*block["basis"], "publishable"]}
         blocks[column] = block
-    if config.detector != "spacy":
-        _inherit(blocks, variables, rules, dataset_pii)
+    _inherit(blocks, variables, rules, dataset_pii)
     return {column: blocks[column] for column in table.schema.names}
 
 

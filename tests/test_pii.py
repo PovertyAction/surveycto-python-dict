@@ -1,7 +1,6 @@
 """Stage 6: per-variable PII classification and the review table."""
 
 import json
-import random
 import re
 
 import pyarrow as pa
@@ -123,7 +122,7 @@ def test_presidio_finds_names_and_phones(blocks):
         "hit_keys": ["uuid:aaa"],
     }
     phone = blocks["phone"]
-    assert phone["basis"] == ["type:text", "presidio:PHONE_NUMBER"]
+    assert phone["basis"] == ["type:text", "presidio:PHONE_NUMBER", "digits"]
     assert phone["presidio"]["entities"] == {"PHONE_NUMBER": 2}
     assert phone["presidio"]["hit_keys"] == ["uuid:aaa", "uuid:bbb"]
 
@@ -251,7 +250,7 @@ def test_untrusted_publishable_goes_through_the_other_rules(form, analyzer):
     assert blocks["village"]["status"] in ("may_contain_pii", "no_hits")
     assert blocks["village"]["basis"][0] == "type:text"
     assert blocks["village"]["basis"][-1] == "publishable"
-    assert "Villa Ficticia Uno" in spy.texts
+    assert any("Villa Ficticia Uno" in t for t in spy.texts)
 
 
 def test_blacklist_and_whitelist_still_rank_above_untrusted_publishable(form, analyzer):
@@ -373,73 +372,6 @@ def test_flagged_columns_lose_their_range_and_codes_not_in_list(form, analyzer):
         assert "data_max" not in variables[column]
     assert variables["area"]["data_min"] == 1.5
     assert picked == {"n_codes_picked": 2, "n_codes_not_in_list": 1}
-
-
-def _phones(n, seed=0):
-    """Fictional ten-digit mobile numbers under a handful of operator prefixes."""
-    rng = random.Random(seed)
-    return [
-        f"{rng.choice(['300', '310', '315', '320'])}{rng.randrange(10**7):07d}"
-        for _ in range(n)
-    ]
-
-
-def test_phone_shape_finds_spread_numbers_under_few_prefixes():
-    from surveycto_python_dict.pii import _phone_shape
-
-    phones = _phones(40)
-    assert _phone_shape([*phones, None, "-99"]) == set(phones)
-
-
-@pytest.mark.parametrize(
-    "values",
-    [
-        [f"{1010000 + i}" for i in range(40)],  # IDs the survey assigns, in a run
-        [f"{random.Random(i).randrange(10**9, 10**10)}" for i in range(40)],  # codes
-        _phones(5),  # too few to tell
-        [f"{i:04d}" for i in range(40)],  # short codes
-        _phones(20) + [f"Name {i}" for i in range(20)],  # mostly not digits
-        _phones(10) * 4,  # the same few numbers on every row
-    ],
-)
-def test_phone_shape_leaves_other_digit_columns(values):
-    from surveycto_python_dict.pii import _phone_shape
-
-    assert _phone_shape(values) == set()
-
-
-def test_structure_detector_needs_no_spacy_model():
-    from surveycto_python_dict.pii import _Scans
-
-    config = PiiConfig(
-        detector="structure",
-        languages={"xx": "xx_no_such_model"},
-        id_patterns={"NATIONAL_ID": r"\bID-\d{6}\b"},
-    )
-    analyzer = build_analyzer(config)
-    phones = _phones(40)
-    scans = _Scans(config)
-    for name, values in {
-        "phone": phones,
-        "email": ["someone@example.org"] + [None] * 39,
-        "id": ["ID-123456"] + [None] * 39,
-        "note": ["Ana Maria Gomez Restrepo"] + [None] * 39,
-    }.items():
-        scans.add(
-            name, pa.chunked_array([values], pa.string()), list(range(40)), [], name
-        )
-    scans.run(analyzer)
-    assert scans.block("phone")["basis"] == ["shape:phone"]
-    assert scans.block("phone")["presidio"]["hit_rows"] == 40
-    assert scans.block("email")["basis"] == ["presidio:EMAIL_ADDRESS"]
-    assert scans.block("id")["basis"] == ["presidio:NATIONAL_ID"]
-    # Names wait for the zero-shot model.
-    assert scans.block("note")["status"] == "no_hits"
-
-
-def test_unknown_detector_raises():
-    with pytest.raises(ValueError, match="detector 'large'"):
-        PiiConfig(detector="large")
 
 
 @pytest.mark.parametrize(
@@ -572,76 +504,13 @@ def test_context_is_the_label_or_the_column_a_calculate_reads():
 def test_short_value_columns_are_sampled_and_free_text_read_whole():
     from surveycto_python_dict.pii import _SHORT_SAMPLE, _Scans
 
-    config = PiiConfig(detector="zero_shot")
-    scans = _Scans(config)
+    scans = _Scans(PiiConfig())
     short = [f"Name {i}" for i in range(500)]
     notes = [f"we met at the market on day {i}" for i in range(500)]
     for name, values in {"short": short, "notes": notes}.items():
         scans.add(name, pa.chunked_array([values], pa.string()), [], [], name)
     assert len(scans.columns["short"][1]) == _SHORT_SAMPLE
     assert len(scans.columns["notes"][1]) == 500
-
-
-class FakeGliner2:
-    """A GLiNER2 extractor that finds "Jorge Perez" as a person in each text."""
-
-    def batch_extract_entities(self, texts, labels, **kwargs):
-        return [
-            {
-                "entities": {
-                    "person": [
-                        {
-                            "text": m.group(),
-                            "start": m.start(),
-                            "end": m.end(),
-                            "confidence": 0.99,
-                        }
-                        for m in re.finditer("Jorge Perez", t)
-                    ]
-                    + [
-                        # Below the person threshold: not a hit.
-                        {
-                            "text": m.group(),
-                            "start": m.start(),
-                            "end": m.end(),
-                            "confidence": 0.6,
-                        }
-                        for m in re.finditer("none", t)
-                    ]
-                }
-            }
-            for t in texts
-        ]
-
-
-def test_gliner2_reads_columns_in_batches_beside_the_patterns():
-    from surveycto_python_dict.pii import _column_entities
-
-    config = PiiConfig(detector="gliner2")
-    analyzer = build_analyzer(PiiConfig(detector="structure"))
-    analyzer.zero_shot = FakeGliner2()
-    found = _column_entities(
-        "Contact", ["Jorge Perez", "someone@example.org", "none"], config, analyzer
-    )
-    assert found == {
-        "Jorge Perez": {"PERSON"},
-        "someone@example.org": {"EMAIL_ADDRESS"},
-        "none": set(),
-    }
-
-
-def test_zero_shot_detectors_read_date_questions():
-    from surveycto_python_dict.pii import _Rules
-
-    born = {
-        "variable_name": "born",
-        "type": "date",
-        "publishable": False,
-        "appearance": None,
-        "calculation": None,
-    }
-    assert _Rules([born], set(), set(), True).static("born")["status"] == "whitelisted"
-    assert _Rules([born], set(), set(), True, read_dates=True).static("born") is None
 
 
 def test_a_preload_takes_its_dataset_columns_status_without_a_scan():
@@ -659,12 +528,11 @@ def test_a_preload_takes_its_dataset_columns_status_without_a_scan():
     assert _held_column(tested, {"people.phone": {"status": "no_hits"}}) is None
 
 
-def test_a_numbered_entity_needs_its_digits():
+def test_a_phone_hit_needs_its_digits():
     from surveycto_python_dict.pii import _shaped
 
     assert _shaped("PHONE_NUMBER", "310 456 7890")
     assert not _shaped("PHONE_NUMBER", "Yes")
-    assert not _shaped("BANK_ACCOUNT", "Savings")
     assert not _shaped("PHONE_NUMBER", "1 3 5 11 12")
     assert _shaped("PERSON", "Jorge Perez")
 
@@ -672,33 +540,28 @@ def test_a_numbered_entity_needs_its_digits():
 def test_a_hit_on_a_category_does_not_count():
     from surveycto_python_dict.pii import _rare_hits
 
-    values = ["Savings"] * 60 + ["Checking"] * 40 + ["0034567812"]
-    found = {
-        "Savings": {"BANK_ACCOUNT"},
+    values = ["Savings"] * 60 + ["Checking"] * 40
+    found = {"Savings": {"PERSON"}, "Checking": set()}
+    assert _rare_hits(found, values, sorted(set(values))) == {
+        "Savings": set(),
         "Checking": set(),
-        "0034567812": {"BANK_ACCOUNT"},
     }
-    kept = _rare_hits(found, values, sorted(set(values)))
-    assert kept == {"Savings": set(), "Checking": set(), "0034567812": {"BANK_ACCOUNT"}}
-    # A name among repeated categories reads as one more category.
-    cities = [f"City {i % 5}" for i in range(100)] + ["Jorge Perez"]
-    hits = {v: {"LOCATION"} for v in set(cities)} | {"Jorge Perez": {"PERSON"}}
+    # Mostly "no", with a few written comments: free text, so a name keeps its hit.
+    comments = ["no"] * 90 + [
+        "spoke with Jorge Perez about the plot",
+        "the neighbour helped with the harvest this year",
+        "asked to come back next week after lunch",
+    ]
+    hits = {v: set() for v in set(comments)} | {comments[90]: {"PERSON"}}
+    assert _rare_hits(hits, comments, sorted(set(comments)))[comments[90]] == {"PERSON"}
+    # A name or place in a column whose rare values repeat too reads as a category.
+    cities = [f"City {i % 60}" for i in range(360)]
+    hits = {v: {"LOCATION"} for v in set(cities)}
     assert not any(_rare_hits(hits, cities, sorted(set(cities))).values())
     # Free text keeps every hit: the same answer on many rows can still name someone.
     notes = ["I spoke with Jorge Perez at home"] * 60
     hits = {notes[0]: {"PERSON"}}
     assert _rare_hits(hits, notes, [notes[0]]) == hits
-
-
-def test_numbers_in_sequence_are_assigned_ids_not_id_documents():
-    from surveycto_python_dict.pii import _rare_hits
-
-    assigned = [str(1001 + i) for i in range(40)]
-    found = {v: {"ID_NUMBER"} for v in assigned}
-    assert _rare_hits(found, assigned, assigned) == {v: set() for v in assigned}
-    scattered = [str(random.Random(i).randrange(10**7, 10**8)) for i in range(40)]
-    found = {v: {"ID_NUMBER"} for v in scattered}
-    assert _rare_hits(found, scattered, sorted(scattered)) == found
 
 
 def test_a_code_built_from_the_date_and_random_numbers_is_generated():
@@ -732,7 +595,7 @@ def test_a_code_built_from_the_date_and_random_numbers_is_generated():
         assert rules.static(name)["status"] == "whitelisted", name
 
 
-def test_a_datasets_system_columns_are_decided_by_rule(tmp_path):
+def test_a_datasets_system_columns_are_decided_by_rule(tmp_path, analyzer):
     from surveycto_python_dict.pii import dataset_codebook
 
     csv_path = tmp_path / "people.csv"
@@ -740,15 +603,32 @@ def test_a_datasets_system_columns_are_decided_by_rule(tmp_path):
         "KEY,SubmissionDate,deviceid,full_name\nuuid:1,2025-01-01,dev1,Jorge Perez\n",
         encoding="utf-8",
     )
-    rows = dataset_codebook(
-        {"people": csv_path},
-        [],
-        PiiConfig(detector="structure"),
-        build_analyzer(PiiConfig(detector="structure")),
-        {},
-    )
+    rows = dataset_codebook({"people": csv_path}, [], PiiConfig(), analyzer, {})
     status = {r["column"]: (r["pii"]["status"], r["pii"]["basis"]) for r in rows}
     assert status["KEY"] == ("whitelisted", ["system"])
     assert status["SubmissionDate"] == ("whitelisted", ["system"])
     assert status["deviceid"] == ("contains_pii", ["device:deviceid"])
-    assert status["full_name"][1] == ["dataset"]
+    assert status["full_name"][1][0] == "dataset"
+
+
+@pytest.mark.parametrize(
+    ("values", "numbers"),
+    [
+        (
+            ["3104567890", "+57 310 456 7891", None, "-99"],
+            {"3104567890", "+57 310 456 7891"},
+        ),
+        (
+            ["0241234567", "0541234567", "1023456789"],
+            {"0241234567", "0541234567", "1023456789"},
+        ),
+        (["3104567890", "12", "7", "3"], set()),  # a minority
+        (["2015-06-30", "30/06/2015", "20150630"], set()),  # dates
+        (["15000000", "250000000", "1500000.00"], set()),  # amounts
+        (["1234", "56789"], set()),  # short codes
+    ],
+)
+def test_digit_rule(values, numbers):
+    from surveycto_python_dict.pii import _digit_numbers
+
+    assert _digit_numbers(values) == numbers

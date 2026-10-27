@@ -9,7 +9,7 @@ config := "config.toml"
 default:
     @just --list
 
-[doc("Install the environment, including the spaCy models, and the pre-commit hooks")]
+[doc("Install the environment, including the spaCy model, and the pre-commit hooks")]
 setup:
     uv sync
     uv run pre-commit install

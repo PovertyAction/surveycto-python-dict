@@ -1,14 +1,16 @@
-"""Compare PII detectors against a form's labelled columns (#108).
+"""Score the PII classification against a form's labelled columns (#108).
 
     uv run python scripts/pii_compare.py template <config> <form> <truth.xlsx>
-    uv run python scripts/pii_compare.py compare <config> <form> <truth.xlsx> <out.xlsx> [detector ...]
+    uv run python scripts/pii_compare.py compare <config> <form> <truth.xlsx> <out.xlsx> [run ...]
 
 ``template`` writes one row per column of a built form, structure only, with ``truth``
 prefilled from the config's ``[pii]`` lists (blacklist -> yes, whitelist -> no); the
-team fills in the rest. ``compare`` classifies the form's raw pull once per detector
-with empty lists, so each detector is measured on its own, and writes each column's
-status next to its label: a miss is a ``yes`` column left unflagged, a false alarm a
-``no`` column flagged. Neither file holds a value from the data.
+team fills in the rest. ``compare`` classifies the form's raw pull once per run with
+empty lists, so the rules and the scan are measured without the team's review, and
+writes each column's status next to its label: a miss is a ``yes`` column left
+unflagged, a false alarm a ``no`` column flagged. A run is ``default`` (the config's
+models) or spaCy models and left-out entities, e.g. ``es=es_core_news_sm,en=en_core_web_sm``
+or ``xx=xx_ent_wiki_sm,-LOCATION``. Neither file holds a value from the data.
 """
 
 import json
@@ -116,9 +118,9 @@ def template(config: Path, form: str, out: Path) -> None:
 
 
 def compare(
-    config: Path, form: str, truth_path: Path, out: Path, detectors: list[str]
+    config: Path, form: str, truth_path: Path, out: Path, runs: list[str]
 ) -> None:
-    """Classify ``form`` with each detector and write the outcomes to ``out``."""
+    """Classify ``form`` once per run and write the outcomes to ``out``."""
     cfg = load_config(config)
     sentinels = env_sentinels()
     sheet = load_workbook(truth_path, read_only=True)["Columns"]
@@ -127,22 +129,16 @@ def compare(
     assert set(truth.values()) <= {"yes", "no"}, "every column needs truth yes or no"
 
     results, codebooks, totals = {}, {}, []
-    for detector in detectors:
-        # "name:lang=model,..." also sets the spaCy models, e.g.
-        # spacy_column:es=es_core_news_sm,en=en_core_web_sm,
-        # and "-ENTITY" leaves an entity out: spacy_column:xx=xx_ent_wiki_sm,-LOCATION
-        name, _, options = detector.partition(":")
-        options = options.split(",") if options else []
+    for run in runs:
+        options = [] if run == "default" else run.split(",")
         languages = dict(o.split("=") for o in options if "=" in o)
         dropped = {o[1:] for o in options if o.startswith("-")}
         pii = replace(
             cfg.pii,
             whitelist=(),
             blacklist=(),
-            detector=name,
             languages=languages or cfg.pii.languages,
             entities=tuple(e for e in cfg.pii.entities if e not in dropped),
-            phone_rule="digits" if "digits" in options else "shape",
         )
         start = time.perf_counter()
         analyzer = build_analyzer(pii)
@@ -153,14 +149,14 @@ def compare(
         done = time.perf_counter()
         unlabelled = sorted(set(table.schema.names) - set(truth))
         assert not unlabelled, f"columns without a truth label: {unlabelled}"
-        results[detector] = blocks
-        codebooks[detector] = codebook
+        results[run] = blocks
+        codebooks[run] = codebook
         flagged = {c for c, b in blocks.items() if b["status"] in FLAGGED}
         misses = [c for c in blocks if truth[c] == "yes" and c not in flagged]
         alarms = [c for c in blocks if truth[c] == "no" and c in flagged]
         totals.append(
             {
-                "detector": detector,
+                "run": run,
                 "columns": len(blocks),
                 "truth_yes": sum(truth[c] == "yes" for c in blocks),
                 "flagged": len(flagged),
@@ -186,14 +182,14 @@ def compare(
         ["column", "truth"]
         + [
             f"{d}_{k}"
-            for d in detectors
+            for d in runs
             for k in ("outcome", "status", "basis", "hit_rows", "hit_share")
         ]
     )
-    for column in results[detectors[0]]:
+    for column in results[runs[0]]:
         row = [column, truth[column]]
-        for detector in detectors:
-            block = results[detector][column]
+        for run in runs:
+            block = results[run][column]
             hit = block["status"] in FLAGGED
             outcome = {
                 ("yes", True): "flagged",
@@ -215,14 +211,14 @@ def compare(
         ["dataset", "column", "read_by"]
         + [
             f"{d}_{k}"
-            for d in detectors
+            for d in runs
             for k in ("status", "basis", "hit_rows", "hit_share")
         ]
     )
-    for i, row in enumerate(codebooks[detectors[0]]):
+    for i, row in enumerate(codebooks[runs[0]]):
         line = [row["dataset"], row["column"], ", ".join(row["read_by"])]
-        for detector in detectors:
-            pii = codebooks[detector][i]["pii"]
+        for run in runs:
+            pii = codebooks[run][i]["pii"]
             line += [
                 pii["status"],
                 ", ".join(pii["basis"]),
@@ -241,7 +237,11 @@ if __name__ == "__main__":
         template(Path(args[0]), args[1], Path(args[2]))
     elif command == "compare":
         compare(
-            Path(args[0]), args[1], Path(args[2]), Path(args[3]), args[4:] or ["spacy"]
+            Path(args[0]),
+            args[1],
+            Path(args[2]),
+            Path(args[3]),
+            args[4:] or ["default"],
         )
     else:
         raise SystemExit(__doc__)
