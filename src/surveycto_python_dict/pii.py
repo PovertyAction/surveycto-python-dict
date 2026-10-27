@@ -166,14 +166,23 @@ _FREE_TEXT_WORDS = 5
 # A value on at least this many rows, and this share of them, is a category.
 _FREQUENT_ROWS = 10
 _FREQUENT_SHARE = 0.02
+# Entities written in words, which only a column close to one value per row holds.
+_NAMED = {"PERSON", "LOCATION", "ADDRESS"}
+# First names repeat (a fifth of rows or more distinct); cities and roles repeat far more.
+_UNIQUE_SHARE = 0.2
 # Entities written in digits: a hit needs this many in its value.
 _NUMBERED = {"PHONE_NUMBER", "ID_NUMBER", "BANK_ACCOUNT"}
 _MIN_DIGITS = 5
 
 
 def _shaped(entity: str, value: str) -> bool:
-    """Return whether ``value`` can hold ``entity``: a number needs its digits."""
-    return entity not in _NUMBERED or sum(c.isdigit() for c in value) >= _MIN_DIGITS
+    """Return whether ``value`` can hold ``entity``: a number needs its digits, with
+    3 or more in a row, so a list of select codes ("1 3 5 11 12") is not one.
+    """
+    return entity not in _NUMBERED or (
+        sum(c.isdigit() for c in value) >= _MIN_DIGITS
+        and re.search(r"\d{3}", value) is not None
+    )
 
 
 def _free_text(distinct: list[str]) -> bool:
@@ -642,9 +651,13 @@ def _rare_hits(found: dict[str, set[str]], values: list, distinct: list[str]):
     # Numbers that run in sequence are IDs the survey assigned, not identity papers.
     numbers = [v for v in rows if v.isdigit()]
     assigned = len(numbers) >= _MIN_PHONES and _assigned(numbers)
+    dropped = {"ID_NUMBER"} if assigned else set()
+    # Names and addresses are close to one per person; a column that repeats its
+    # values (cities, professions, roles) lists categories.
+    if len(rows) < _UNIQUE_SHARE * sum(rows.values()):
+        dropped |= _NAMED
     return {
-        v: set() if rows[v] >= frequent else hits - {"ID_NUMBER"} if assigned else hits
-        for v, hits in found.items()
+        v: set() if rows[v] >= frequent else hits - dropped for v, hits in found.items()
     }
 
 

@@ -120,15 +120,19 @@ def compare(
     results, codebooks, totals = {}, {}, []
     for detector in detectors:
         # "name:lang=model,..." also sets the spaCy models, e.g.
-        # spacy_column:es=es_core_news_sm,en=en_core_web_sm
-        name, _, models = detector.partition(":")
-        languages = dict(m.split("=") for m in models.split(",")) if models else None
+        # spacy_column:es=es_core_news_sm,en=en_core_web_sm,
+        # and "-ENTITY" leaves an entity out: spacy_column:xx=xx_ent_wiki_sm,-LOCATION
+        name, _, options = detector.partition(":")
+        options = options.split(",") if options else []
+        languages = dict(o.split("=") for o in options if "=" in o)
+        dropped = {o[1:] for o in options if o.startswith("-")}
         pii = replace(
             cfg.pii,
             whitelist=(),
             blacklist=(),
             detector=name,
             languages=languages or cfg.pii.languages,
+            entities=tuple(e for e in cfg.pii.entities if e not in dropped),
         )
         start = time.perf_counter()
         analyzer = build_analyzer(pii)

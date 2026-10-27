@@ -665,16 +665,25 @@ def test_a_numbered_entity_needs_its_digits():
     assert _shaped("PHONE_NUMBER", "310 456 7890")
     assert not _shaped("PHONE_NUMBER", "Yes")
     assert not _shaped("BANK_ACCOUNT", "Savings")
+    assert not _shaped("PHONE_NUMBER", "1 3 5 11 12")
     assert _shaped("PERSON", "Jorge Perez")
 
 
 def test_a_hit_on_a_category_does_not_count():
     from surveycto_python_dict.pii import _rare_hits
 
-    values = ["Savings"] * 60 + ["Checking"] * 40 + ["Jorge Perez"]
-    found = {"Savings": {"BANK_ACCOUNT"}, "Checking": set(), "Jorge Perez": {"PERSON"}}
+    values = ["Savings"] * 60 + ["Checking"] * 40 + ["0034567812"]
+    found = {
+        "Savings": {"BANK_ACCOUNT"},
+        "Checking": set(),
+        "0034567812": {"BANK_ACCOUNT"},
+    }
     kept = _rare_hits(found, values, sorted(set(values)))
-    assert kept == {"Savings": set(), "Checking": set(), "Jorge Perez": {"PERSON"}}
+    assert kept == {"Savings": set(), "Checking": set(), "0034567812": {"BANK_ACCOUNT"}}
+    # A name among repeated categories reads as one more category.
+    cities = [f"City {i % 5}" for i in range(100)] + ["Jorge Perez"]
+    hits = {v: {"LOCATION"} for v in set(cities)} | {"Jorge Perez": {"PERSON"}}
+    assert not any(_rare_hits(hits, cities, sorted(set(cities))).values())
     # Free text keeps every hit: the same answer on many rows can still name someone.
     notes = ["I spoke with Jorge Perez at home"] * 60
     hits = {notes[0]: {"PERSON"}}
