@@ -18,8 +18,7 @@ dependencies = [
     "pyarrow>=15.0.0",
     "python-dotenv>=1.0,<2",
     "presidio-analyzer>=2.2,<3",
-    "es-core-news-lg",
-    "en-core-web-lg",
+    "xx-ent-wiki-sm",
     "mcp[cli]>=2.0.0,<3",
     "openpyxl>=3.1,<4",
     "duckdb>=1.1,<2",
@@ -80,8 +79,7 @@ ignore = [
 docstring-code-format = true
 
 [tool.uv.sources]
-es-core-news-lg = { url = "https://github.com/explosion/spacy-models/releases/download/es_core_news_lg-3.8.0/es_core_news_lg-3.8.0-py3-none-any.whl" }
-en-core-web-lg = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl" }
+xx-ent-wiki-sm = { url = "https://github.com/explosion/spacy-models/releases/download/xx_ent_wiki_sm-3.8.0/xx_ent_wiki_sm-3.8.0-py3-none-any.whl" }
 
 [tool.codespell]
 builtin = "clear,rare,informal,usage,code,names"

@@ -22,6 +22,23 @@
 
 ### Changed
 
+- The PII scan reads each column whole, with its question's label, through spaCy's
+  multilingual `xx_ent_wiki_sm` (39 MB) instead of the English and Spanish large
+  models (1 GB), and checks its hits per column: a value many rows share, or a name in
+  a column of repeated values, is a category. A column whose values are mostly 8 to 12
+  digits, integers included, is `may_contain_pii` (basis `digits`). A `pulldata()`
+  calculate holding its dataset column's value takes the column's status, and a
+  calculate reading a flagged field takes its flag. Codes built only from the date and
+  random numbers are `whitelisted`, and a dataset's system columns are decided by rule.
+  On a labelled project this missed 12 personal columns instead of 13, raised 54 false
+  alarms instead of 156, and ran in 6 s instead of 97 s (#108). Birth dates and ID
+  numbers are left to the blacklist and `publishable`.
+- `[pii] countries` sets the regions whose local phone formats Presidio validates
+  (#108).
+- A whitelisted `dataset.column` covers every `pulldata()` that holds its value, as a
+  blacklisted one already did, so one entry replaces a field and its preload (#108).
+- `scripts/pii_compare.py` writes a truth template for a form and scores the
+  classification against it (#108).
 - `xml_contract` drops `Node.pulldata` (read `data_source`), `map_column`'s
   `ambiguous` and `FormContract.to_dict` (#93).
 

@@ -1,6 +1,7 @@
 """Stage 6: per-variable PII classification and the review table."""
 
 import json
+import re
 
 import pyarrow as pa
 import pytest
@@ -38,6 +39,10 @@ class Spy:
     def nlp_engine(self):
         return self.inner.nlp_engine
 
+    @property
+    def supported_languages(self):
+        return self.inner.supported_languages
+
     def analyze(self, text, language, **kwargs):
         self.texts.append(text)
         return self.inner.analyze(text=text, language=language, **kwargs)
@@ -56,7 +61,7 @@ def form(tmp_path):
 def _classify(form, analyzer, config=PiiConfig()):
     table, questions, vardict = form
     spy = Spy(analyzer)
-    return classify(table, vardict, questions, config, spy), spy
+    return classify(table, vardict, questions, config, spy, {}), spy
 
 
 @pytest.fixture
@@ -117,7 +122,7 @@ def test_presidio_finds_names_and_phones(blocks):
         "hit_keys": ["uuid:aaa"],
     }
     phone = blocks["phone"]
-    assert phone["basis"] == ["type:text", "presidio:PHONE_NUMBER"]
+    assert phone["basis"] == ["type:text", "presidio:PHONE_NUMBER", "digits"]
     assert phone["presidio"]["entities"] == {"PHONE_NUMBER": 2}
     assert phone["presidio"]["hit_keys"] == ["uuid:aaa", "uuid:bbb"]
 
@@ -207,6 +212,7 @@ def test_hit_keys_capped_at_five_with_the_full_count(analyzer):
         pa.chunked_array([phones]),
         [f"uuid:{i}" for i in range(8)],
         ["type:text"],
+        "phone",
     )
     scans.run(analyzer)
     block = scans.block("phone")
@@ -244,7 +250,7 @@ def test_untrusted_publishable_goes_through_the_other_rules(form, analyzer):
     assert blocks["village"]["status"] in ("may_contain_pii", "no_hits")
     assert blocks["village"]["basis"][0] == "type:text"
     assert blocks["village"]["basis"][-1] == "publishable"
-    assert "Villa Ficticia Uno" in spy.texts
+    assert any("Villa Ficticia Uno" in t for t in spy.texts)
 
 
 def test_blacklist_and_whitelist_still_rank_above_untrusted_publishable(form, analyzer):
@@ -366,3 +372,292 @@ def test_flagged_columns_lose_their_range_and_codes_not_in_list(form, analyzer):
         assert "data_max" not in variables[column]
     assert variables["area"]["data_min"] == 1.5
     assert picked == {"n_codes_picked": 2, "n_codes_not_in_list": 1}
+
+
+@pytest.mark.parametrize(
+    ("calculation", "holds"),
+    [
+        ("pulldata('people', 'phone', 'id', ${id})", True),
+        ("coalesce(pulldata('people', 'phone', 'id', ${id}), ${phone})", True),
+        ("not(empty(pulldata('people', 'phone', 'phone', ${phone})))", False),
+        ("string-length(pulldata('people', 'phone', 'id', ${id}))", False),
+        ("pulldata('people', 'phone', 'id', ${id}) = ''", False),
+        # One call is tested, the other is the value.
+        (
+            "if(empty(pulldata('people', 'phone', 'id', ${id})), "
+            "pulldata('people', 'phone_2', 'id', ${id}), '')",
+            True,
+        ),
+    ],
+)
+def test_holds_pulldata(calculation, holds):
+    from surveycto_python_dict.pii import _holds_pulldata
+
+    assert _holds_pulldata(calculation) is holds
+
+
+def _lineage_blocks(dataset_status):
+    from surveycto_python_dict.pii import _inherit, _Rules
+
+    source = {"kind": "pulldata", "dataset": "people", "column": "phone"}
+    questions = [
+        {
+            "variable_name": "pl_phone",
+            "type": "calculate",
+            "calculation": "pulldata('people', 'phone', 'id', ${id})",
+            "data_source": source,
+        },
+        {
+            "variable_name": "has_phone",
+            "type": "calculate",
+            "calculation": "not(empty(pulldata('people', 'phone', 'id', ${id})))",
+            "data_source": source,
+        },
+        {
+            "variable_name": "phone_copy",
+            "type": "calculate",
+            "calculation": "${pl_phone}",
+            "data_source": None,
+        },
+    ]
+    names = [q["variable_name"] for q in questions]
+    blocks = {n: {"status": "no_hits", "basis": ["type:calculate"]} for n in names}
+    variables = {n: {"question": n} for n in names}
+    _inherit(
+        blocks,
+        variables,
+        _Rules(questions, set(), set(), True),
+        {"people.phone": {"status": dataset_status}},
+    )
+    return blocks
+
+
+def test_pulldata_and_its_readers_take_the_dataset_columns_flag():
+    blocks = _lineage_blocks("may_contain_pii")
+    assert blocks["pl_phone"] == {
+        "status": "may_contain_pii",
+        "basis": ["type:calculate", "lineage:people.phone"],
+    }
+    assert blocks["phone_copy"]["basis"] == ["type:calculate", "lineage:pl_phone"]
+    # A test of the value holds no value.
+    assert blocks["has_phone"]["status"] == "no_hits"
+
+
+def test_a_clean_dataset_column_flags_nothing():
+    blocks = _lineage_blocks("no_hits")
+    assert {b["status"] for b in blocks.values()} == {"no_hits"}
+
+
+class FindsName:
+    """An analyzer that reports every "Jorge Perez" in a text as a person."""
+
+    supported_languages = ["xx"]
+
+    def __init__(self):
+        self.texts: list[str] = []
+
+    def analyze(self, text, language, entities, score_threshold):
+        from presidio_analyzer import RecognizerResult
+
+        self.texts.append(text)
+        return [
+            RecognizerResult("PERSON", m.start(), m.end(), 0.9)
+            for m in re.finditer("Jorge Perez", text)
+        ]
+
+
+def test_zero_shot_reads_a_column_with_its_context():
+    from surveycto_python_dict.pii import _CHUNK_CHARS, _column_entities
+
+    analyzer = FindsName()
+    values = ["Jorge Perez"] + [f"value {i}" for i in range(200)]
+    found = _column_entities("Name of respondent", values, PiiConfig(), analyzer)
+    assert found["Jorge Perez"] == {"PERSON"}
+    assert {v for v, hits in found.items() if hits} == {"Jorge Perez"}
+    # Several values per text, each text led by the context and within the limit.
+    assert 1 < len(analyzer.texts) < len(values)
+    assert all(t.startswith("Name of respondent: ") for t in analyzer.texts)
+    assert all(len(t) <= _CHUNK_CHARS for t in analyzer.texts)
+
+
+def test_a_hit_in_the_context_counts_for_no_value():
+    from surveycto_python_dict.pii import _column_entities
+
+    found = _column_entities("Jorge Perez", ["1", "2"], PiiConfig(), FindsName())
+    assert found == {"1": set(), "2": set()}
+
+
+def test_context_is_the_label_or_the_column_a_calculate_reads():
+    from surveycto_python_dict.pii import _context
+
+    question = {"type": "text", "question_text": "<b>Name</b> of respondent"}
+    assert _context({**question, "data_source": None}, "name") == "Name of respondent"
+    preload = {
+        "type": "calculate",
+        "question_text": "pulldata('people', 'full_name', 'id', ${id})",
+        "data_source": {"kind": "pulldata", "column": "full_name"},
+    }
+    assert _context(preload, "pl_name") == "full_name"
+    assert _context(None, "name_2") == "name_2"
+
+
+def test_short_value_columns_are_sampled_and_free_text_read_whole():
+    from surveycto_python_dict.pii import _SHORT_SAMPLE, _Scans
+
+    scans = _Scans(PiiConfig())
+    short = [f"Name {i}" for i in range(500)]
+    notes = [f"we met at the market on day {i}" for i in range(500)]
+    for name, values in {"short": short, "notes": notes}.items():
+        scans.add(name, pa.chunked_array([values], pa.string()), [], [], name)
+    assert len(scans.columns["short"][1]) == _SHORT_SAMPLE
+    assert len(scans.columns["notes"][1]) == 500
+
+
+def test_a_preload_takes_its_dataset_columns_status_without_a_scan():
+    from surveycto_python_dict.pii import _held_column
+
+    q = {
+        "type": "calculate",
+        "calculation": "pulldata('people', 'phone', 'id', ${id})",
+        "data_source": {"kind": "pulldata", "dataset": "people", "column": "phone"},
+    }
+    assert _held_column(q, {"people.phone": {"status": "no_hits"}}) == "people.phone"
+    # A column the dataset lacks, or a test of the value, holds nothing from it.
+    assert _held_column(q, {}) is None
+    tested = {**q, "calculation": f"empty({q['calculation']})"}
+    assert _held_column(tested, {"people.phone": {"status": "no_hits"}}) is None
+
+
+def test_a_phone_hit_needs_its_digits():
+    from surveycto_python_dict.pii import _shaped
+
+    assert _shaped("PHONE_NUMBER", "310 456 7890")
+    assert not _shaped("PHONE_NUMBER", "Yes")
+    assert not _shaped("PHONE_NUMBER", "1 3 5 11 12")
+    assert _shaped("PERSON", "Jorge Perez")
+
+
+def test_a_hit_on_a_category_does_not_count():
+    from surveycto_python_dict.pii import _rare_hits
+
+    values = ["Savings"] * 60 + ["Checking"] * 40
+    found = {"Savings": {"PERSON"}, "Checking": set()}
+    assert _rare_hits(found, values, sorted(set(values))) == {
+        "Savings": set(),
+        "Checking": set(),
+    }
+    # Mostly "no", with a few written comments: free text, so a name keeps its hit.
+    comments = ["no"] * 90 + [
+        "spoke with Jorge Perez about the plot",
+        "the neighbour helped with the harvest this year",
+        "asked to come back next week after lunch",
+    ]
+    hits = {v: set() for v in set(comments)} | {comments[90]: {"PERSON"}}
+    assert _rare_hits(hits, comments, sorted(set(comments)))[comments[90]] == {"PERSON"}
+    # A name or place in a column whose rare values repeat too reads as a category.
+    cities = [f"City {i % 60}" for i in range(360)]
+    hits = {v: {"LOCATION"} for v in set(cities)}
+    assert not any(_rare_hits(hits, cities, sorted(set(cities))).values())
+    # Free text keeps every hit: the same answer on many rows can still name someone.
+    notes = ["I spoke with Jorge Perez at home"] * 60
+    hits = {notes[0]: {"PERSON"}}
+    assert _rare_hits(hits, notes, [notes[0]]) == hits
+
+
+def test_a_code_built_from_the_date_and_random_numbers_is_generated():
+    from surveycto_python_dict.pii import _Rules
+
+    def calc(name, calculation, refs=(), source=None):
+        return {
+            "variable_name": name,
+            "type": "calculate",
+            "publishable": False,
+            "appearance": None,
+            "calculation": calculation,
+            "references": list(refs),
+            "data_source": source,
+        }
+
+    questions = [
+        calc("year", "once(format-date-time(today(), '%y'))"),
+        calc("digits", "substr(concat('00', int(once(random()) * 999)), -3, 5)"),
+        calc("code", "concat('XX', ${year}, ${digits})", ["year", "digits"]),
+        calc(
+            "taken",
+            "if(not(empty(pulldata('staff', 'code', 'code', ${code}))), 1, 0)",
+            ["code"],
+            {"kind": "pulldata", "dataset": "staff", "column": "code"},
+        ),
+        calc("new_code", "join-if('', ${code}, ${taken} = 0)", ["code", "taken"]),
+    ]
+    rules = _Rules(questions, set(), set(), True)
+    for name in ("year", "digits", "code", "taken", "new_code"):
+        assert rules.static(name)["status"] == "whitelisted", name
+
+
+def test_a_datasets_system_columns_are_decided_by_rule(tmp_path, analyzer):
+    from surveycto_python_dict.pii import dataset_codebook
+
+    csv_path = tmp_path / "people.csv"
+    csv_path.write_text(
+        "KEY,SubmissionDate,deviceid,full_name\nuuid:1,2025-01-01,dev1,Jorge Perez\n",
+        encoding="utf-8",
+    )
+    rows = dataset_codebook({"people": csv_path}, [], PiiConfig(), analyzer, {})
+    status = {r["column"]: (r["pii"]["status"], r["pii"]["basis"]) for r in rows}
+    assert status["KEY"] == ("whitelisted", ["system"])
+    assert status["SubmissionDate"] == ("whitelisted", ["system"])
+    assert status["deviceid"] == ("contains_pii", ["device:deviceid"])
+    assert status["full_name"][1][0] == "dataset"
+
+
+@pytest.mark.parametrize(
+    ("values", "numbers"),
+    [
+        (
+            ["3104567890", "+57 310 456 7891", None, "-99"],
+            {"3104567890", "+57 310 456 7891"},
+        ),
+        (
+            ["0241234567", "0541234567", "1023456789"],
+            {"0241234567", "0541234567", "1023456789"},
+        ),
+        (["3104567890", "12", "7", "3"], set()),  # a minority
+        (["2015-06-30", "30/06/2015", "20150630"], set()),  # dates
+        (["15000000", "250000000", "1500000.00"], set()),  # amounts
+        (["1234", "56789"], set()),  # short codes
+    ],
+)
+def test_digit_rule(values, numbers):
+    from surveycto_python_dict.pii import _digit_numbers
+
+    assert _digit_numbers(values) == numbers
+
+
+def test_countries_set_the_phone_regions():
+    analyzer = build_analyzer(PiiConfig(countries=("CO", "KE")))
+    phones = [
+        r
+        for r in analyzer.registry.get_recognizers(language="xx", all_fields=True)
+        if r.name == "PhoneRecognizer"
+    ]
+    assert [r.supported_regions for r in phones] == [("CO", "KE")]
+
+
+@pytest.mark.parametrize(
+    ("status", "held"),
+    [
+        ("whitelisted", "whitelisted"),
+        ("contains_pii", "contains_pii"),
+        ("may_contain_pii", "may_contain_pii"),
+        ("no_hits", "no_hits"),
+    ],
+)
+def test_one_dataset_column_entry_covers_its_preloads(status, held):
+    from surveycto_python_dict.pii import _held_block
+
+    block = _held_block({"status": status}, ["type:calculate"], "people.phone")
+    assert block == {
+        "status": held,
+        "basis": ["type:calculate", "lineage:people.phone"],
+    }

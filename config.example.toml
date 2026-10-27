@@ -15,8 +15,12 @@ blacklist = []
 # true: the project holds no personal data: every column not blacklisted or collection
 # metadata is whitelisted with basis "project"; Presidio never runs.
 # no_personal_data = false
-# Presidio's spaCy model per language; a model added here must be installed.
-# languages = { es = "es_core_news_lg", en = "en_core_web_lg" }
+# Presidio's spaCy model per language; the multilingual default reads names and places
+# in any. A model added here must be installed.
+# languages = { xx = "xx_ent_wiki_sm" }
+# Countries whose local phone formats Presidio validates (ISO codes); empty keeps its
+# defaults. A number written with + and country code is read in any case.
+# countries = ["CO"]
 # The entities Presidio looks for, and extra ones by regex.
 # entities = ["PERSON", "PHONE_NUMBER", "EMAIL_ADDRESS", "LOCATION"]
 # id_patterns = { NATIONAL_ID = '\b\d{8,10}\b' }

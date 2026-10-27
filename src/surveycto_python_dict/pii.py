@@ -1,5 +1,9 @@
 """Per-variable PII signal: evidence for the people cleaning the data, never enforcement.
 
+The team's rules decide first and the scan is a safety net for what they leave open.
+Birth dates and ID numbers look like any other date or code, so only the blacklist or
+``publishable`` marks them.
+
 Each column gets ``{"status", "basis"[, "presidio"]}``; the first matching rule wins:
 
 0. ``contains_pii`` / ``reviewed``: the column or its question is on the user's
@@ -17,9 +21,19 @@ Each column gets ``{"status", "basis"[, "presidio"]}``; the first matching rule 
    ``no_personal_data`` overrides.
 3. ``whitelisted``: system columns; integer, decimal, date, datetime and time
    questions; selects with inline choices; calculates whose every reference is
-   cleared or whitelisted and that do not ``pulldata()``.
-4. ``may_contain_pii`` / ``no_hits``: everything else, scanned with Presidio on its
-   distinct non-null values (sampled with ``seed`` above ``max_distinct``). With
+   cleared or whitelisted and that hold no ``pulldata()`` value, and calculates built
+   only from the date, random numbers and constants (``generated``). An integer
+   question whose values are mostly 8 to 12 digits is ``may_contain_pii`` instead
+   (basis ``digits``): a phone or an ID number stored as a number.
+4. ``may_contain_pii`` / ``no_hits``: everything else (text, ``search()`` selects,
+   calculates fed by text or a dataset), each column read whole: Presidio with spaCy
+   (by default the multilingual ``xx_ent_wiki_sm``) reads its distinct values after
+   its question's label, a sample of them for short values and all of them for free
+   text. A hit on a value many rows share, or a name or place in a column of repeated
+   values, is a category and does not count. Most values of 8 to 12 digits, a leading
+   ``+`` and country code allowed, flag it too (basis ``digits``). A ``pulldata()``
+   calculate holding its dataset column's value takes the column's status, and a
+   calculate reading a flagged field takes its flag (basis ``lineage:<name>``). With
    ``no_personal_data`` the project declares it holds none: every column past the
    device and system columns is ``whitelisted`` / ``project``, and Presidio never runs.
 
@@ -45,8 +59,8 @@ from surveycto_python_dict.contract import (
     dataset_header,
     search_universe,
 )
-from surveycto_python_dict.survey import code_reasons
-from surveycto_python_dict.xml_contract import FormContract
+from surveycto_python_dict.survey import code_reasons, plain_label
+from surveycto_python_dict.xml_contract import FormContract, is_system_column
 
 if TYPE_CHECKING:
     from presidio_analyzer import AnalyzerEngine
@@ -84,7 +98,16 @@ _SELECT_TYPES = {"select_one", "select_multiple"}
 _REF = re.compile(r"\$\{([^}]+)\}")
 _CALL = re.compile(r"([A-Za-z][\w-]*)\s*\(")
 # Functions that make a value without reading the form or the device.
-_GENERATED_CALLS = {"once", "uuid", "now", "today", "random", "concat", "if"}
+_GENERATED_CALLS = {"once", "uuid", "now", "today", "random", "concat", "if"} | {
+    # Pure functions: they reshape the value they are given.
+    "substr",
+    "int",
+    "round",
+    "string",
+    "format-date-time",
+    "date",
+    "selected-at",
+}
 # The statuses that clear a calculate reading the field (lineage), and those that hold
 # or may hold PII.
 SAFE = {"cleared_by_form", "whitelisted"}
@@ -94,6 +117,30 @@ _MAX_HIT_KEYS = 5
 # A search() list longer than this stays in its dataset: a filter on a field can leave
 # every row of a large dataset as a possible choice, copied into each column.
 MAX_INLINE_CHOICES = 50
+# A column's label and values per text Presidio reads.
+_CHUNK_CHARS = 600
+# Distinct values read from a column of short values: enough to tell names from codes.
+_SHORT_SAMPLE = 100
+# Free text: answers with a median of this many words or more.
+_FREE_TEXT_WORDS = 5
+# A value on at least this many rows, and this share of them, is a category.
+_FREQUENT_ROWS = 10
+_FREQUENT_SHARE = 0.02
+# Names and places are close to one per person: a column with distinct values under
+# this share of its rows lists categories (first names still pass).
+_NAMED = {"PERSON", "LOCATION"}
+_UNIQUE_SHARE = 0.2
+# A phone hit needs this many digits in its value, 3 of them in a row, so a list of
+# select codes ("1 3 5 11 12") is not one.
+_MIN_DIGITS = 5
+# A phone or ID number: 8 to 12 digits, a leading + and country code allowed.
+_NUMBER = re.compile(r"\+?\d{8,12}")
+# A date written in digits ("2015-06-30", "30/06/2015") is not a number.
+_DATE = re.compile(r"\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}")
+_PULLDATA = re.compile(r"pulldata\s*\(")
+# Functions and operators that turn a value into a test of it.
+_TESTS = re.compile(r"(?<![\w-])(empty|not|string-length|boolean)\s*\(\s*$")
+_COMPARISON = re.compile(r"\s*(!=|=|<|>)")
 
 
 def shows_values(status: str) -> bool:
@@ -112,9 +159,8 @@ class MissingSpacyModel(RuntimeError):
 class PiiConfig:
     """``[pii]`` settings."""
 
-    languages: dict[str, str] = field(
-        default_factory=lambda: {"es": "es_core_news_lg", "en": "en_core_web_lg"}
-    )
+    # spaCy model per language; the multilingual one reads names and places in any.
+    languages: dict[str, str] = field(default_factory=lambda: {"xx": "xx_ent_wiki_sm"})
     entities: tuple[str, ...] = ("PERSON", "PHONE_NUMBER", "EMAIL_ADDRESS", "LOCATION")
     # Extra entity name -> regex, e.g. {"NATIONAL_ID": r"\b\d{8,10}\b"}.
     id_patterns: dict[str, str] = field(default_factory=dict)
@@ -131,6 +177,10 @@ class PiiConfig:
     # True: the project holds no personal data (study metadata, say); every column
     # past the blacklist, publishable and device rules is whitelisted, unscanned.
     no_personal_data: bool = False
+    # ISO country codes whose local phone formats Presidio validates, e.g. ["CO"];
+    # empty keeps Presidio's default regions. A number written with + and country
+    # code is read in any case.
+    countries: tuple[str, ...] = ()
 
     def __post_init__(self):
         """Raise when a name is on both the whitelist and the blacklist."""
@@ -172,6 +222,16 @@ def build_analyzer(config: PiiConfig) -> "AnalyzerEngine":
                     supported_entity=name,
                     supported_language=lang,
                     patterns=[Pattern(name=name, regex=regex, score=1.0)],
+                )
+            )
+    if config.countries:
+        from presidio_analyzer.predefined_recognizers import PhoneRecognizer
+
+        for lang in config.languages:
+            analyzer.registry.remove_recognizer("PhoneRecognizer", language=lang)
+            analyzer.registry.add_recognizer(
+                PhoneRecognizer(
+                    supported_language=lang, supported_regions=config.countries
                 )
             )
     return analyzer
@@ -221,7 +281,10 @@ class _Rules:
             return {"status": "whitelisted", "basis": [f"type:{qtype}"]}
         if qtype in _SELECT_TYPES and "search(" not in (q["appearance"] or ""):
             return {"status": "whitelisted", "basis": ["choices:inline"]}
-        if qtype == "calculate" and not self._pulldata(q):
+        # A pulldata() only tested for a match (empty(), not(), =) yields true or
+        # false, not the dataset's value.
+        holds = self._pulldata(q) and _holds_pulldata(q["calculation"])
+        if qtype == "calculate" and not holds:
             refs = q["references"]
             # Reading no field and calling only functions that generate a value, it
             # holds nothing anyone entered: once(uuid(5)), today().
@@ -302,7 +365,7 @@ def _entities(texts: list[str], config: PiiConfig, analyzer) -> list[set[str]]:
     """
     wanted = [*config.entities, *config.id_patterns]
     found: list[set[str]] = [set() for _ in texts]
-    for lang in config.languages:
+    for lang in analyzer.supported_languages:
         parsed = analyzer.nlp_engine.process_batch(texts, lang, batch_size=256)
         for hits, (text, artifacts) in zip(found, parsed, strict=True):
             hits.update(
@@ -392,54 +455,171 @@ def screen_search_choices(
 
 
 class _Scans:
-    """Columns to scan, collected first so Presidio reads every distinct text once.
+    """Columns to scan, collected first and read one column at a time.
 
-    Columns share many values ("0", "No", a date), so a form's columns are scanned
-    together: ``add`` registers a column, ``run`` analyzes the union of their
-    sampled distinct values, and ``block`` gives each column its result.
+    ``add`` registers a column with its context (its question's label, or its name),
+    ``run`` reads each column's sampled distinct values after that context, and
+    ``block`` gives each column its result.
     """
 
     def __init__(self, config: PiiConfig):
         self.config = config
         self.columns: dict = {}
-        self.found: dict[str, set[str]] = {}
+        self.found: dict = {}
 
-    def add(self, name, column: pa.ChunkedArray, keys: list, basis: list[str]) -> None:
+    def add(
+        self,
+        name,
+        column: pa.ChunkedArray,
+        keys: list,
+        basis: list[str],
+        context: str,
+    ) -> None:
         values = [None if v is None else str(v) for v in column.to_pylist()]
         distinct = sorted({v for v in values if v is not None})
-        if len(distinct) > self.config.max_distinct:
-            distinct = sorted(
-                random.Random(self.config.seed).sample(
-                    distinct, self.config.max_distinct
-                )
-            )
-        self.columns[name] = (values, distinct, keys, basis)
+        # A column of short values (names, places, codes) is decided from a sample;
+        # free text is read whole, since one answer may name someone.
+        cap = self.config.max_distinct
+        if not _free_text(distinct):
+            cap = min(cap, _SHORT_SAMPLE)
+        if len(distinct) > cap:
+            distinct = sorted(random.Random(self.config.seed).sample(distinct, cap))
+        self.columns[name] = (values, distinct, keys, basis, context)
 
     def run(self, analyzer) -> None:
-        texts = sorted(
-            {t for _, distinct, _, _ in self.columns.values() for t in distinct}
-            - set(self.found)
-        )
-        if texts:
-            self.found.update(zip(texts, _entities(texts, self.config, analyzer)))
+        for name, (_, distinct, _, _, context) in self.columns.items():
+            self.found[name] = _column_entities(
+                context, distinct, self.config, analyzer
+            )
 
     def block(self, name) -> dict:
-        values, distinct, keys, basis = self.columns[name]
-        return _block(values, distinct, keys, basis, self.found)
+        values, distinct, keys, basis, _ = self.columns[name]
+        found = _rare_hits(self.found[name], values, distinct)
+        return _block(values, distinct, keys, basis, found, _digit_numbers(values))
+
+
+def _free_text(distinct: list[str]) -> bool:
+    """Return whether a column's distinct values are free text, not short values."""
+    words = sorted(len(v.split()) for v in distinct)
+    return bool(words) and words[len(words) // 2] >= _FREE_TEXT_WORDS
+
+
+def _rare_hits(found: dict[str, set[str]], values: list, distinct: list[str]):
+    """Keep a hit only on a value few rows share, unless the column is free text: a
+    value on many rows ("Savings", a role) is a category the column's label made look
+    personal. A name or place in a column of repeated values is a category too.
+    """
+    if _free_text(distinct):
+        return found
+    rows = Counter(v for v in values if v is not None)
+    frequent = max(_FREQUENT_ROWS, _FREQUENT_SHARE * sum(rows.values()))
+    dropped = _NAMED if len(rows) < _UNIQUE_SHARE * sum(rows.values()) else set()
+    return {
+        v: set() if rows[v] >= frequent else hits - dropped for v, hits in found.items()
+    }
+
+
+def _context(q: dict | None, column: str) -> str:
+    """Return what tells what a column holds: its question's label; for a calculate,
+    which has none, the dataset column its ``pulldata()`` reads or its own name.
+    """
+    if q is None:
+        return column
+    source = q["data_source"]
+    if q["type"] == "calculate":
+        return source["column"] if source and source.get("column") else column
+    return plain_label(q["question_text"] or "") or column
+
+
+def _column_entities(
+    context: str, distinct: list[str], config: PiiConfig, analyzer
+) -> dict[str, set[str]]:
+    """Return the entity types Presidio finds in each of a column's values.
+
+    Presidio reads the column, not single cells: each text is the column's context
+    followed by as many of its values as fit in ``_CHUNK_CHARS``, so each value is
+    read next to the question and to other values of the same column. A hit counts
+    for the value it falls in; one in the context counts for none.
+    """
+    wanted = [*config.entities, *config.id_patterns]
+    found: dict[str, set[str]] = {v: set() for v in distinct}
+    chunks: list[list[str]] = []
+    for value in distinct:
+        if (
+            chunks
+            and len(context) + sum(len(v) + 3 for v in [*chunks[-1], value])
+            <= _CHUNK_CHARS
+        ):
+            chunks[-1].append(value)
+        else:
+            chunks.append([value])
+    for chunk in chunks:
+        text, spans = f"{context}: ", []
+        for value in chunk:
+            spans.append((len(text), len(text) + len(value), value))
+            text += value + " | "
+        for language in analyzer.supported_languages:
+            for r in analyzer.analyze(
+                text=text,
+                language=language,
+                entities=wanted,
+                score_threshold=config.score_threshold,
+            ):
+                for start, end, value in spans:
+                    if (
+                        r.start < end
+                        and r.end > start
+                        and _shaped(r.entity_type, value)
+                    ):
+                        found[value].add(r.entity_type)
+    return found
+
+
+def _shaped(entity: str, value: str) -> bool:
+    """Return whether ``value`` can hold ``entity``: a phone number needs its digits."""
+    return entity != "PHONE_NUMBER" or (
+        sum(c.isdigit() for c in value) >= _MIN_DIGITS
+        and re.search(r"\d{3}", value) is not None
+    )
+
+
+def _digit_numbers(values: list) -> set[str]:
+    """Return a column's numbers when most of its values have 8 to 12 digits, a
+    leading + and country code allowed: a phone or an ID number, else none. A round
+    amount (15000000, in a currency of large denominations) or a decimal is not one.
+    """
+    present = [v for v in values if v is not None]
+    numbers = {
+        v
+        for v in present
+        if not _DATE.match(v)
+        and not v.endswith("000")
+        and _NUMBER.fullmatch(re.sub(r"[\s()-]", "", v))
+    }
+    if not present or sum(v in numbers for v in present) < 0.5 * len(present):
+        return set()
+    return numbers
 
 
 def _block(
-    values: list, distinct: list[str], keys: list, basis: list[str], entities: dict
+    values: list,
+    distinct: list[str],
+    keys: list,
+    basis: list[str],
+    entities: dict,
+    numbers: set[str],
 ) -> dict:
     found: dict[str, set[str]] = {}
     for value in distinct:
         for t in entities[value]:
             found.setdefault(t, set()).add(value)
-    hits = set().union(*found.values()) if found else set()
+    hits = set().union(*found.values(), numbers)
     hit_keys = sorted({k for k, v in zip(keys, values, strict=True) if v in hits})
     return {
-        "status": "may_contain_pii" if found else "no_hits",
-        "basis": basis + [f"presidio:{t}" for t in sorted(found)],
+        "status": "may_contain_pii" if found or numbers else "no_hits",
+        "basis": basis
+        + [f"presidio:{t}" for t in sorted(found)]
+        + (["digits"] if numbers else []),
         "presidio": {
             "entities": {t: len(found[t]) for t in sorted(found)},
             "distinct_scanned": len(distinct),
@@ -450,9 +630,18 @@ def _block(
 
 
 def classify(
-    table: pa.Table, vardict: dict, questions: list[dict], config: PiiConfig, analyzer
+    table: pa.Table,
+    vardict: dict,
+    questions: list[dict],
+    config: PiiConfig,
+    analyzer,
+    dataset_pii: dict[str, dict],
 ) -> dict[str, dict]:
-    """Return the PII block for every column of ``table``."""
+    """Return the PII block for every column of ``table``.
+
+    ``dataset_pii`` holds each ``dataset.column`` block of the datasets the form reads
+    (``dataset_codebook``); a ``pulldata()`` calculate takes its column's status.
+    """
     variables = vardict["variables"]
     question_names = {q["variable_name"] for q in questions}
     whitelist, blacklist = set(config.whitelist), set(config.blacklist)
@@ -491,11 +680,28 @@ def classify(
             block = {"status": "whitelisted", "basis": ["project"]}
         else:
             block = rules.static(question) if question is not None else None
-            if block is None:
+            held = _held_column(q, dataset_pii)
+            if block is None and held:
+                block = _held_block(dataset_pii[held], rules.scan_basis(question), held)
+            elif block is None:
                 scans.add(
-                    column, table.column(column), keys, rules.scan_basis(question)
+                    column,
+                    table.column(column),
+                    keys,
+                    rules.scan_basis(question),
+                    _context(q, column),
                 )
                 continue
+            elif q["type"] == "integer" and _digit_numbers(
+                [
+                    None if v is None else str(v)
+                    for v in table.column(column).to_pylist()
+                ]
+            ):
+                block = {
+                    "status": "may_contain_pii",
+                    "basis": ["type:integer", "digits"],
+                }
             if q is not None and q["publishable"]:
                 block = {**block, "basis": [*block["basis"], "publishable"]}
         blocks[column] = block
@@ -505,7 +711,106 @@ def classify(
         if (q := rules.by_name.get(variables[column]["question"])) and q["publishable"]:
             block = {**block, "basis": [*block["basis"], "publishable"]}
         blocks[column] = block
+    _inherit(blocks, variables, rules, dataset_pii)
     return {column: blocks[column] for column in table.schema.names}
+
+
+def _holds_pulldata(calculation: str) -> bool:
+    """Return whether a ``pulldata()`` result can be the calculation's value: the call
+    itself, or a branch of ``coalesce()`` or ``if()``. A result passed to ``empty()``,
+    ``not()``, ``string-length()`` or a comparison only yields a test.
+    """
+    for call in _PULLDATA.finditer(calculation):
+        depth, end = 0, call.end() - 1
+        for end in range(call.end() - 1, len(calculation)):
+            depth += {"(": 1, ")": -1}.get(calculation[end], 0)
+            if depth == 0:
+                break
+        tested = _TESTS.search(calculation[: call.start()])
+        compared = _COMPARISON.match(calculation[end + 1 :])
+        if not tested and not compared:
+            return True
+    return False
+
+
+def _held_column(q: dict | None, dataset_pii: dict) -> str | None:
+    """Return the ``dataset.column`` whose value calculate ``q`` holds through its
+    ``pulldata()``, when that column was classified, else None.
+    """
+    if q is None or q["type"] != "calculate":
+        return None
+    source = q["data_source"]
+    if not source or source["kind"] != "pulldata":
+        return None
+    held = f"{source['dataset']}.{source['column']}"
+    if held not in dataset_pii or not _holds_pulldata(q["calculation"]):
+        return None
+    return held
+
+
+def _held_block(column: dict, basis: list[str], held: str) -> dict:
+    """Return the block of a calculate holding dataset column ``held``: its values are
+    the column's, already decided, so one ``dataset.column`` on the whitelist or the
+    blacklist covers every ``pulldata()`` of it.
+    """
+    status = column["status"]
+    return {
+        "status": status if status in FLAGGED | SAFE else "no_hits",
+        "basis": [*basis, f"lineage:{held}"],
+    }
+
+
+def _inherit(
+    blocks: dict[str, dict], variables: dict, rules: _Rules, dataset_pii: dict
+) -> None:
+    """Flag each ``no_hits`` calculate that holds a flagged value: the dataset column
+    its ``pulldata()`` reads, or a field its formula reads, directly or through other
+    calculates (basis ``lineage:<name>``).
+
+    A ``pulldata()`` returns the column's value, and a form that reads and publishes
+    the same dataset stores it back, so the field, the column and every
+    ``pulldata()`` of it are one value with one status. Lineage only adds flags.
+    """
+    columns: dict[str, list[str]] = {}
+    for column in blocks:
+        columns.setdefault(variables[column]["question"], []).append(column)
+
+    def flagged(name: str) -> bool:
+        return any(blocks[c]["status"] in FLAGGED for c in columns.get(name, []))
+
+    changed = True
+    while changed:
+        changed = False
+        for name, cols in columns.items():
+            q = rules.by_name.get(name)
+            if q is None or q["type"] != "calculate":
+                continue
+            source = q["data_source"]
+            if source and source["kind"] == "pulldata":
+                if not _holds_pulldata(q["calculation"]):
+                    continue
+                held = f"{source['dataset']}.{source['column']}"
+                # A column the dataset lacks makes pulldata() return "": it holds
+                # nothing from the dataset.
+                if held not in dataset_pii:
+                    continue
+                status = dataset_pii[held]["status"]
+            else:
+                held = next(
+                    (r for r in _REF.findall(q["calculation"] or "") if flagged(r)),
+                    None,
+                )
+                status = "may_contain_pii"
+            if held is None or status not in FLAGGED:
+                continue
+            for c in cols:
+                if blocks[c]["status"] == "no_hits":
+                    blocks[c] = {
+                        **blocks[c],
+                        "status": status,
+                        "basis": [*blocks[c]["basis"], f"lineage:{held}"],
+                    }
+                    changed = True
 
 
 def dataset_codebook(
@@ -537,6 +842,7 @@ def dataset_codebook(
                 name in blacklist
                 or name in whitelist
                 or config.no_personal_data
+                or is_system_column(column)
                 or (csv_path, column) in scanned
             ):
                 continue
@@ -546,6 +852,7 @@ def dataset_codebook(
                 pa.chunked_array([pa.array(values, pa.string())]),
                 list(range(1, len(records) + 1)),
                 ["dataset"],
+                column,
             )
     scans.run(analyzer)
     for key in scans.columns:
@@ -560,6 +867,11 @@ def dataset_codebook(
                 block = {"status": "contains_pii", "basis": ["reviewed"]}
             elif name in whitelist:
                 block = {"status": "whitelisted", "basis": ["reviewed"]}
+            elif column in _DEVICE_COLUMNS:
+                block = {"status": "contains_pii", "basis": [f"device:{column}"]}
+            elif is_system_column(column):
+                # A form publishing to the dataset brings its system columns.
+                block = {"status": "whitelisted", "basis": ["system"]}
             elif config.no_personal_data:
                 block = {"status": "whitelisted", "basis": ["project"]}
             else:

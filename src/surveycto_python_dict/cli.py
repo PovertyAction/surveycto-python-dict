@@ -146,7 +146,7 @@ def load_config(path: Path) -> Config:
     _check_keys("[pii]", set(pii), {f.name for f in fields(PiiConfig)})
     if "entities" in pii:
         pii["entities"] = tuple(pii["entities"])
-    for key in ("whitelist", "blacklist"):
+    for key in ("whitelist", "blacklist", "countries"):
         if key in pii:
             pii[key] = tuple(pii[key])
     datasets = data.get("datasets", {})
@@ -350,6 +350,36 @@ def pull(cfg: Config, client: Client) -> Path:
     return raw
 
 
+def classify_form(
+    cfg: Config,
+    form: str,
+    sentinels: dict[int, str],
+    analyzer,
+    scanned: dict[tuple[Path, str], dict],
+) -> tuple[FormContract, list[dict], pa.Table, dict, dict[str, dict], list[dict]]:
+    """Read one form's raw pull and classify its columns and datasets, writing nothing.
+
+    Return its contract, questions, table, dictionary, pii blocks and dataset codebook.
+    """
+    contract = _contract(cfg, form)
+    datasets = form_datasets(cfg, form)
+    rows = json.loads((cfg.form_raw(form) / "wide.json").read_text(encoding="utf-8"))
+    screen_search_choices(contract, datasets, cfg.pii, analyzer, rows)
+    questions = build_questions(contract)
+    table = cast_wide(rows, contract)
+    vardict = build_dictionary(table, questions, contract, sentinels, cfg.exclude)
+    codebook = dataset_codebook(datasets, questions, cfg.pii, analyzer, scanned)
+    blocks = classify(
+        table,
+        vardict,
+        questions,
+        cfg.pii,
+        analyzer,
+        {f"{c['dataset']}.{c['column']}": c["pii"] for c in codebook},
+    )
+    return contract, questions, table, vardict, blocks, codebook
+
+
 def build_form(
     cfg: Config,
     form: str,
@@ -362,16 +392,10 @@ def build_form(
     Return the written paths by name and the names the ``[pii]`` lists can use: each
     question, column and ``dataset.column``.
     """
-    raw, out = cfg.form_raw(form), cfg.form_dir(form)
-    contract = _contract(cfg, form)
-    datasets = form_datasets(cfg, form)
-    rows = json.loads((raw / "wide.json").read_text(encoding="utf-8"))
-    screen_search_choices(contract, datasets, cfg.pii, analyzer, rows)
-    questions = build_questions(contract)
-    table = cast_wide(rows, contract)
-    vardict = build_dictionary(table, questions, contract, sentinels, cfg.exclude)
-    blocks = classify(table, vardict, questions, cfg.pii, analyzer)
-    codebook = dataset_codebook(datasets, questions, cfg.pii, analyzer, scanned)
+    out = cfg.form_dir(form)
+    contract, questions, table, vardict, blocks, codebook = classify_form(
+        cfg, form, sentinels, analyzer, scanned
+    )
     attach(vardict, blocks, questions, codebook)
 
     paths = {

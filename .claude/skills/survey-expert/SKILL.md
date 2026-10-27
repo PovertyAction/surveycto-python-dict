@@ -105,7 +105,7 @@ you see: a flagged column's values never reach the conversation.
 | `cleared_by_form` | The form marks the field `publishable` | Its values |
 | `whitelisted` | Reviewed by the team (`reviewed`), a system column (`system`), a number/date, an inline-choice select, a calculate whose inputs are all cleared or that generates its value (`generated`), or any column of a project declared to hold no personal data (`project`) | Its values |
 | `contains_pii` | Blacklisted by the team (`reviewed`), collection metadata (device or user, under any name), GPS, an attachment, or a calculate that reads one of these (`lineage:<field>`) | Counts and `KEY`s only |
-| `may_contain_pii` | Presidio found names, phones, emails or places (`presidio:PERSON`, ...) in its values | Counts and `KEY`s only |
+| `may_contain_pii` | Presidio found names, phones, emails or places (`presidio:PERSON`, ...) in its values, or most are 8 to 12 digits (`digits`) | Counts and `KEY`s only |
 | `no_hits` | Free text where Presidio found nothing | Its values; the team may still review it |
 
 For a flagged column, a script prints counts, null rates, distinct counts and the

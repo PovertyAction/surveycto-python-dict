@@ -59,6 +59,10 @@ class Spy:
     def nlp_engine(self):
         return self.inner.nlp_engine
 
+    @property
+    def supported_languages(self):
+        return self.inner.supported_languages
+
     def analyze(self, text, language, **kwargs):
         self.texts.append(text)
         return self.inner.analyze(text=text, language=language, **kwargs)
@@ -170,6 +174,8 @@ def test_a_filter_on_an_expression_withholds_the_list(form):
 
 class NoHits:
     """An analyzer that finds nothing, for the clean path."""
+
+    supported_languages = ["es"]
 
     class nlp_engine:  # noqa: N801
         @staticmethod

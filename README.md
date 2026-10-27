@@ -12,8 +12,8 @@ people cleaning it decide what to do.
 
 - [uv](https://docs.astral.sh/uv/) and [just](https://just.systems); uv installs
   Python 3.11 or later for the project.
-- About 1 GB of disk for the English and Spanish spaCy models that Presidio uses to
-  scan text for personal data. `just setup` downloads them once.
+- About 40 MB of disk for spaCy's multilingual model, which Presidio uses to scan text
+  for personal data. `just setup` downloads it once.
 - A SurveyCTO user with API access and permission to download the project's data, and
   the private key if a form is encrypted.
 
@@ -22,7 +22,7 @@ people cleaning it decide what to do.
 ```sh
 git clone https://github.com/PovertyAction/surveycto-python-dict
 cd surveycto-python-dict
-just setup                           # uv sync with the spaCy models; pre-commit hooks
+just setup                           # uv sync with the spaCy model; pre-commit hooks
 cp .env.example .env                 # server, user, password, key path, sentinel codes
 cp config.example.toml config.toml   # the project's forms and out_dir
 just run                             # pull, then every output
@@ -139,7 +139,8 @@ The status is one of:
   selects, system columns, calculates over cleared fields).
 - `contains_pii`: on `[pii] blacklist`, collection metadata, a geo or attachment field,
   or a calculate that reads one of these.
-- `may_contain_pii`: Presidio found personal data in its values.
+- `may_contain_pii`: Presidio found personal data in its values, or most of them are
+  8 to 12 digits (basis `digits`).
 - `no_hits`: Presidio scanned it and found nothing.
 
 `contains_pii` and `may_contain_pii` are the flagged statuses. An output an agent reads
@@ -148,12 +149,17 @@ messages) shows a flagged column's counts, null rates, distinct counts and `KEY`
 never its values. Every other status shows values too. Only `<form>_pii_review.xlsx`
 lists flagged values, for the people who verify the flags.
 
+Your rules decide first and the scan is a safety net. Birth dates and ID numbers look
+like any other date or code, so the scan cannot find them: put them on the blacklist,
+or mark them publishable when they may be shared.
+
 The rules apply in order, and the first that matches decides:
 
 1. **Your lists.** A name on `[pii] blacklist` is `contains_pii`, one on
    `[pii] whitelist` is `whitelisted`; a name on both lists is an error. Review the
    flagged columns in `<form>_pii_review.xlsx` and whitelist the ones you clear;
-   blacklist the columns you know are personal, publishable or not.
+   blacklist the columns you know are personal, publishable or not. A dataset column,
+   listed as `dataset.column`, covers every `pulldata()` that holds its value.
 2. **Publishable.** A field the form marks publishable is `cleared_by_form`. Set
    `trust_publishable = false` when the form marks personal fields publishable (to
    publish them to a dataset, say): publishable then clears nothing.
@@ -164,8 +170,19 @@ The rules apply in order, and the first that matches decides:
    attachment field or a blacklisted one, directly or through other calculates (basis
    `lineage:<field>`), and a `pulldata()` of a blacklisted `dataset.column`.
 4. **Types.** Geo and attachment fields are `contains_pii`. System columns, numbers,
-   dates, inline selects, and calculates over cleared fields are `whitelisted`.
-5. **Presidio** scans the rest: `may_contain_pii` on a hit, `no_hits` otherwise.
+   dates, inline selects, calculates over cleared fields, and codes built only from the
+   date and random numbers are `whitelisted`. An integer question whose values are
+   mostly 8 to 12 digits is `may_contain_pii` (basis `digits`): a phone or an ID
+   number stored as a number.
+5. **The scan** reads the rest (text, `search()` selects, calculates fed by text or a
+   dataset) one column at a time: Presidio with spaCy's multilingual model reads its
+   distinct values after its question's label, a sample of 100 for short values and
+   all of them for free text. A hit on a value many rows share, or a name or place in
+   a column of repeated values, is a category and does not count. Most values of 8 to
+   12 digits, a leading `+` and country code allowed, flag it too (basis `digits`).
+   `may_contain_pii` on a hit, `no_hits` otherwise. A `pulldata()` calculate holding
+   its dataset column's value takes the column's status, and a calculate reading a
+   flagged field takes its flag (basis `lineage:<name>`).
 
 Set `no_personal_data = true` for a project that holds none: every column, dataset
 column and `search()` list that rules 1-3 do not decide is `whitelisted` with basis

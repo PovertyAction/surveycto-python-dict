@@ -1,5 +1,6 @@
-# Credentials: never commit
-.env
+# Credentials: never commit, under any .env name; ship only the example
+.env*
+!.env.example
 *.pem
 
 # Pulled survey data and build outputs (may hold PII)
