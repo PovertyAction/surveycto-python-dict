@@ -113,7 +113,7 @@ dataset pulled (`raw/datasets/<id>.csv`, the server's bytes): the ones in
 | `<form>.parquet` | Submissions, typed from the XML; a note's or a group's column empty in every row is left out |
 | `<form>_variable_dictionary.json` | One entry per column: counts, types, sentinels, `pii`, and the range of a column whose values are shown; a column with no question says what it is (`column_kind`: note, group, preload, `not_in_form`) |
 | `<form>_variable_graph.json` | Questions linked by calculation, relevance, constraint, repeat |
-| `<form>_pii_review.xlsx` | For the people cleaning the data: a Columns sheet (each flagged column's label, status, basis and Presidio hit rows) and a Values sheet, one row per value of a flagged column (`KEY`, column, value) |
+| `<form>_pii_review.xlsx` | For the people cleaning the data, and where they decide: a Columns sheet (every column's label, type, status, basis and Presidio hit rows, with a `decision` and a `reason`), a Datasets sheet (the same for each `dataset.column` the form reads) and a Values sheet, one row per value of a flagged column (`KEY`, column, value) |
 | `<form>_summary_stats.csv` | Per column, counts over the rows where it was asked (skip logic evaluated per row), sentinels apart, then mean and quartiles, frequencies or shares; a flagged column gets counts only |
 | `<form>_codebook.xlsx` | For PIs: Variables (label, type, group, relevance, value labels, missing, sentinels, PII status) and Summary stats; a flagged column gets counts only |
 | `<form>_dataset_codebook.json` | One row per column of each dataset the form reads: counts, the questions that read it, and a `pii` block |
@@ -155,11 +155,20 @@ or mark them publishable when they may be shared.
 
 The rules apply in order, and the first that matches decides:
 
-1. **Your lists.** A name on `[pii] blacklist` is `contains_pii`, one on
-   `[pii] whitelist` is `whitelisted`; a name on both lists is an error. Review the
-   flagged columns in `<form>_pii_review.xlsx` and whitelist the ones you clear;
-   blacklist the columns you know are personal, publishable or not. A dataset column,
-   listed as `dataset.column`, covers every `pulldata()` that holds its value.
+1. **Your decisions.** Review `<form>_pii_review.xlsx`, undecided flagged and scanned
+   columns first, and set `decision` to `personal` (contains personal data, publishable
+   or not) or `clear`, with a `reason` for the next reviewer. The next build reads the
+   workbook before rewriting it: a `personal` column is `contains_pii`, a `clear` one
+   `whitelisted`, both with basis `reviewed`, and every decision and reason is written
+   back. Emptying a decision takes it back. Deciding every column of a question (a
+   select_multiple's binaries, a repeat's instances) decides the question, so the
+   calculates that read it follow. `[pii] blacklist` and `whitelist` hold the
+   same decisions as text and prefill the workbook; a name decided both ways, in the
+   lists or in two forms' workbooks, is an error. Like the lists, a decision covers
+   that name in every form. The workbook lives in `<out_dir>`: copy its decisions into
+   the lists before deleting the folder. A dataset column, decided on
+   the Datasets sheet or listed as `dataset.column`, covers every `pulldata()` that
+   holds its value.
 2. **Publishable.** A field the form marks publishable is `cleared_by_form`. Set
    `trust_publishable = false` when the form marks personal fields publishable (to
    publish them to a dataset, say): publishable then clears nothing.

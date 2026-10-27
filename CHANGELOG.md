@@ -4,6 +4,12 @@
 
 ### Added
 
+- `<form>_pii_review.xlsx` is where the team decides (#109): every column, and each
+  `dataset.column` the form reads on a new Datasets sheet, gets a `decision`
+  dropdown (`personal` or `clear`) and a `reason`, undecided flagged and scanned
+  columns first. The next build reads the decisions back like `[pii] blacklist` and
+  `whitelist` (basis `reviewed`) and writes them and their reasons into the new
+  workbook, prefilled from the lists. A name decided both ways raises.
 - A form with no submissions yet builds every output (#89): its questions, skip logic,
   dictionary and flow are ready before fieldwork, and its tables and views hold the
   columns every submission carries and no rows.

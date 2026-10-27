@@ -111,9 +111,10 @@ you see: a flagged column's values never reach the conversation.
 For a flagged column, a script prints counts, null rates, distinct counts and the
 `KEY`s of the rows a check flags, never the values, `head()` or `value_counts()`.
 Whether a column leaves a delivered dataset is the team's decision, not a cleaning
-default. A flag the team disagrees with is fixed in `config.toml`: they review
-`<form>_pii_review.xlsx` and add the columns they clear to `[pii] whitelist` (and
-personal ones to `[pii] blacklist`). A list is referred to, not listed, when Presidio
+default. A flag the team disagrees with is fixed by a person in
+`<form>_pii_review.xlsx`, with a `decision` (`clear` or `personal`) and a `reason`
+read back on the next build, or in `[pii] whitelist` and `blacklist`. You propose
+decisions in your reply, from the dictionary; you never open the workbook. A list is referred to, not listed, when Presidio
 flags a `search()` list, the select (inline or `search()`) is on the blacklist, it has
 more than 50 choices, or it is filtered on a field whose values are not shown
 (`choices_withheld` says why): `get_choice_list` names its dataset, value and label

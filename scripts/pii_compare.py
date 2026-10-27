@@ -4,13 +4,14 @@
     uv run python scripts/pii_compare.py compare <config> <form> <truth.xlsx> <out.xlsx> [run ...]
 
 ``template`` writes one row per column of a built form, structure only, with ``truth``
-prefilled from the config's ``[pii]`` lists (blacklist -> yes, whitelist -> no); the
+prefilled from the config's ``[pii]`` lists and the review workbooks' decisions
+(blacklist or personal -> yes, whitelist or clear -> no); the
 team fills in the rest. ``compare`` classifies the form's raw pull once per run with
 empty lists, so the rules and the scan are measured without the team's review, and
 writes each column's status next to its label: a miss is a ``yes`` column left
 unflagged, a false alarm a ``no`` column flagged. A run is ``default`` (the config's
 settings) or options: spaCy models, left-out entities, phone countries and ``lists``
-to keep the config's lists, e.g. ``es=es_core_news_sm,en=en_core_web_sm`` or
+to keep the config's lists with the workbooks' decisions, e.g. ``es=es_core_news_sm,en=en_core_web_sm`` or
 ``xx=xx_ent_wiki_sm,-LOCATION,@CO``. Neither file holds a value from the data.
 """
 
@@ -24,7 +25,12 @@ from dotenv import load_dotenv
 from openpyxl import Workbook, load_workbook
 from openpyxl.worksheet.datavalidation import DataValidation
 
-from surveycto_python_dict.cli import classify_form, env_sentinels, load_config
+from surveycto_python_dict.cli import (
+    classify_form,
+    env_sentinels,
+    load_config,
+    with_decisions,
+)
 from surveycto_python_dict.pii import FLAGGED, build_analyzer
 from surveycto_python_dict.survey import plain_label
 
@@ -46,7 +52,7 @@ def _share(block: dict) -> float | str:
 def template(config: Path, form: str, out: Path) -> None:
     """Write the truth template for ``form``'s built outputs to ``out``."""
     assert not out.exists(), f"{out} exists"
-    cfg = load_config(config)
+    cfg, _ = with_decisions(load_config(config))
     form_dir = cfg.form_dir(form)
     variables = json.loads(
         (form_dir / f"{form}_variable_dictionary.json").read_text(encoding="utf-8")
@@ -122,7 +128,7 @@ def compare(
     config: Path, form: str, truth_path: Path, out: Path, runs: list[str]
 ) -> None:
     """Classify ``form`` once per run and write the outcomes to ``out``."""
-    cfg = load_config(config)
+    cfg, _ = with_decisions(load_config(config))
     sentinels = env_sentinels()
     sheet = load_workbook(truth_path, read_only=True)["Columns"]
     header, *rows = sheet.iter_rows(values_only=True)
