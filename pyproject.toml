@@ -33,9 +33,18 @@ Issues = "https://github.com/PovertyAction/surveycto-python-dict/issues"
 dev = ["codespell>=2.4.1", "pre-commit>=4.2.0", "pytest", "responses", "ruff"]
 gliner = [
     "gliner>=0.2.26,<1.0.0",
+    "gliner2-onnx[export]>=0.1.1",
     "gliner2[local]>=2.1.0",
     "protobuf>=7.36.2",
     "sentencepiece>=0.2.2",
+]
+
+spacy-small = [
+    "es-core-news-sm",
+    "en-core-web-sm",
+    "es-core-news-md",
+    "en-core-web-md",
+    "xx-ent-wiki-sm",
 ]
 
 [project.scripts]
@@ -88,6 +97,11 @@ docstring-code-format = true
 [tool.uv.sources]
 es-core-news-lg = { url = "https://github.com/explosion/spacy-models/releases/download/es_core_news_lg-3.8.0/es_core_news_lg-3.8.0-py3-none-any.whl" }
 en-core-web-lg = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl" }
+es-core-news-sm = { url = "https://github.com/explosion/spacy-models/releases/download/es_core_news_sm-3.8.0/es_core_news_sm-3.8.0-py3-none-any.whl" }
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
+es-core-news-md = { url = "https://github.com/explosion/spacy-models/releases/download/es_core_news_md-3.8.0/es_core_news_md-3.8.0-py3-none-any.whl" }
+en-core-web-md = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl" }
+xx-ent-wiki-sm = { url = "https://github.com/explosion/spacy-models/releases/download/xx_ent_wiki_sm-3.8.0/xx_ent_wiki_sm-3.8.0-py3-none-any.whl" }
 
 [tool.codespell]
 builtin = "clear,rare,informal,usage,code,names"

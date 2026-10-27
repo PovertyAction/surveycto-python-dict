@@ -519,6 +519,8 @@ def test_a_clean_dataset_column_flags_nothing():
 class FindsName:
     """An analyzer that reports every "Jorge Perez" in a text as a person."""
 
+    supported_languages = ["xx"]
+
     def __init__(self):
         self.texts: list[str] = []
 

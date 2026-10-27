@@ -103,9 +103,19 @@ _MAX_HIT_KEYS = 5
 # A search() list longer than this stays in its dataset: a filter on a field can leave
 # every row of a large dataset as a possible choice, copied into each column.
 MAX_INLINE_CHOICES = 50
-_DETECTORS = {"spacy", "structure", "zero_shot", "gliner2"}
+_DETECTORS = {
+    "spacy",
+    "spacy_column",
+    "structure",
+    "zero_shot",
+    "gliner2",
+    "gliner2_onnx",
+}
 # The detectors that run a zero-shot model on each column.
-_ZERO_SHOT = {"zero_shot", "gliner2"}
+_ZERO_SHOT = {"zero_shot", "gliner2", "gliner2_onnx"}
+# The detectors that read each column with its context: the zero-shot models, and
+# the configured spaCy models read the same way.
+_COLUMNAR = _ZERO_SHOT | {"spacy_column"}
 # zero_shot: the model, the labels it is asked for (its own words -> entity) and the
 # score a hit needs.
 _ZERO_SHOT_MODEL = "urchade/gliner_multi_pii-v1"
@@ -132,6 +142,18 @@ _GLINER2_LABELS = {
     "email": "EMAIL_ADDRESS",
     "bank_account": "BANK_ACCOUNT",
     "account_number": "BANK_ACCOUNT",
+}
+# gliner2_onnx: the multilingual GLiNER2 base model exported to ONNX, run without
+# torch, asked in plain words.
+_GLINER2_ONNX_MODEL = "lmo3/gliner2-multi-v1-onnx"
+_GLINER2_ONNX_LABELS = {
+    "person name": "PERSON",
+    "date of birth": "DATE_OF_BIRTH",
+    "national identity document number": "ID_NUMBER",
+    "street address": "ADDRESS",
+    "phone number": "PHONE_NUMBER",
+    "email address": "EMAIL_ADDRESS",
+    "bank account number": "BANK_ACCOUNT",
 }
 # Labels the model gives freely (its card: raise person's threshold) need more.
 _GLINER2_MIN = {"PERSON": 0.8, "ADDRESS": 0.8, "DATE_OF_BIRTH": 0.9}
@@ -282,6 +304,13 @@ def build_analyzer(config: PiiConfig) -> "AnalyzerEngine":
         analyzer = AnalyzerEngine(
             nlp_engine=nlp, registry=registry, supported_languages=[_ANY_LANGUAGE]
         )
+        if config.detector == "gliner2_onnx":
+            from gliner2_onnx import GLiNER2ONNXRuntime
+
+            # fp32: ONNX Runtime has no CPU kernels for fp16 matrix products.
+            analyzer.zero_shot = GLiNER2ONNXRuntime.from_pretrained(
+                _GLINER2_ONNX_MODEL, precision="fp32"
+            )
         if config.detector == "gliner2":
             from gliner2 import AutoExtractor
 
@@ -570,14 +599,14 @@ class _Scans:
         cap = self.config.max_distinct
         # The model decides a column of short values (names, places, codes) from a
         # sample of them; free text is read whole, since one answer may name someone.
-        if self.config.detector in _ZERO_SHOT and not _free_text(distinct):
+        if self.config.detector in _COLUMNAR and not _free_text(distinct):
             cap = min(cap, _SHORT_SAMPLE)
         if len(distinct) > cap:
             distinct = sorted(random.Random(self.config.seed).sample(distinct, cap))
         self.columns[name] = (values, distinct, keys, basis, context)
 
     def run(self, analyzer) -> None:
-        if self.config.detector in _ZERO_SHOT:
+        if self.config.detector in _COLUMNAR:
             for name, (_, distinct, _, _, context) in self.columns.items():
                 self.column_found[name] = _column_entities(
                     context, distinct, self.config, analyzer
@@ -642,8 +671,10 @@ def _column_entities(
     value next to the question and to other values of the same column. A hit counts
     for the value it falls in; one in the context counts for none.
     """
-    if config.detector == "gliner2":
+    if config.detector in ("gliner2", "gliner2_onnx"):
         wanted = ["EMAIL_ADDRESS", *config.id_patterns]
+    elif config.detector == "spacy_column":
+        wanted = [*config.entities, *config.id_patterns]
     else:
         wanted = [*_ZERO_SHOT_LABELS.values(), "EMAIL_ADDRESS", *config.id_patterns]
     found: dict[str, set[str]] = {v: set() for v in distinct}
@@ -674,10 +705,14 @@ def _column_entities(
                 found[value].add(entity)
 
     for text, chunk_spans in zip(texts, spans, strict=True):
-        for r in analyzer.analyze(
-            text=text, language=_ANY_LANGUAGE, entities=wanted, score_threshold=0
-        ):
-            hit(chunk_spans, r.start, r.end, r.entity_type)
+        for language in analyzer.supported_languages:
+            for r in analyzer.analyze(
+                text=text,
+                language=language,
+                entities=wanted,
+                score_threshold=config.score_threshold,
+            ):
+                hit(chunk_spans, r.start, r.end, r.entity_type)
     if config.detector == "gliner2" and texts:
         results = analyzer.zero_shot.batch_extract_entities(
             texts,
@@ -693,6 +728,14 @@ def _column_entities(
                 for e in entities:
                     if e["confidence"] >= _GLINER2_MIN.get(entity, 0):
                         hit(chunk_spans, e["start"], e["end"], entity)
+    if config.detector == "gliner2_onnx":
+        for text, chunk_spans in zip(texts, spans, strict=True):
+            for e in analyzer.zero_shot.extract_entities(
+                text, list(_GLINER2_ONNX_LABELS), threshold=_ZERO_SHOT_THRESHOLD
+            ):
+                entity = _GLINER2_ONNX_LABELS[e.label]
+                if e.score >= _GLINER2_MIN.get(entity, 0):
+                    hit(chunk_spans, e.start, e.end, entity)
     return found
 
 
@@ -783,7 +826,7 @@ def classify(
         blacklist,
         config.trust_publishable,
         config.no_personal_data,
-        config.detector in _ZERO_SHOT,
+        config.detector in _COLUMNAR,
     )
     keys = table.column("KEY").to_pylist()
 

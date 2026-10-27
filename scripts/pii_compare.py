@@ -119,7 +119,17 @@ def compare(
 
     results, codebooks, totals = {}, {}, []
     for detector in detectors:
-        pii = replace(cfg.pii, whitelist=(), blacklist=(), detector=detector)
+        # "name:lang=model,..." also sets the spaCy models, e.g.
+        # spacy_column:es=es_core_news_sm,en=en_core_web_sm
+        name, _, models = detector.partition(":")
+        languages = dict(m.split("=") for m in models.split(",")) if models else None
+        pii = replace(
+            cfg.pii,
+            whitelist=(),
+            blacklist=(),
+            detector=name,
+            languages=languages or cfg.pii.languages,
+        )
         start = time.perf_counter()
         analyzer = build_analyzer(pii)
         built = time.perf_counter()
