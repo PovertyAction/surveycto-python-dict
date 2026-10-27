@@ -31,6 +31,15 @@ TEMPLATE = [
 ]  # fmt: skip
 
 
+def _share(block: dict) -> float | str:
+    """Return the largest share of a column's scanned values one entity hit."""
+    presidio = block.get("presidio", {})
+    if not presidio.get("distinct_scanned"):
+        return ""
+    hits = max(presidio["entities"].values(), default=0)
+    return round(hits / presidio["distinct_scanned"], 3)
+
+
 def template(config: Path, form: str, out: Path) -> None:
     """Write the truth template for ``form``'s built outputs to ``out``."""
     assert not out.exists(), f"{out} exists"
@@ -177,7 +186,7 @@ def compare(
         + [
             f"{d}_{k}"
             for d in detectors
-            for k in ("outcome", "status", "basis", "hit_rows")
+            for k in ("outcome", "status", "basis", "hit_rows", "hit_share")
         ]
     )
     for column in results[detectors[0]]:
@@ -191,17 +200,23 @@ def compare(
                 ("no", True): "false alarm",
                 ("no", False): "clear",
             }[truth[column], hit]
+            presidio = block.get("presidio", {})
             row += [
                 outcome,
                 block["status"],
                 ", ".join(block["basis"]),
-                block.get("presidio", {}).get("hit_rows", ""),
+                presidio.get("hit_rows", ""),
+                _share(block),
             ]
         columns.append(row)
     datasets = workbook.create_sheet("Datasets")
     datasets.append(
         ["dataset", "column", "read_by"]
-        + [f"{d}_{k}" for d in detectors for k in ("status", "basis", "hit_rows")]
+        + [
+            f"{d}_{k}"
+            for d in detectors
+            for k in ("status", "basis", "hit_rows", "hit_share")
+        ]
     )
     for i, row in enumerate(codebooks[detectors[0]]):
         line = [row["dataset"], row["column"], ", ".join(row["read_by"])]
@@ -211,6 +226,7 @@ def compare(
                 pii["status"],
                 ", ".join(pii["basis"]),
                 pii.get("presidio", {}).get("hit_rows", ""),
+                _share(pii),
             ]
         datasets.append(line)
     workbook.save(out)
