@@ -158,7 +158,8 @@ The rules apply in order, and the first that matches decides:
 1. **Your lists.** A name on `[pii] blacklist` is `contains_pii`, one on
    `[pii] whitelist` is `whitelisted`; a name on both lists is an error. Review the
    flagged columns in `<form>_pii_review.xlsx` and whitelist the ones you clear;
-   blacklist the columns you know are personal, publishable or not.
+   blacklist the columns you know are personal, publishable or not. A dataset column,
+   listed as `dataset.column`, covers every `pulldata()` that holds its value.
 2. **Publishable.** A field the form marks publishable is `cleared_by_form`. Set
    `trust_publishable = false` when the form marks personal fields publishable (to
    publish them to a dataset, say): publishable then clears nothing.

@@ -642,3 +642,22 @@ def test_countries_set_the_phone_regions():
         if r.name == "PhoneRecognizer"
     ]
     assert [r.supported_regions for r in phones] == [("CO", "KE")]
+
+
+@pytest.mark.parametrize(
+    ("status", "held"),
+    [
+        ("whitelisted", "whitelisted"),
+        ("contains_pii", "contains_pii"),
+        ("may_contain_pii", "may_contain_pii"),
+        ("no_hits", "no_hits"),
+    ],
+)
+def test_one_dataset_column_entry_covers_its_preloads(status, held):
+    from surveycto_python_dict.pii import _held_block
+
+    block = _held_block({"status": status}, ["type:calculate"], "people.phone")
+    assert block == {
+        "status": held,
+        "basis": ["type:calculate", "lineage:people.phone"],
+    }

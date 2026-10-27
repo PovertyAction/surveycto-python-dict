@@ -35,6 +35,8 @@
   numbers are left to the blacklist and `publishable`.
 - `[pii] countries` sets the regions whose local phone formats Presidio validates
   (#108).
+- A whitelisted `dataset.column` covers every `pulldata()` that holds its value, as a
+  blacklisted one already did, so one entry replaces a field and its preload (#108).
 - `scripts/pii_compare.py` writes a truth template for a form and scores the
   classification against it (#108).
 - `xml_contract` drops `Node.pulldata` (read `data_source`), `map_column`'s

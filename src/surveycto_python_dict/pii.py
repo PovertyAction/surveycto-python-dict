@@ -682,12 +682,7 @@ def classify(
             block = rules.static(question) if question is not None else None
             held = _held_column(q, dataset_pii)
             if block is None and held:
-                # Its values are the dataset column's, already scanned.
-                status = dataset_pii[held]["status"]
-                block = {
-                    "status": status if status in FLAGGED else "no_hits",
-                    "basis": [*rules.scan_basis(question), f"lineage:{held}"],
-                }
+                block = _held_block(dataset_pii[held], rules.scan_basis(question), held)
             elif block is None:
                 scans.add(
                     column,
@@ -751,6 +746,18 @@ def _held_column(q: dict | None, dataset_pii: dict) -> str | None:
     if held not in dataset_pii or not _holds_pulldata(q["calculation"]):
         return None
     return held
+
+
+def _held_block(column: dict, basis: list[str], held: str) -> dict:
+    """Return the block of a calculate holding dataset column ``held``: its values are
+    the column's, already decided, so one ``dataset.column`` on the whitelist or the
+    blacklist covers every ``pulldata()`` of it.
+    """
+    status = column["status"]
+    return {
+        "status": status if status in FLAGGED | SAFE else "no_hits",
+        "basis": [*basis, f"lineage:{held}"],
+    }
 
 
 def _inherit(
