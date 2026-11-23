@@ -16,6 +16,9 @@
 
 ### Fixed
 
+- A form with a text audit or audio audit field builds (#112): the bind's
+  `class=textAudit` or `class=audioAudit` gives the type, and both are attachments
+  for the PII rules. Any other class on a binary field with no control still raises.
 - An int or decimal column parses only the numbers the server writes: `1_0`,
   `nan`, `inf` or ` 3 ` stay text with a `cast_fallback` (#94).
 - The join lines in `<project>_db.json` and `_db.sql` quote every name, so a line

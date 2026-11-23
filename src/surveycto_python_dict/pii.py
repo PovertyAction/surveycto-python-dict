@@ -82,6 +82,8 @@ _CONTAINS_TYPES = {
     "audio",
     "video",
     "file",
+    "text audit",
+    "audio audit",
 }
 _TYPED_SAFE = {"integer", "decimal", "date", "datetime", "time"}
 # Fields that capture who or which device collected the submission, whatever their name.
