@@ -266,6 +266,32 @@ def test_unknown_field_shape_raises(tmp_path):
         build_questions(parse_contract(_write(tmp_path, xml)))
 
 
+def _with_audit(appearance: str) -> str:
+    """The shop form plus a control-less binary field, as SurveyCTO compiles audits."""
+    return _XML.replace("<dur/>", "<dur/><audit/>").replace(
+        '<bind nodeset="/shop/dur"',
+        f'<bind nodeset="/shop/audit" type="binary" appearance="{appearance}"/>\n'
+        '      <bind nodeset="/shop/dur"',
+    )
+
+
+@pytest.mark.parametrize(
+    ("appearance", "qtype"),
+    [("class=textAudit;p=50", "text audit"), ("class=audioAudit;p=10", "audio audit")],
+)
+def test_audit_field_types(tmp_path, appearance, qtype):
+    """Text and audio audits are a binary bind with no control, the class on the bind."""
+    questions = build_questions(
+        parse_contract(_write(tmp_path, _with_audit(appearance)))
+    )
+    assert {q["variable_name"]: q["type"] for q in questions}["audit"] == qtype
+
+
+def test_unknown_binary_class_raises(tmp_path):
+    with pytest.raises(ValueError, match="audit"):
+        build_questions(parse_contract(_write(tmp_path, _with_audit("class=sensorX"))))
+
+
 def test_unmapped_path_in_expression_raises(tmp_path):
     xml = _XML.replace(
         "string-length( /shop/ok/owner )", "string-length( /shop/ok/ghost )"

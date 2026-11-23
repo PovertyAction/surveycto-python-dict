@@ -48,6 +48,9 @@ _PRELOAD_TYPES = {
     ("property", "caseid"): "caseid",
 }
 _MEDIA_TYPES = {"image": "image", "audio": "audio", "video": "video"}
+# Audit fields compile to a binary bind with no control, the class on the bind.
+_AUDIT_CLASS = re.compile(r"(?:^|;)\s*class=(\w+)")
+_AUDIT_TYPES = {"textAudit": "text audit", "audioAudit": "audio audit"}
 _REF_RE = re.compile(r"\$\{([^}]+)\}")
 # An HTML tag: `<` then a letter or `/`, so `<5 and >10` is text.
 _TAG_RE = re.compile(r"</?[A-Za-z][^<>]*>")
@@ -80,6 +83,10 @@ def _xlsform_type(node: Node) -> str:
             return _PRELOAD_TYPES[key]
     if node.control is None and node.calculate is not None:
         return "calculate"
+    if node.control is None and node.xml_type == "binary":
+        audit = _AUDIT_CLASS.search(node.bind_appearance or "")
+        if audit and audit.group(1) in _AUDIT_TYPES:
+            return _AUDIT_TYPES[audit.group(1)]
     raise ValueError(
         f"node {node.path!r}: no XLSForm type for bind type={node.xml_type!r}, "
         f"control={node.control!r}, preload={node.preload!r}/{node.preload_params!r}"
